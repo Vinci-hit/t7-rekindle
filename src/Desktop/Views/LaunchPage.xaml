@@ -97,6 +97,23 @@
                         </DataTrigger.EnterActions>
                         <DataTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="RunningIconRotation" /></DataTrigger.ExitActions>
                       </DataTrigger>
+                      <DataTrigger Binding="{Binding MainActionIcon}" Value="hourglass">
+                        <DataTrigger.EnterActions>
+                          <BeginStoryboard x:Name="StartingHourglassFlip">
+                            <Storyboard RepeatBehavior="Forever">
+                              <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                             Duration="0:0:2.4">
+                                <DiscreteDoubleKeyFrame KeyTime="0:0:0" Value="0" />
+                                <LinearDoubleKeyFrame KeyTime="0:0:0.6" Value="0" />
+                                <SplineDoubleKeyFrame KeyTime="0:0:1.2" Value="180" KeySpline="0.42,0,0.58,1" />
+                                <LinearDoubleKeyFrame KeyTime="0:0:1.8" Value="180" />
+                                <SplineDoubleKeyFrame KeyTime="0:0:2.4" Value="360" KeySpline="0.42,0,0.58,1" />
+                              </DoubleAnimationUsingKeyFrames>
+                            </Storyboard>
+                          </BeginStoryboard>
+                        </DataTrigger.EnterActions>
+                        <DataTrigger.ExitActions><RemoveStoryboard BeginStoryboardName="StartingHourglassFlip" /></DataTrigger.ExitActions>
+                      </DataTrigger>
                     </Style.Triggers>
                   </Style>
                 </views:Icon.Style>

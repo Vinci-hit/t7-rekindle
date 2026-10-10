@@ -12,9 +12,10 @@ XAML = "http://schemas.microsoft.com/winfx/2006/xaml"
 def test_v11_uses_one_complete_vector_icon_family():
     root = ET.parse(DESKTOP / "Resources/Icons.xaml").getroot()
     icons = root.findall(f"{{{WPF}}}DrawingImage")
-    assert len(icons) == 43 * 6
+    assert len(icons) == 44 * 6
     keys = {item.attrib[f"{{{XAML}}}Key"] for item in icons}
     assert {f"T7.Icon.construction.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
+    assert {f"T7.Icon.hourglass.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
     assert all(p.attrib["Thickness"] == "1.75" for p in root.iter(f"{{{WPF}}}Pen"))
 
 

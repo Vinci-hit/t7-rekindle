@@ -60,8 +60,8 @@ namespace T7.ManagedHarness
             if (SettingsSchema.IsValid(new UserSettings { ClientDirectory = "\\\\" })) return 17;
             if (args.Length == 2 && args[0] == "--render-v11")
             {
-                ThemeTests.Run(args[1]);
-                return 0;
+                try { ThemeTests.Run(args[1]); return 0; }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
             }
             NativeAbiLayout.Validate();
             NativeBridgeServiceTests.Run();

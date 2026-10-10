@@ -154,6 +154,7 @@ namespace T7.ManagedHarness
                         "start did not await native preflight");
                     Assert(model.AreSessionFieldsLocked && !model.CanStart,
                         "start preflight allowed a concurrent launch");
+                    Assert(model.MainActionIcon == "hourglass", "start preflight did not show the hourglass");
                     bridge.Snapshot = new SessionSnapshot { State = SessionState.Idle, CleanupComplete = true };
                     bridge.PendingCheck.SetResult(new OperationSnapshot
                     {
@@ -163,6 +164,7 @@ namespace T7.ManagedHarness
                     RunTask(start);
                     Assert(bridge.StartCount == (status == OperationStatus.Succeeded ? 1 : 0),
                         "client launch did not follow the native preflight result");
+                    Assert(model.MainActionIcon != "hourglass", "completed start retained the hourglass");
                     if (status == OperationStatus.Succeeded)
                         Assert(bridge.StartedDirectory == @"C:\Games\T7\Bin" && bridge.StartedName == "玩家",
                             "native launch did not receive the selected client and player");

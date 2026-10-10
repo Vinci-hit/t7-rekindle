@@ -16,7 +16,8 @@ namespace T7.Rekindle.Desktop.ViewModels
         public int SettingsTabIndex { get => _settingsTabIndex; set => SetProperty(ref _settingsTabIndex, value); }
         public string SavedPlayerName => string.IsNullOrEmpty(_savedName) ? "未设置" : _savedName;
         public string SavedClientDirectory => string.IsNullOrEmpty(_savedDirectory) ? "未设置" : _savedDirectory;
-        public string MainActionIcon => IsBusy ? "loader" : !_directoryResult.IsValid || HasPlayerNameError ? "settings" : "play";
+        public string MainActionIcon => MainActionText == "启动中…" ? "hourglass"
+            : IsBusy ? "loader" : !_directoryResult.IsValid || HasPlayerNameError ? "settings" : "play";
         public string HomeStatusDetail => StatusText == "准备就绪" || _snapshot.State == SessionState.Running ? string.Empty : DiagnosticText;
         public bool IsManagedGameRunning => _snapshot.State == SessionState.Running;
         public string NameFieldError => ShowPlayerNameError ? PlayerNameError : _nameSaveError;

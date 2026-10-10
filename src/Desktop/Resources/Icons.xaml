@@ -1037,4 +1037,28 @@
 <GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
 <GeometryDrawing Geometry="M9 3 L9 6 L6 7 L3 4 C1.6 8.6 5.1 12 9.1 10.9 L18.1 19.9 A1.8 1.8 0 0 0 20.7 17.3 L11.7 8.3 C12.8 4.2 10.8 2.8 9 3 Z M14.4 7.6 L18.2 3.8 L20.2 2.8 L21.2 3.8 L20.2 5.8 L16.4 9.6 M7.5 14.4 L2.9 19 A1.6 1.6 0 0 0 5.2 21.2 L9.8 16.6 M5 18.8 L7.7 16.1"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Danger}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
 </DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.Ink"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Ink}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.White"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.White}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.Muted"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Muted}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.Success"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Success}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.Warning"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Warning}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
+<DrawingImage x:Key="T7.Icon.hourglass.Danger"><DrawingImage.Drawing><DrawingGroup>
+<GeometryDrawing Brush="Transparent" Geometry="M0,0 H24 V24 H0Z"/>
+<GeometryDrawing Geometry="M5 3h14 M5 21h14 M7 3v4l5 5-5 5v4 M17 3v4l-5 5 5 5v4 M9 6h6 M9 18l3-3 3 3Z"><GeometryDrawing.Pen><Pen Brush="{StaticResource T7.Icon.Brush.Danger}" Thickness="1.75" StartLineCap="Round" EndLineCap="Round" LineJoin="Round"/></GeometryDrawing.Pen></GeometryDrawing>
+</DrawingGroup></DrawingImage.Drawing></DrawingImage>
 </ResourceDictionary>

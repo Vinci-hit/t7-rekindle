@@ -106,12 +106,31 @@ namespace T7.ManagedHarness
                 LauncherTests.Pump();
                 Render(window, output, "home-launching", 1200, 900);
                 LauncherTests.Assert(!action.IsEnabled && bridge.StartCount == 1, "busy launch accepts another request");
-                VerifyStaticActionIcon(actionIcon);
+                VerifyStartingActionIcon(actionIcon);
+                foreach (var state in new[] { SessionState.StartingClient, SessionState.AdaptingClient, SessionState.StartingRuntime })
+                {
+                    bridge.Snapshot = new SessionSnapshot { State = state };
+                    model.Refresh();
+                    LauncherTests.Pump();
+                    VerifyStartingActionIcon(actionIcon);
+                }
+                model.IsSettingsSelected = true;
+                LauncherTests.Pump();
+                model.IsHomeSelected = true;
+                LauncherTests.Pump();
+                VerifyStartingActionIcon(actionIcon);
                 model.CancelCommand.Execute(null);
                 LauncherTests.RunTask(start);
                 Render(window, output, "home-cancelled", 1200, 900);
+                VerifyStaticActionIcon(actionIcon);
                 bridge.HoldStart = false;
-                LauncherTests.RunTask(model.StartCommand.ExecuteAsync(null));
+                bridge.PendingStart = new TaskCompletionSource<OperationSnapshot>();
+                var nextStart = model.StartCommand.ExecuteAsync(null);
+                LauncherTests.Pump();
+                VerifyStartingActionIcon(actionIcon);
+                bridge.Snapshot = new SessionSnapshot { State = SessionState.Running };
+                bridge.PendingStart.SetResult(new OperationSnapshot { Status = OperationStatus.Succeeded });
+                LauncherTests.RunTask(nextStart);
                 Render(window, output, "home-running", 1200, 900);
                 LauncherTests.Assert(!action.IsEnabled && model.StatusText == "游戏进程运行中" && model.CanStop, "managed process status is misleading");
                 VerifyRunningActionIcon(actionIcon);
@@ -202,7 +221,28 @@ namespace T7.ManagedHarness
         private static void VerifyStaticActionIcon(Icon icon)
         {
             LauncherTests.Assert(!icon.RenderTransform.HasAnimatedProperties && icon.RenderTransform.Value.IsIdentity,
-                "launch icon retained rotation outside the running state");
+                "launch icon retained rotation outside the starting or running state");
+        }
+
+        private static void VerifyStartingActionIcon(Icon icon)
+        {
+            var rotation = icon.RenderTransform as RotateTransform;
+            LauncherTests.Assert(icon.Kind == "hourglass" && rotation != null && rotation.HasAnimatedProperties,
+                "starting game icon is not an animated hourglass while the launch button is disabled");
+            LauncherTests.Assert(icon.RenderTransformOrigin == new Point(0.5, 0.5), "hourglass does not rotate around its center");
+            LauncherTests.Assert(((FrameworkElement)icon.Parent).RenderTransform.Value.IsIdentity,
+                "hourglass animation rotates the button label with the icon");
+            var trigger = (DataTrigger)icon.Style.Triggers[1];
+            var storyboard = ((BeginStoryboard)trigger.EnterActions[0]).Storyboard;
+            var milliseconds = new[] { 300, 900, 1500, 2100, 2700 };
+            var angles = new[] { 0.0, 90.0, 180.0, 270.0, 0.0 };
+            for (var index = 0; index < milliseconds.Length; index++)
+            {
+                storyboard.SeekAlignedToLastTick(icon, TimeSpan.FromMilliseconds(milliseconds[index]), TimeSeekOrigin.BeginTime);
+                LauncherTests.Assert(Math.Abs(rotation.Angle - angles[index]) < 0.1,
+                    "starting hourglass does not alternate half turns with pauses: " + milliseconds[index]
+                        + " ms / expected " + angles[index] + " / actual " + rotation.Angle);
+            }
         }
 
         private static void VerifyRunningActionIcon(Icon icon)
