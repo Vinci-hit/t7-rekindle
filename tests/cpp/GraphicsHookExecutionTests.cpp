@@ -1,6 +1,11 @@
 #include "../../src/Runtime/launcher/GraphicsSettings.h"
 #include "../../src/Runtime/launcher/DebugClient.h"
 #include "../../src/Runtime/launcher/OutputDevice.h"
+#include "WorldHookFixture.h"
+#include "TerrainHookFixture.h"
+#include "SprintHookFixture.h"
+#include "ChatInputHookFixture.h"
+#include "../../src/Runtime/launcher/ChatInputHookCode.h"
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -41,7 +46,7 @@ void fixture(const t7::fs::path& path) {
     nt.OptionalHeader.BaseOfCode = 0x1000; nt.OptionalHeader.SizeOfCode = 0x1000;
     nt.OptionalHeader.SectionAlignment = 0x1000; nt.OptionalHeader.FileAlignment = 0x200;
     nt.OptionalHeader.MajorOperatingSystemVersion = 6; nt.OptionalHeader.MajorSubsystemVersion = 6;
-    nt.OptionalHeader.SizeOfImage = 0x2E38000; nt.OptionalHeader.SizeOfHeaders = 0x200;
+    nt.OptionalHeader.SizeOfImage = 0x2E41000; nt.OptionalHeader.SizeOfHeaders = 0x200;
     nt.OptionalHeader.Subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
     nt.OptionalHeader.SizeOfStackReserve = 0x100000; nt.OptionalHeader.SizeOfStackCommit = 0x1000;
     nt.OptionalHeader.SizeOfHeapReserve = 0x100000; nt.OptionalHeader.SizeOfHeapCommit = 0x1000;
@@ -79,6 +84,10 @@ void fixture(const t7::fs::path& path) {
     require(output.good(), "graphics fixture write");
 }
 void prepare(HANDLE process) {
+    worldFixture::prepare(process);
+    terrainFixture::prepare(process);
+    sprintFixture::prepare(process);
+    chatInputFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
     t7::writeClientMemory(process, BASE + 0x33B444, {0x8B,0xD0,0x33,0xC9,0x8B,0x3A,0x8B,0xC1,0xC3});
     writeWord(process, RENDERER + 0x458, ADAPTER_ORDINAL); writeWord(process, RENDERER + 0x468, ADAPTER);
@@ -173,6 +182,16 @@ bool verifyGraphicsHookExecution() {
         const t7::OutputDevice selected{ADAPTER_ORDINAL, ADAPTER_ID, "fixture adapter", true};
         client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE thread) {
             prepare(process); t7::installOutputDevice(process, BASE, selected);
+            t7::writeClientMemory(process, BASE + 0x3D1200, {0xCC});
+            bool rejected = false;
+            try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "world accepted an unknown position getter");
+            t7::writeClientMemory(process, BASE + 0x3D1200, {0x55});
+            t7::writeClientMemory(process, BASE + 0x400D30, {0xCC});
+            rejected = false;
+            try { t7::verifyChatInputFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "chat input accepted an unknown text-focus getter");
+            t7::writeClientMemory(process, BASE + 0x400D30, {0x8A});
             graphics.install(process, BASE, GetThreadId(thread));
         });
         t7::GraphicsValues values;
@@ -220,6 +239,12 @@ bool verifyGraphicsHookExecution() {
         audio.apply(sound);
         require(readAudio(audio, actual, true) == 2 && actual.effectsVolume == 1
             && readWord(client.process(), STATS + 32) == 2, "stale audio write overwrote game changes");
+        worldFixture::verify(client.process(), graphics.world());
+        terrainFixture::verify(client.process(), graphics.world());
+        try { sprintFixture::verify(client.process()); }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("sprint: ") + error.what()); }
+        try { chatInputFixture::verify(client.process(), graphics.world()); }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("chat input: ") + error.what()); }
         require(readWord(client.process(), STATS) == readWord(client.process(), STATS + 4), "frame hook changed ESP");
         for (const auto pair : std::array<std::pair<uint32_t, uint32_t>, 6>{{
             {8,0x11223344},{12,0x22334455},{16,0x33445566},{20,0x44556677},{24,0x3F800000},{28,0x3F800000}
@@ -243,7 +268,7 @@ bool verifyGraphicsHookExecution() {
         client.check(); client.stop(); graphics.clear();
         require(t7::fs::canonical(directory).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "graphics cleanup boundary");
         t7::fs::remove_all(directory);
-        std::cout << "x86 output device hooks/readback, graphics display restore/readback, read/apply/conflict, defaults and FPU/SSE preservation passed\n";
+        std::cout << "x86 output device, graphics/audio/world, sprint/chat input, and FPU/SSE preservation passed\n";
         return true;
     } catch (const std::exception& e) {
         try { client.stop(); graphics.clear(); } catch (const std::exception& cleanup) { std::cerr << cleanup.what() << '\n'; }

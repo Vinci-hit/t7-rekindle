@@ -314,6 +314,10 @@ bool Bootstrap::pollAudio(AudioValues& values, uint32_t& result, bool& applied) 
     if (testAdapter_.launch) return testAdapter_.pollAudio && testAdapter_.pollAudio(values, result, applied);
     return graphicsSettings_.audio().poll(values, result, applied);
 }
+bool Bootstrap::pollWorld(WorldSnapshot& value) {
+    if (testAdapter_.launch) return testAdapter_.pollWorld && testAdapter_.pollWorld(value);
+    return graphicsSettings_.world().poll(value);
+}
 void Bootstrap::applyAudio(const AudioValues& values) {
     if (testAdapter_.launch) {
         if (!testAdapter_.applyAudio) throw std::runtime_error("test audio adapter unavailable");

@@ -291,6 +291,8 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
+        return verifyGraphicsHookExecution() ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")
         return verifyMovementOverlay() && verifyMovementHookExecution() ? 0 : 1;
     if (argc != 2) {
@@ -322,6 +324,23 @@ int wmain(int argc, wchar_t** argv) {
         if (!initializationFailed) result = 22;
         {
             t7::PythonHost first(argv[1], ownerRoot);
+            t7::Config worldConfig;
+            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client";
+            t7::WorldSnapshot world;
+            world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
+            world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
+              world.playerHeading = 90.f; world.botHeading = -90.f;
+            world.terrain[0][0].ready = world.terrain[0][0].hit = true;
+            world.terrain[0][0].material = 4;
+            world.terrain[0][0].normal = {-1,0,0};
+            const auto context = first.context(worldConfig, 1250, {1}, world);
+            for (const char* field : {"\"ready\":[\"bool\",true]", "\"sampledAt\":[\"int\",1200]",
+                "\"instanceStartedAt\":[\"int\",1000]", "[\"float\",1.25]", "[\"float\",6.75]",
+                  "\"playerHeading\":[\"float\",90.0]", "\"botHeading\":[\"float\",-90.0]",
+                  "\"clientDirectory\":[\"str\",", "synthetic-client", "\"terrain\":[\"list\",",
+                  "\"material\":[\"int\",4]", "\"hit\":[\"bool\",true]", "\"normal\":[\"list\","}) {
+                if (context.find(field) == std::string::npos) throw std::runtime_error("world Python context lost a field");
+            }
             bool rejected = false;
             try { t7::PythonHost second(argv[1], ownerRoot); }
             catch (const std::exception&) { rejected = true; }

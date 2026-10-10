@@ -86,6 +86,35 @@ def test_native_tests_run_from_selected_output(tmp_path, configuration):
     remove.assert_called_once_with(tmp_path / "fixture")
 
 
+@pytest.mark.parametrize("embedded", [False, True])
+def test_runtime_fixture_includes_standard_library_extensions(tmp_path, embedded):
+    build = load_build()
+    build.ROOT = tmp_path
+    business = tmp_path / "src/Business"
+    business.mkdir(parents=True)
+    (business / "sample.py").write_text("", encoding="utf-8")
+    python_home = tmp_path / "toolchain"
+    python_home.mkdir()
+    if embedded:
+        (python_home / "python314.zip").write_bytes(b"stdlib")
+        extensions = python_home
+    else:
+        (python_home / "Lib").mkdir()
+        (python_home / "Lib/socket.py").write_text("import _socket", encoding="utf-8")
+        extensions = python_home / "DLLs"
+        extensions.mkdir()
+    for name in ("_socket.pyd", "_multiprocessing.pyd", "libcrypto-3.dll"):
+        (extensions / name).write_bytes(name.encode("ascii"))
+    (python_home / "python314.dll").write_bytes(b"runtime")
+
+    fixture = build.prepare_runtime_fixture(python_home)
+
+    for name in ("_socket.pyd", "_multiprocessing.pyd", "libcrypto-3.dll"):
+        assert (fixture / "python" / name).read_bytes() == name.encode("ascii")
+    assert (fixture / "python314.dll").read_bytes() == b"runtime"
+    assert not (fixture / "python/python314.dll").exists()
+
+
 def test_native_tests_support_matching_solution_configurations():
     namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
     solution = (ROOT / "T7-Rekindle.sln").read_text(encoding="utf-8")

@@ -25,6 +25,7 @@ public:
         std::function<void(const GraphicsValues&)> applyGraphics;
         std::function<bool(AudioValues&, uint32_t&, bool&)> pollAudio;
         std::function<void(const AudioValues&)> applyAudio;
+        std::function<bool(WorldSnapshot&)> pollWorld;
     };
     explicit Bootstrap(TestAdapter adapter = {});
     ~Bootstrap();
@@ -40,6 +41,7 @@ public:
     void applyGraphics(const GraphicsValues& values);
     bool pollAudio(AudioValues& values, uint32_t& result, bool& applied);
     void applyAudio(const AudioValues& values);
+    bool pollWorld(WorldSnapshot& value);
 private:
     HANDLE process_ = nullptr;
     std::unique_ptr<DebugClient> debugClient_;

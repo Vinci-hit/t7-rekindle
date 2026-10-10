@@ -1,11 +1,12 @@
 """Request-driven fixed instance assembly; native timers survive script reload."""
 import struct
 
-from . import contracts as wire, controls, battle
+from . import contracts as wire, controls, battle, bot, combat
 from .codec import battle_flow, leave_flow, login_flow, room_flow, vision_flow
 
 
 def begin(flow):
+    bot.stop(flow, publish=False)
     battle.resetAction(flow)
     flow.send(0x2C, flow.syncBody(), "instance-sync-login-rsp-after-auth")
     flow.send(0xA, wire.instanceInfo(flow.now), "instance-minimal-update-after-auth")
@@ -15,6 +16,9 @@ def begin(flow):
     flow.session["initialized"] = True
     flow.session["controlBaseline"] = wire.BASELINE_ID
     flow.session["groundEnabled"] = False
+    if controls.runtimeMovement(flow):
+        flow.session["bot"] = bot.createBot(flow.session.get("camp", 1))
+        combat.initialize(flow)
     flow.phase("instance-data-sent")
     flow.later("instance-game-info", 200)
     flow.later("time-sync", 2000)
@@ -49,6 +53,7 @@ def battleEntry(flow):
             controls.broadcast(flow, wire.POSITION, ground["heading"], 1, 0, 0,
                                "instance-ground-initial-stop")
         initializeBattleState(flow)
+    bot.enterScene(flow)
     flow.phase("battle-entry-sent")
 
 
@@ -86,6 +91,7 @@ def timer(flow, name):
         flow.send(0x36, wire.actorState(flow.now, 6), "actor-in-scene-after-round-game")
         controls.enableGround(flow)
         flow.phase("game-sent")
+        bot.start(flow)
     elif name == "time-sync":
         flow.send(8, struct.pack(">HQQB", 11, flow.now, 0, 1), "instance-periodic-time-sync")
         flow.later("time-sync", 2000)
@@ -100,6 +106,7 @@ def timer(flow, name):
 
 def leave(flow, body):
     backData = leave_flow.decode_sync_logout_request(body)
+    bot.stop(flow)
     flow.cancelTimers()
     battle.resetAction(flow)
     if flow.session["role"] == "instance":
@@ -141,6 +148,8 @@ def message(flow, command, selector, body):
         if camp not in (1, 2):
             raise ValueError("camp-choice requires camp 1 or 2")
         flow.session["camp"] = camp
+        if "bot" in flow.session:
+            flow.session["bot"]["camp"] = 3 - camp
         flow.send(0x23, struct.pack(">Hiiii", 2, 0, camp, 0, 0), "instance-camp-choose-result-zero")
     elif command == 0x23 and selector == 3:
         wire.exact(body, 3, "camp-choice-ok")
@@ -150,6 +159,7 @@ def message(flow, command, selector, body):
                                         runtimeMovement=controls.runtimeMovement(flow)), "instance-fixed-local-actor-vision-add-before-basic-info")
         flow.send(0xA, wire.actorInfo(flow.now, camp, flow.playerName), "instance-fixed-local-actor-after-camp-choice")
         flow.send(0x23, wire.campExchange(flow.now, camp), "instance-camp-exchange-notify")
+        bot.importMember(flow)
         flow.session["actorImported"] = True
         flow.phase("actor-data-sent")
     elif command == 0xE and selector == 5:
@@ -165,10 +175,14 @@ def message(flow, command, selector, body):
                         if controls.runtimeMovement(flow) else None)
             vision = (wire.actorVision(flow.session["camp"], flow.session.get("heroId", wire.HERO_ID), flow.playerName,
                                        runtimeMovement=controls.runtimeMovement(flow),
+                                       currentHp=flow.session.get("health", 100),
                                        position=tuple(position) if position is not None else wire.POSITION)
-                      if mid == wire.ACTOR_ID else wire.enemyVision())
+                      if mid == wire.ACTOR_ID else bot.vision(flow.session["bot"])
+                      if "bot" in flow.session else wire.enemyVision())
             flow.send(0xE, vision, "instance-fixed-local-actor-vision-add-event" if mid == wire.ACTOR_ID
                       else "instance-fixed-enemy-actor-vision-add-event")
+            if mid == wire.BOT_ID and "bot" in flow.session:
+                bot.refresh(flow)
         if request.object_mids:
             controls.activate(flow)
     elif command == 0x29 and selector == 0x65:

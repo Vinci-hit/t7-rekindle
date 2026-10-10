@@ -18,10 +18,12 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         auto calls = std::make_shared<std::atomic<unsigned>>(0);
         const GUID outputDevice{0x12345678, 0x1234, 0x5678, {1,2,3,4,5,6,7,8}};
         auto deviceSeen = std::make_shared<std::atomic<bool>>(false);
+        auto worldReads = std::make_shared<std::atomic<unsigned>>(0);
         t7::Bootstrap::TestAdapter adapter;
         adapter.check = [](const auto&, const auto&, const auto&) {};
-        adapter.launch = [=](const auto&, const t7::Config& config, const auto&, const auto&, const auto&) {
+        adapter.launch = [=](const auto& directory, const t7::Config& config, const auto&, const auto&, const auto&) {
             deviceSeen->store(IsEqualGUID(config.outputDevice, outputDevice));
+            require(config.clientDirectory == directory, "selected resource directory was not passed to business");
         };
         adapter.pollGraphics = [=](t7::GraphicsValues& value, uint32_t& result, bool& completed) {
             std::lock_guard<std::mutex> guard(*lock);
@@ -30,6 +32,9 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         adapter.applyGraphics = [=](const t7::GraphicsValues& value) {
             std::lock_guard<std::mutex> guard(*lock);
             *game = value; *applied = true; ++*calls;
+        };
+        adapter.pollWorld = [=](t7::WorldSnapshot& value) {
+            ++*worldReads; value = {}; value.sampledAt = GetTickCount64(); return true;
         };
         session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), adapter);
         t7::bridge::GraphicsSnapshot graphics;
@@ -40,6 +45,7 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         require(session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client").wstring()), operation) == T7NB_OK, "graphics test start");
         waitFor([&] { session->graphics(graphics); return graphics.state == T7NB_GRAPHICS_READY; });
         require(deviceSeen->load(), "output device was lost between the command and the client launch");
+        waitFor([&] { return worldReads->load() > 1; });
         const auto revision = graphics.revision;
         auto change = graphics.values; change.quality = 1;
         require(session->applyGraphics(revision - 1, change) == T7NB_NOT_READY, "stale graphics revision accepted");

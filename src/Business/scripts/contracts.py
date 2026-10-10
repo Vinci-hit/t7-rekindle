@@ -15,6 +15,7 @@ START_PATTERN = 2
 USER_ID = 10000
 USER_LEVEL = 100
 ACTOR_ID = 1
+BOT_ID = 2
 HERO_ID = 110001
 HERO_IDS = (110001, 110003, 110004)
 USER_NAME = "新玩家".encode("gbk")
@@ -80,10 +81,11 @@ def actorState(now, current):
 
 
 def actorVision(camp, heroId=HERO_ID, actorName=USER_NAME, *, runtimeMovement=False,
-                position=POSITION):
+                position=POSITION, actorId=ACTOR_ID, userId=USER_ID, currentHp=100):
     body = vision_flow.encode_fixed_local_actor_vision_add_event(
         camp=camp, position=position, hero_resource_id=heroId, actor_name=actorName,
-        level=USER_LEVEL)
+        level=USER_LEVEL if actorId == ACTOR_ID else 1,
+        actor_mid=actorId, instance_id=actorId, user_id=userId, current_hp=currentHp)
     if runtimeMovement:
         if heroId != RUNTIME_HERO_IDS[0]:
             raise ValueError("runtime movement gravity is bound to local hero 110001")
@@ -125,8 +127,8 @@ def spawnArea(now):
     return struct.pack(">HQiii", 0xC8, now, 0, 1, 0)
 
 
-def campExchange(now, camp):
-    return struct.pack(">HQiQi", 6, now, 1, ACTOR_ID, camp)
+def campExchange(now, camp, *, actorId=ACTOR_ID):
+    return struct.pack(">HQiQi", 6, now, 1, actorId, camp)
 
 
 def heartbeat(body):

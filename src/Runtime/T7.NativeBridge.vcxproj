@@ -43,6 +43,11 @@
     <ClCompile Include="launcher\GraphicsHookCode.cpp" />
     <ClCompile Include="launcher\AudioSettings.cpp" />
     <ClCompile Include="launcher\AudioHookCode.cpp" />
+    <ClCompile Include="launcher\ClientWorld.cpp" />
+    <ClCompile Include="launcher\WorldHookCode.cpp" />
+    <ClCompile Include="launcher\SprintHookCode.cpp" />
+    <ClCompile Include="launcher\ChatInputHookCode.cpp" />
+    <ClCompile Include="launcher\TerrainHookCode.cpp" />
     <ClCompile Include="bridge\SessionGraphics.cpp" />
     <ClCompile Include="bridge\SessionAudio.cpp" />
     <ClCompile Include="launcher\StartupGate.cpp" />

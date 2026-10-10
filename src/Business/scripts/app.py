@@ -2,12 +2,12 @@
 from copy import deepcopy
 import struct
 
-from . import contracts as wire, scene, controls, battle
+from . import contracts as wire, scene, controls, battle, bot, combat
 from .codec import login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 2
+STATE_VERSION = 5
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -35,12 +35,15 @@ def validateState(state):
                and session.get("role") in ("login", "logic", "instance")
                and type(session.get("hydration")) is list
                and type(session.get("pending", {})) is dict
+               and ("bot" not in session or bot.validState(session["bot"]))
+               and combat.validState(session)
+               and ("bot" not in session or combat.validState(session["bot"]))
                and (not session.get("initialized") or controls.validMoveClock(session))
                for key, session in state["sessions"].items())
 
 
 def migrateState(fromVersion, state):
-    if fromVersion not in (1, STATE_VERSION) or not validateState(state):
+    if fromVersion not in (1, 2, 3, 4, STATE_VERSION) or not validateState(state):
         raise ValueError("no migration for this state version")
     return deepcopy(state)
 
@@ -121,7 +124,7 @@ def handleTimer(flow, name):
         flow.send(0x1E, room_flow.encode_room_enter_instance_notify(
             room_id=1, user_camp=1, notify_type=0), "match-enter-instance-notify")
         flow.phase("instance-notified")
-    elif not battle.timer(flow, name) and not controls.timer(flow, name) and not scene.timer(flow, name):
+    elif not battle.timer(flow, name) and not bot.timer(flow, name) and not combat.timer(flow, name) and not controls.timer(flow, name) and not scene.timer(flow, name):
         raise ValueError(f"unknown business timer: {name}")
 
 

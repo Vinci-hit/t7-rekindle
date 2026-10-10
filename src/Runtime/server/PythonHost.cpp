@@ -134,13 +134,41 @@ PythonHost::~PythonHost() {
 std::string PythonHost::encode(PyObject* object) {
     auto result = checked(PyObject_CallMethod(module_, "encode", "O", object)); return string(result.get());
 }
-std::string PythonHost::context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections) {
+std::string PythonHost::context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections,
+                                const WorldSnapshot& world) {
     auto dict = checked(PyDict_New());
     put(dict.get(), "nowMs", PyLong_FromUnsignedLongLong(now));
     put(dict.get(), "advertisedAddress", PyUnicode_FromString(config.advertisedAddress.c_str()));
     put(dict.get(), "instancePort", PyLong_FromLong(config.ports[2]));
     put(dict.get(), "playerName", PyUnicode_FromString(config.playerName.c_str()));
     put(dict.get(), "runtimeMovement", PyBool_FromLong(config.runtimeMovement ? 1 : 0));
+    put(dict.get(), "clientDirectory", PyUnicode_FromWideChar(config.clientDirectory.c_str(), -1));
+    auto snapshot = checked(PyDict_New());
+    put(snapshot.get(), "ready", PyBool_FromLong(world.ready ? 1 : 0));
+    put(snapshot.get(), "sampledAt", PyLong_FromUnsignedLongLong(world.sampledAt));
+    put(snapshot.get(), "instanceStartedAt", PyLong_FromUnsignedLongLong(world.instanceStartedAt));
+    put(snapshot.get(), "player", Py_BuildValue("[fff]", world.player[0], world.player[1], world.player[2]));
+    put(snapshot.get(), "bot", Py_BuildValue("[fff]", world.bot[0], world.bot[1], world.bot[2]));
+    put(snapshot.get(), "playerHeading", PyFloat_FromDouble(world.playerHeading));
+    put(snapshot.get(), "botHeading", PyFloat_FromDouble(world.botHeading));
+    auto terrain = checked(PyList_New(0));
+    for (const auto& actor : world.terrain) {
+        auto probes = checked(PyDict_New());
+        for (size_t i = 0; i < actor.size(); ++i) {
+            const auto& contact = actor[i];
+            auto value = checked(PyDict_New());
+            put(value.get(), "ready", PyBool_FromLong(contact.ready ? 1 : 0));
+            put(value.get(), "hit", PyBool_FromLong(contact.hit ? 1 : 0));
+            put(value.get(), "material", PyLong_FromLong(contact.material));
+            put(value.get(), "position", Py_BuildValue("[fff]", contact.position[0], contact.position[1], contact.position[2]));
+            put(value.get(), "normal", Py_BuildValue("[fff]", contact.normal[0], contact.normal[1], contact.normal[2]));
+            put(value.get(), "direction", Py_BuildValue("[fff]", contact.direction[0], contact.direction[1], contact.direction[2]));
+            put(probes.get(), i == 0 ? "forward" : "target", value.release());
+        }
+        if (PyList_Append(terrain.get(), probes.get()) < 0) throw std::runtime_error(error());
+    }
+    put(snapshot.get(), "terrain", terrain.release());
+    put(dict.get(), "botWorld", snapshot.release());
     auto list = checked(PyList_New(0));
     for (auto id : connections) {
         auto value = checked(PyLong_FromUnsignedLongLong(id));

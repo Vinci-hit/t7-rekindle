@@ -11,6 +11,22 @@ from test_battle_actions import (
 )
 
 
+ATTACK_PHASES = [(0, False), (0, True), (1, False), (2, True), (3, True)]
+PARRY_BUFFER_PHASES = [(phase, released) for phase, released in ATTACK_PHASES if phase != 1]
+
+
+def attackPhaseFlow(intent, phase, released):
+    flow = makeFlow()
+    sendAction(flow, intent)
+    if phase >= 1:
+        advanceAction(flow)
+    if released:
+        sendAction(flow, 300020)
+    if phase == 3:
+        advanceAction(flow)
+    return flow
+
+
 def recoveryFlow(intent=300560):
     flow = makeFlow()
     sendAction(flow, intent)
@@ -40,6 +56,72 @@ def test_recovery_buffers_all_directions_without_extending_deadline(activeIntent
     assert flow.session["pending"][ACTION_TIMER] == deadline + prepare
     advanceAction(flow)
     assert animationStates(flow) == [*previous, *nextChain[:2]]
+    assert ACTION_TIMER not in flow.session["pending"]
+
+
+@pytest.mark.parametrize("phase,released,nextIntent,nextChain", [
+    (phase, released, intent, chain)
+    for intent, chain in ATTACKS + BLOCKS
+    for phase, released in (ATTACK_PHASES if intent in ATTACK_TIMES else PARRY_BUFFER_PHASES)
+])
+@pytest.mark.parametrize("activeIntent,activeChain", ATTACKS)
+def test_attack_buffer_windows_do_not_interrupt_current_action(
+        phase, released, activeIntent, activeChain, nextIntent, nextChain):
+    flow = attackPhaseFlow(activeIntent, phase, released)
+    before = deepcopy(flow.result)
+    action = deepcopy(flow.session["action"])
+    pending = deepcopy(flow.session["pending"])
+    sendAction(flow, nextIntent)
+    buffered = {"intent": nextIntent, "released": False}
+    assert flow.session["action"] == {**action, "buffered": buffered}
+    assert flow.result["send"] == before["send"]
+    assert flow.result["timers"] == before["timers"]
+    assert flow.session["pending"] == pending
+
+    if not released:
+        sendAction(flow, 300020)
+        buffered = {**buffered, "released": nextIntent in ATTACK_TIMES}
+    assert flow.session["action"]["released"] is True
+    assert flow.session["action"]["buffered"] == buffered
+    while flow.session["action"]["index"] < len(activeChain) - 1:
+        advanceAction(flow)
+        assert flow.session["action"]["intent"] == activeIntent
+        assert flow.session["action"]["buffered"] == buffered
+    deadline = flow.session["pending"][ACTION_TIMER]
+    assert deadline == 1000 + sum(ATTACK_TIMES[activeIntent])
+    previous = animationStates(flow)
+    advanceAction(flow)
+    assert animationStates(flow) == [*previous, nextChain[0]]
+    assert flow.session["action"].get("buffered") is None
+    prepare = ATTACK_TIMES[nextIntent][0] if nextIntent in ATTACK_TIMES else 200
+    assert flow.session["pending"][ACTION_TIMER] == deadline + prepare
+    advanceAction(flow)
+    if buffered["released"]:
+        assert animationStates(flow) == [*previous, nextChain[0], nextChain[2]]
+        advanceAction(flow)
+        advanceAction(flow)
+        assert animationStates(flow) == [*previous, nextChain[0], *nextChain[2:], 2]
+    else:
+        assert animationStates(flow) == [*previous, *nextChain[:2]]
+    assert ACTION_TIMER not in flow.session["pending"]
+
+
+def test_later_attack_phases_replace_early_buffer_without_queueing():
+    flow = attackPhaseFlow(300560, 0, False)
+    sendAction(flow, 300550)
+    sendAction(flow, 300020)
+    advanceAction(flow)
+    sendAction(flow, 300580)
+    advanceAction(flow)
+    sendAction(flow, 300540)
+    sendAction(flow, 300020)
+    advanceAction(flow)
+    advanceAction(flow)
+    advanceAction(flow)
+    advanceAction(flow)
+    assert animationStates(flow) == [235, 238, 239, 253, 256, 257, 2]
+    assert flow.now == 1000 + sum(ATTACK_TIMES[300560]) + sum(ATTACK_TIMES[300540])
+    assert flow.session["action"].get("buffered") is None
     assert ACTION_TIMER not in flow.session["pending"]
 
 
@@ -90,16 +172,20 @@ def test_buffered_attack_tap_keeps_full_prepare_and_only_strikes_once(intent, ch
     assert ACTION_TIMER not in flow.session["pending"]
 
 
+@pytest.mark.parametrize("phase,released", PARRY_BUFFER_PHASES)
 @pytest.mark.parametrize("intent,_", BLOCKS)
-def test_releasing_buffered_parry_cancels_it_without_restoring_an_older_attack(intent, _):
-    flow = recoveryFlow()
+def test_releasing_buffered_parry_cancels_it_without_restoring_an_older_attack(
+        phase, released, intent, _):
+    flow = attackPhaseFlow(300560, phase, released)
     sendAction(flow, 300550)
     sendAction(flow, intent)
     sendAction(flow, 300620)
     sendAction(flow, 300620)
     sendAction(flow, 300020)
-    previous = animationStates(flow)
     assert flow.session["action"].get("buffered") is None
+    while flow.session["action"]["index"] < 3:
+        advanceAction(flow)
+    previous = animationStates(flow)
     advanceAction(flow)
     assert animationStates(flow) == [*previous, 2]
     assert flow.session["action"]["index"] == -1
@@ -120,17 +206,14 @@ def test_repress_after_a_buffered_tap_tracks_the_last_press_as_held():
     assert animationStates(flow)[-1] == 244
 
 
-@pytest.mark.parametrize("activeIntent,phase", [
-    (300560, 0), (300560, 1), (300560, 2), (300580, 0), (300580, 1),
-])
-@pytest.mark.parametrize("intent", [300550, 300590])
-def test_inputs_before_recovery_are_not_buffered(activeIntent, phase, intent):
+@pytest.mark.parametrize("activeIntent,_", BLOCKS)
+@pytest.mark.parametrize("phase", [0, 1])
+@pytest.mark.parametrize("intent", [intent for intent, _ in BLOCKS])
+def test_parry_presses_before_recovery_do_not_restart_or_buffer(activeIntent, _, phase, intent):
     flow = makeFlow()
     sendAction(flow, activeIntent)
     if phase >= 1:
         advanceAction(flow)
-    if phase == 2:
-        sendAction(flow, 300020)
     before = deepcopy(flow.state)
     beforeSends = deepcopy(flow.result["send"])
     beforeTimers = deepcopy(flow.result["timers"])

@@ -1,0 +1,2 @@
+src/Business/vendor/** -text -whitespace
+src/Business/vendor/*.dist-info/METADATA conflict-marker-size=32

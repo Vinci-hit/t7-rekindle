@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 BATTLE_COMMAND = 0x0004
 STATE_SYNC_SIMPLE = 0x0003
+STATE_SYNC = 0x0004
 ACT_STATE_IDLE = 2
 HIT_POINT_NOTIFY = 0x001B
 BATTLE_RESULT = 0x0009
@@ -59,6 +60,19 @@ def decode_battle_state_sync_simple(body: bytes) -> BattleStateSyncSimple:
     if selector != STATE_SYNC_SIMPLE:
         raise ValueError("battle state-sync simple expected selector 3")
     return BattleStateSyncSimple(*fields)
+
+
+def encode_battle_state_sync(
+    *, instance_id: int, seq_no: int, state: int, state_change_ms: int,
+    state_time_ms: int, target_rid: int, rand_anim_index: int = 0,
+) -> bytes:
+    prefix = encode_battle_state_sync_simple(
+        instance_id=instance_id, seq_no=seq_no, state=state,
+        state_change_ms=state_change_ms, state_time_ms=state_time_ms)
+    try:
+        return struct.pack(">H", STATE_SYNC) + prefix[2:] + struct.pack(">BQb", rand_anim_index, target_rid, 0)
+    except struct.error as error:
+        raise ValueError("battle state-sync target is outside its TDR wire range") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,30 +144,32 @@ def encode_battle_hit_point_notify(
     attacker_weapon_id: int,
     target_weapon_id: int,
     server_time_ms: int,
+    hit_direction: tuple[float, float, float] = (1.0, 0.0, 0.0),
+    hit_normal: tuple[float, float, float] = (0.0, 0.0, 1.0),
+    material_id: int = 0,
+    ignore_hurt: bool = False,
 ) -> bytes:
     position = _require_triple(hit_pos, "hit_pos")
+    direction = _require_triple(hit_direction, "hit_direction")
+    normal = _require_triple(hit_normal, "hit_normal")
     try:
         return struct.pack(
             ">Hfffb4f4fiQiQiIQBBi",
             HIT_POINT_NOTIFY,
             *position,
             0,
-            1.0,
+            *direction,
             0.0,
+            *normal,
             0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            0.0,
-            0,
+            material_id,
             attacker_mid,
             attacker_weapon_id,
             target_mid,
             target_weapon_id,
             0,
             server_time_ms,
-            0,
+            int(ignore_hurt),
             1,
             0,
         )

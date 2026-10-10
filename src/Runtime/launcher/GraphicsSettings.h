@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 #include "AudioSettings.h"
+#include "ClientWorld.h"
 #include <array>
 
 namespace t7 {
@@ -27,7 +28,8 @@ constexpr uint32_t GRAPHICS_MAP_OFFSET = 0x100, GRAPHICS_KEYS_OFFSET = 0x900;
 constexpr uint32_t GRAPHICS_DISPLAY_REQUEST_OFFSET = 0x90;
 inline const Bytes GRAPHICS_TICK_ORIGINAL{0x56, 0x8B, 0xF1, 0x80, 0x7E, 0x7C, 0x00};
 Bytes buildGraphicsMap(uint32_t address, uint32_t imageBase, const GraphicsValues& values);
-Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId, uint32_t audioEntry = 0);
+Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
+                        uint32_t audioEntry = 0, uint32_t worldEntry = 0);
 
 class GraphicsSettings final {
 public:
@@ -37,8 +39,10 @@ public:
     bool poll(GraphicsValues& values, uint32_t& result, bool& applied);
     void apply(const GraphicsValues& values);
     AudioSettings& audio() { return audio_; }
+    ClientWorld& world() { return world_; }
 private:
     AudioSettings audio_;
+    ClientWorld world_;
     void request(uint32_t command);
     HANDLE process_ = nullptr;
     uint32_t remote_ = 0, imageBase_ = 0, pending_ = 0;

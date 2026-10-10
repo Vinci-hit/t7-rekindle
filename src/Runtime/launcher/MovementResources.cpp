@@ -1,5 +1,6 @@
 #include "MovementResources.h"
 #include "ClientResourceXml.h"
+#include "SprintHookCode.h"
 #include "../core/Common.h"
 #include <algorithm>
 #include <map>
@@ -40,6 +41,12 @@ std::vector<Edit> modelActions(std::string_view source, const std::vector<Elemen
             ++landings;
         }
         const auto name = attribute(node, "Name");
+        if (name == encoded(L"直线移动")) {
+            const auto speed = unique(nodes, i, "Param", "Name", encoded(L"速度"));
+            if (attribute(nodes[speed], "Type") != "f32" || attribute(nodes[speed], "Value") != "5.0") invalid();
+            edits.push_back({nodes[speed].begin, nodes[speed].end,
+                "<Param Name=\"" + encoded(L"速度") + "\" Type=\"f32\" Value=\"" + std::to_string(JOG_SPEED) + "\"/>"});
+        }
         if (name != encoded(L"跳跃") && name != encoded(L"请求进入下蹲") && name != encoded(L"请求离开下蹲")) continue;
         if (attribute(node, "Type") != "ACTION" || node.content != node.end) invalid();
         auto parent = node.parent;

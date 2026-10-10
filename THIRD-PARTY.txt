@@ -7,6 +7,9 @@
 - Newtonsoft.Json 13.0.4 — MIT
 - NLog 6.2.1 — BSD-3-Clause
 - Microsoft.Web.WebView2 1.0.4258.31 — BSD-3-Clause（SDK；Evergreen Runtime 由 Microsoft 单独分发）
+- py_trees 2.6.0 — BSD-3-Clause（电脑玩家行为树）
+- pydot 4.0.1 — MIT，含 Python-2.0 授权代码（py_trees 依赖）
+- pyparsing 3.3.3 — MIT（pydot 依赖）
 - Lucide Icons 1.8.0（shield-check、flask-conical 两个矢量图标）— ISC
   项目：https://lucide.dev/；上游：https://github.com/lucide-icons/lucide
   路径保存在 src/Desktop/Resources/VersionCapsule.xaml，不引入图标运行时依赖。
@@ -18,6 +21,8 @@ System.Runtime.CompilerServices.Unsafe 6.1.2、System.Threading.Tasks.Extensions
 运行时组件许可及上游声明随启动器嵌入，可在“关于 → 开源软件说明”中离线阅读。
 源码位置为 src/Desktop/Resources/THIRD-PARTY-NOTICES.txt。
 托管依赖版本记录在 src/Desktop/packages.lock.json；更新依赖时同步核对许可声明。
+Python 业务依赖以原始 wheel 内容保存在 src/Business/vendor/，版本固定在该目录的
+requirements.txt，原始许可保存在各包的 .dist-info/licenses/ 中；构建和运行不在线安装依赖。
 
 构建工具：
 

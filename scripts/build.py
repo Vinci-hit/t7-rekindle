@@ -110,7 +110,13 @@ def prepare_runtime_fixture(python_home: Path) -> Path:
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         else:
             fail("CPython standard library archive or Lib directory is missing")
-        for name in ("python314.dll", "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        runtime_names = ("python314.dll", "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+        extensions = python_home / "DLLs" if (python_home / "DLLs").is_dir() else python_home
+        # Match the packaged runtime layout, including stdlib extension dependencies.
+        for source in extensions.iterdir():
+            if source.is_file() and source.suffix.lower() in (".pyd", ".dll") and source.name not in runtime_names:
+                shutil.copy2(source, python_root / source.name)
+        for name in runtime_names:
             source = python_home / name
             if source.is_file():
                 shutil.copy2(source, fixture / name)

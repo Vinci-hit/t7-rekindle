@@ -8,6 +8,10 @@
           Exclude="$(RepositoryRoot)src\Business\**\__pycache__\**\*"
           Link="Business\%(RecursiveDir)%(Filename)%(Extension)"
           CopyToOutputDirectory="Always" />
+    <None Include="$(RepositoryRoot)src\Business\vendor\**\*"
+          Exclude="$(RepositoryRoot)src\Business\vendor\**\*.py;$(RepositoryRoot)src\Business\vendor\**\*.pyc;$(RepositoryRoot)src\Business\vendor\**\__pycache__\**\*"
+          Link="Business\vendor\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="Always" />
   </ItemGroup>
 
   <!-- Retained output paths let VS notice a source file that has been deleted. -->

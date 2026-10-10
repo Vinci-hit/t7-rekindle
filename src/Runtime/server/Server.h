@@ -39,6 +39,7 @@ public:
     void command(const std::string& name);
     ServerSnapshot snapshot();
     std::vector<std::string> lines();
+    void updateWorld(const WorldSnapshot& world);
 private:
     using TimePoint = detail::TimePoint;
     struct PendingWrite { Bytes bytes; size_t offset = 0; std::string version, reason; };
@@ -70,6 +71,7 @@ private:
     detail::ServerClock clock_;
     std::unique_ptr<detail::ServerSignals> signals_;
     ServerSnapshot snapshot_;
+    WorldSnapshot world_;
     std::vector<std::string> lastLines_;
     std::unique_ptr<Journal> journal_;
     std::thread io_, business_;

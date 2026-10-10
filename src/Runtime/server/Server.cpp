@@ -28,6 +28,7 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
     {
         std::lock_guard<std::mutex> lock(mutex_);
         lastLines_.clear();
+        world_ = {};
     }
     validateConfig(config); config_ = config; boundConfig_ = config; root_ = root;
     // The package root may be installed read-only.  Keep generated revisions
@@ -387,7 +388,9 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         if (event.type == "control") { processControl(python, event, state); return; }
         if (event.type != "closed" && std::find(live.begin(), live.end(), event.connection) == live.end()) return;
         auto now = detail::Clock::now();
-        auto result = python.dispatch(event, state, python.context(boundConfig_, clock_.millis(now), live));
+        WorldSnapshot world;
+        { std::lock_guard<std::mutex> lock(mutex_); world = world_; }
+        auto result = python.dispatch(event, state, python.context(boundConfig_, clock_.millis(now), live, world));
         auto callbackMs = elapsedMs(now, detail::Clock::now());
         commit(result, event, python.version(), python.phase(result.state), now, callbackMs, state, timers, committed);
     } catch (const std::exception& e) {
@@ -399,6 +402,15 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         { std::lock_guard<std::mutex> lock(mutex_); snapshot_.error = e.what(); if (event.type == "control") ++snapshot_.completedControls; }
         journal_->add("ERROR", event.connection, python.version(), "event=" + std::to_string(event.id) + " " + e.what());
     }
+}
+void Server::updateWorld(const WorldSnapshot& world) {
+    const auto uptime = GetTickCount64(), now = clock_.millis();
+    auto value = world;
+    const auto age = uptime >= world.sampledAt ? uptime - world.sampledAt : UINT64_MAX;
+    value.ready = value.ready && age <= 250 && age <= now;
+    value.sampledAt = age <= now ? now - age : 0;
+    std::lock_guard<std::mutex> lock(mutex_);
+    world_ = value;
 }
 void Server::businessLoop() {
     try {

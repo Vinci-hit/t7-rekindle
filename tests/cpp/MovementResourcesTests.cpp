@@ -1,6 +1,7 @@
 #include "../../src/Runtime/launcher/MovementResources.h"
 #include "../../src/Runtime/core/Common.h"
 #include "../../src/Runtime/launcher/ClientResourceXml.h"
+#include "../../src/Runtime/launcher/SprintHookCode.h"
 #include "MovementTreeFixture.h"
 #include <functional>
 #include <iostream>
@@ -113,6 +114,19 @@ bool verifyMovementResources() {
 
         const auto movement = gbk(movementTreeFixture());
         const auto router = t7::transformMovementResource(Resource::Router, movement);
+        auto withSpeed = movement;
+        const auto moveNode = std::string("<Node Type=\"ACTION\" ID=\"13\" Name=\"fixture-move\"/>");
+        withSpeed.replace(withSpeed.find(moveNode), moveNode.size(), gbk(
+            L"<Node Type=\"ACTION\" ID=\"13\" Name=\"直线移动\">"
+            L"<Param Name=\"方向\" Type=\"str\" Value=\"up\"/>"
+            L"<Param Name=\"速度\" Type=\"f32\" Value=\"5.0\"/>"
+            L"<Param Name=\"最大速度\" Type=\"f32\" Value=\"25.0\"/>"
+            L"<Param Name=\"加速度\" Type=\"f32\" Value=\"0.0\"/></Node>"));
+        const auto jog = t7::transformMovementResource(Resource::Router, withSpeed);
+        require(jog.find(gbk(L"Name=\"速度\" Type=\"f32\" Value=\"") + std::to_string(t7::JOG_SPEED) + "\"") != jog.npos,
+                "movement key-down did not start at the offline jog speed");
+        require(jog.find(gbk(L"Name=\"加速度\" Type=\"f32\" Value=\"0.0\"")) != jog.npos,
+                "jog changed the original acceleration command");
         const auto lifecycle = gbk(L"<Node Type=\"SEL\" ID=\"1\">"
             L"<Node Type=\"SEL\" ID=\"2\" Description=\"进入节点\"/>"
             L"<Node Type=\"SEL\" ID=\"3\" Description=\"退出节点\"/>"

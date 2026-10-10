@@ -1,18 +1,37 @@
 """Trusted embedded business packages; no transport or persistent PyObject state."""
 from __future__ import annotations
 
+import atexit
 import base64
 import hashlib
 import importlib.util
 import json
 import math
+import os
 import shutil
 from pathlib import Path
 import sys
 import uuid
 
+# Packaged pure-Python dependencies; the isolated host does not load site-packages.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vendor"))
+
 MAX_BYTES = 8 * 1024 * 1024
 API_VERSION = 1
+
+
+def _closeOutput(name, stream):
+    if getattr(sys, name) is stream:
+        setattr(sys, name, None)
+    stream.close()
+
+
+# GUI hosts have no console; business logs and exceptions use the native bridge.
+for _name in ("stdout", "stderr"):
+    if getattr(sys, _name) is None:
+        _stream = open(os.devnull, "w", encoding="utf-8")
+        setattr(sys, _name, _stream)
+        atexit.register(_closeOutput, _name, _stream)
 
 
 def _pack(value, depth=0):

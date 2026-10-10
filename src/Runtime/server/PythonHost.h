@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Common.h"
+#include "../core/WorldSnapshot.h"
 #include <Python.h>
 
 namespace t7 {
@@ -24,7 +25,8 @@ public:
     ~PythonHost();
     PythonHost(const PythonHost&) = delete;
     PythonHost& operator=(const PythonHost&) = delete;
-    std::string context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections);
+    std::string context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections,
+                        const WorldSnapshot& world = {});
     std::string create(const std::string& context);
     Transition dispatch(const Event& event, const std::string& state, const std::string& context);
     std::string prepare();

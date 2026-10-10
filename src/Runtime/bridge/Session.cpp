@@ -256,7 +256,7 @@ void Session::workerLoop() {
             bool hasCommand = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                hasCommand = changed_.wait_for(lock, std::chrono::milliseconds(100),
+                hasCommand = changed_.wait_for(lock, std::chrono::milliseconds(50),
                     [this] { return closing_ || !commands_.empty(); });
                 if (!hasCommand && snapshot_.state == T7NB_STATE_RUNNING && !closing_) {
                     lock.unlock();
@@ -362,7 +362,16 @@ void Session::monitorClient() {
         setFailure(0, T7NB_ERROR_OPERATION, std::string("owned client status failed: ") + error.what());
         return;
     }
-    if (alive && !windowClosed) { monitorGraphics(); monitorAudio(); return; }
+    if (alive && !windowClosed) {
+        monitorGraphics(); monitorAudio();
+        try {
+            WorldSnapshot world;
+            if (server_ && bootstrap_.pollWorld(world)) server_->updateWorld(world);
+        } catch (const std::exception& error) {
+            setFailure(0, T7NB_ERROR_OPERATION, std::string("world snapshot failed: ") + error.what());
+        }
+        return;
+    }
     DWORD exitCode = 0;
     try { if (!windowClosed) exitCode = bootstrap_.exitCode(); }
     catch (const std::exception& error) {
@@ -430,6 +439,7 @@ void Session::executeStart(const Command& command) {
     config.bindAddress = "127.0.0.1";
     config.advertisedAddress = "127.0.0.1";
     config.playerName = command.playerName;
+    config.clientDirectory = fs::path(wide(command.clientDirectory));
     config.skipStartupAnimation = command.skipStartupAnimation;
     config.outputDevice = command.outputDevice;
     config.ports[0] = config.ports[1] = config.ports[2] = 0;
