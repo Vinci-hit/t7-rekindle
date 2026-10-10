@@ -27,11 +27,13 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
     <AssemblyMetadata Include="RepositoryUrl" Value="$(RepositoryUrl)" />
     <AssemblyMetadata Include="DownloadUrl" Value="$(RepositoryUrl)/releases" />
     <AssemblyMetadata Include="BuildsUrl" Value="$(RepositoryUrl)/actions/workflows/ci.yml" />
     <AssemblyMetadata Include="IssuesUrl" Value="$(RepositoryUrl)/issues" />
     <AssemblyMetadata Include="UpdateBaseUrl" Value="$(T7_UPDATE_BASE_URL)" />
+    <AssemblyMetadata Include="AuthBaseUrl" Value="$(T7_AUTH_BASE_URL)" />
     <AssemblyMetadata Include="BuildChannel" Value="$(T7_BUILD_CHANNEL)" />
     <AssemblyMetadata Include="PreviewRunId" Value="$(T7_PREVIEW_RUN_ID)" />
     <AssemblyMetadata Include="PreviewRunNumber" Value="$(T7_PREVIEW_RUN_NUMBER)" />
@@ -57,6 +59,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="[8.4.2]" ExcludeAssets="analyzers" />
     <PackageReference Include="Newtonsoft.Json" Version="[13.0.4]" />
     <PackageReference Include="NLog" Version="[6.2.1]" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="[1.0.4258.31]" />
   </ItemGroup>
   <Target Name="CopyNativeBridge" AfterTargets="Build">
     <Copy SourceFiles="$(RepositoryRoot)artifacts\native\bin\$(PlatformTarget)\$(Configuration)\T7.NativeBridge.dll"

@@ -85,7 +85,50 @@ java -jar target/rekindle-server-0.1.0-SNAPSHOT.jar --reset-admin --confirm-rese
 - MySQL 是唯一在线归属的权威数据源；加锁顺序为账户、session、在线记录。后台写操作在此之前锁定管理员记录并复核其权限版本。
 - 后台身份独立，Cookie 不用于普通账户 API；Bearer token 不用于后台。管理员空闲 30 分钟退出，进程重启后重新登录。多实例后台需要粘性会话；普通账户认证和在线状态不需要。
 
-完整请求/响应见 [OpenAPI](contracts/openapi-auth-v1.yaml)。不提供 refresh 或普通账户自行注册接口。
+完整请求/响应见 [OpenAPI](contracts/openapi-auth-v1.yaml)。不提供 refresh；密码账户由管理端创建，QQ 账户在首次验证成功后自动创建。
+
+## QQ 扫码登录
+
+启动器使用 WebView2 InPrivate 展示 QQ 互联官方登录页面，扫码后只上传验证地址作用域内的 Cookie 和 Windows `MachineGuid`。
+`POST /api/v1/auth/qq/sessions` 在事务外调用固定的 `get_nick` 地址，成功后在事务内创建或更新 QQ 账号并签发本应用 Session。
+QQ Cookie 不写入数据库、磁盘或日志；后续心跳和推送仅使用本应用 Bearer Token 与 `X-Machine-Id`。
+
+- QQ 账号 `login_name`、`qq_number` 均采用 QQ 号字符串；昵称每次扫码更新，头像使用 QQ 头像 URL。
+- 已有同名密码账号返回 `QQ_ACCOUNT_CONFLICT`，不自动改名或绑定。管理端禁止新建纯数字密码账号，已有数字密码账号仍可登录。
+- QQ 账号不支持密码登录或重置密码；禁用、撤销与会话管理复用管理端。
+- 新机器扫码登录撤销其他机器的 Session，并通知其在线连接；同机器保留原 Session，但仍只有一个在线连接。
+- 应用凭证固定有效 30 天，启动器用 DPAPI CurrentUser 保存；正常关闭只下线，退出账号清理本地凭据并尽力注销，失败不显示额外提示。
+- 未登录、断网或被踢下线均不停止本地游戏。网络异常保留凭据；租约过期后由用户点击“重新上线”，不自动接管。
+
+### QQ 接口上线验证
+
+`get_nick` 的响应只有昵称，QQ 号来自 `uin`；有 `p_uin` 时要求二者一致。这不是 QQ OAuth 接口，也没有返回稳定身份字段的公开契约。
+上线前必须用本人测试账号确认：有效 Cookie 从部署服务器访问成功；缺失或过期凭据失败；交叉替换两个测试账号的 `uin`、`p_uin` 与凭据时拒绝错误绑定。
+昵称相同不表示同一账号。若接口不校验 QQ 号与凭据的绑定，或部署服务器访问被风控拦截，停止开放该登录入口，不以客户端自报 QQ 号签发凭证。
+自动化测试采用合成响应，不代替上述真实接口验收；不要将真实 Cookie 放入测试样例或日志。
+
+### 即时踢下线与多实例
+
+`GET /api/v1/auth/online/{connectionId}/events` 返回 SSE，初始 `ready` 事件确认连接，`kicked` 包含目标 `sessionId`、`connectionId` 和原因。
+异机登录、在线接管、管理员撤销与禁用在事务提交后通知；本实例直接投递，其他实例通过现有 Redis Pub/Sub 接收。
+事件不持久化、不补发。Redis 推送故障不改变已提交的会话状态，心跳和 SSE 重连验证负责兜底。
+心跳 15 秒、租约 45 秒；SSE 每 15 秒保活但不续租。启动器 SSE 按 1、2、5、10、30 秒退避重连原连接，不自动抢回在线资格。
+
+Nginx 在现有 HTTPS 站点内为此路径设置流式转发（将地址替换为部署配置）：
+
+```nginx
+location ~ ^/api/v1/auth/online/[^/]+/events$ {
+    proxy_pass http://HOST:PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 75s;
+}
+```
+
+发布顺序：执行 `V003__qq_authentication.sql` 迁移、部署服务端、设置 `T7_AUTH_BASE_URL=https://HOST` 后构建启动器。
+数据库备份和原有密码登录兼容要求保持不变；不要回滚或重写已执行的迁移。
 
 ## 运行行为
 

@@ -17,13 +17,15 @@ public class AuthService {
     private final Secrets secrets;
     private final LoginLimiter limiter;
     private final TransactionTemplate tx;
+    private final SessionEvents events;
 
-    public AuthService(AuthMapper db, AdminMapper audit, Secrets secrets, LoginLimiter limiter, TransactionTemplate tx) {
+    public AuthService(AuthMapper db, AdminMapper audit, Secrets secrets, LoginLimiter limiter, TransactionTemplate tx, SessionEvents events) {
         this.db = db;
         this.audit = audit;
         this.secrets = secrets;
         this.limiter = limiter;
         this.tx = tx;
+        this.events = events;
     }
 
     public SessionCredentials login(String name, String password, String address) {
@@ -33,7 +35,7 @@ public class AuthService {
         SessionCredentials result = tx.execute(status -> {
             Account account = db.lockByName(name);
             boolean passwordMatches = secrets.matches(password, account == null ? null : account.passwordHash());
-            if (account == null || !passwordMatches || !account.status().equals("ACTIVE")) {
+            if (account == null || !passwordMatches || account.qqNumber() != null || !account.status().equals("ACTIVE")) {
                 audit.audit("anonymous", "ACCOUNT_LOGIN_FAILED", name);
                 return null;
             }
@@ -50,10 +52,16 @@ public class AuthService {
     }
 
     public Identity authenticate(String token) {
+        return authenticate(token, null);
+    }
+
+    public Identity authenticate(String token, String machineId) {
         if (token == null || !token.matches("[A-Za-z0-9_-]{43}")) throw Problem.unauthorized();
         Session session = db.sessionByHash(Secrets.hash(token));
         if (session == null) throw Problem.unauthorized();
-        return validate(db.account(session.accountId()), session, db.now());
+        Identity identity = validate(db.account(session.accountId()), session, db.now());
+        if (session.machineId() != null && !session.machineId().equalsIgnoreCase(machineId)) throw Problem.unauthorized();
+        return identity;
     }
 
     public Identity requireLocked(Identity identity) {
@@ -66,6 +74,8 @@ public class AuthService {
         tx.executeWithoutResult(status -> {
             requireLocked(identity);
             db.revokeSession(identity.sessionId(), "LOGOUT");
+            Presence owner = db.lockPresence(identity.accountId());
+            if (owner != null && owner.sessionId().equals(identity.sessionId())) events.kick(owner, "SESSION_REVOKED");
             db.clearSessionPresence(identity.accountId(), identity.sessionId());
             audit.audit(identity.accountId(), "ACCOUNT_LOGOUT", identity.sessionId());
         });
@@ -77,6 +87,7 @@ public class AuthService {
                 || account.authEpoch() != session.authEpoch() || !session.expiresAt().isAfter(now)) {
             throw Problem.unauthorized();
         }
-        return new Identity(account.accountId(), session.sessionId(), account.loginName(), session.expiresAt());
+        return new Identity(account.accountId(), session.sessionId(), account.loginName(), session.expiresAt(),
+                session.machineId(), account.qqNumber(), account.nickname(), account.avatarUrl());
     }
 }

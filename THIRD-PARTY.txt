@@ -6,6 +6,7 @@
 - CommunityToolkit.Mvvm 8.4.2 — MIT
 - Newtonsoft.Json 13.0.4 — MIT
 - NLog 6.2.1 — BSD-3-Clause
+- Microsoft.Web.WebView2 1.0.4258.31 — BSD-3-Clause（SDK；Evergreen Runtime 由 Microsoft 单独分发）
 - Lucide Icons 1.8.0（shield-check、flask-conical 两个矢量图标）— ISC
   项目：https://lucide.dev/；上游：https://github.com/lucide-icons/lucide
   路径保存在 src/Desktop/Resources/VersionCapsule.xaml，不引入图标运行时依赖。

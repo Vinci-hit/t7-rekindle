@@ -54,6 +54,7 @@ namespace T7.Rekindle.Desktop
             MainWindow = window;
             window.Show();
             viewModel.StartUpdateChecks(DateTime.UtcNow);
+            _ = viewModel.Account.RestoreAsync();
         }
 
         protected override void OnExit(ExitEventArgs e)

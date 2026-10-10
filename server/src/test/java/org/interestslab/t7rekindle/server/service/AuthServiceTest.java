@@ -23,7 +23,7 @@ class AuthServiceTest {
     private AuthService service;
 
     @BeforeEach void setup() {
-        service = new AuthService(db, audit, secrets, limiter, TestTransactions.immediate());
+        service = new AuthService(db, audit, secrets, limiter, TestTransactions.immediate(), mock(SessionEvents.class));
         when(db.now()).thenReturn(now);
         when(db.account("account")).thenReturn(account);
         when(db.lockAccount("account")).thenReturn(account);
@@ -82,6 +82,30 @@ class AuthServiceTest {
         order.verify(db).clearSessionPresence("account", "session");
         when(db.lockSession("session")).thenReturn(null);
         assertThatThrownBy(() -> service.requireLocked(identity)).isInstanceOf(Problem.class);
+    }
+    @Test void boundSessionRequiresMatchingMachineButLegacySessionDoesNot() {
+        var bound = new Session("session", "account", Secrets.hash(token), 0, now, now.plusSeconds(100), null, null,
+                "12345678-1234-1234-1234-123456789abc");
+        when(db.sessionByHash(anyString())).thenReturn(bound);
+        assertThatThrownBy(() -> service.authenticate(token)).isInstanceOf(Problem.class);
+        assertThatThrownBy(() -> service.authenticate(token, "other")).isInstanceOf(Problem.class);
+        assertThat(service.authenticate(token, bound.machineId().toUpperCase()).machineId()).isEqualTo(bound.machineId());
+        when(db.sessionByHash(anyString())).thenReturn(session(0, now.plusSeconds(100), null, "account"));
+        assertThat(service.authenticate(token, "ignored")).isEqualTo(identity);
+    }
+    @Test void qqAccountHasNoPasswordLoginAndLogoutNotifiesOnlyItsConnection() {
+        when(db.lockByName("sample")).thenReturn(new Account("account", "sample", "hash", "ACTIVE", 0, now, "12345", "nick", "url"));
+        failsLogin();
+        var events = mock(SessionEvents.class);
+        service = new AuthService(db, audit, secrets, limiter, TestTransactions.immediate(), events);
+        var mine = new Presence("account", "session", "connection", now.plusSeconds(45));
+        when(db.lockPresence("account")).thenReturn(mine);
+        service.logout(identity);
+        verify(events).kick(mine, "SESSION_REVOKED");
+        reset(events);
+        when(db.lockPresence("account")).thenReturn(new Presence("account", "other", "connection", now.plusSeconds(45)));
+        service.logout(identity);
+        verifyNoInteractions(events);
     }
     private void failsLogin() { assertThatThrownBy(() -> service.login("sample", "PASSWORD", "IP")).isInstanceOf(Problem.class); }
     private void failsAuthentication() { assertThatThrownBy(() -> service.authenticate(token)).isInstanceOf(Problem.class); }

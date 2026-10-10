@@ -19,7 +19,7 @@
     <nav class="pagination" aria-label="账户分页"><a th:if="${page > 0}" th:href="@{/admin/accounts(query=${query},page=${page - 1})}">上一页</a><span th:text="'第 ' + (${page} + 1) + ' 页'"></span><a th:if="${accounts.size() == 50}" th:href="@{/admin/accounts(query=${query},page=${page + 1})}">下一页</a></nav>
   </section>
   <section class="panel create-panel"><div><h2>创建普通账户</h2><p class="muted">系统生成随机密码，仅在创建成功后展示一次。</p></div>
-    <form th:action="@{/admin/accounts}" method="post" class="toolbar"><div class="field"><label for="newLoginName">登录名</label><input id="newLoginName" name="loginName" required minlength="3" maxlength="64" pattern="[a-z0-9_.\-]{3,64}" autocomplete="off" aria-describedby="nameHelp"><span class="footnote" id="nameHelp">3–64 位小写字母、数字或 _ . -</span></div><button type="submit">创建账户</button></form>
+    <form th:action="@{/admin/accounts}" method="post" class="toolbar"><div class="field"><label for="newLoginName">登录名</label><input id="newLoginName" name="loginName" required minlength="3" maxlength="64" pattern="(?![0-9]+$)[a-z0-9_.\-]{3,64}" autocomplete="off" aria-describedby="nameHelp"><span class="footnote" id="nameHelp">3–64 位小写字母、数字或 _ . -，纯数字保留给 QQ 账号</span></div><button type="submit">创建账户</button></form>
   </section>
 </main>
 </body>

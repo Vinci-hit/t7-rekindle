@@ -14,6 +14,24 @@ namespace T7.ManagedHarness
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length >= 1 && args[0] == "--account-tests")
+            {
+                try
+                {
+                    AccountTests.Run();
+                    if (args.Length == 2)
+                    {
+                        var app = new T7.Rekindle.Desktop.App(false);
+                        app.InitializeComponent();
+                        app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+                        AccountTests.Render(args[1]);
+                        app.Shutdown();
+                    }
+                    Console.WriteLine("account checks passed");
+                    return 0;
+                }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+            }
             if (args.Length > 0 && args[0] == "--rollback-tests")
             {
                 try
@@ -64,6 +82,7 @@ namespace T7.ManagedHarness
                 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
             }
             NativeAbiLayout.Validate();
+            AccountTests.Run();
             NativeBridgeServiceTests.Run();
             GitHubReleaseUpdateTests.Run();
             UpdateFeedTests.Run();

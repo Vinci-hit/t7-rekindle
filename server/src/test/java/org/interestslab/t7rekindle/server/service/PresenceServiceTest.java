@@ -30,7 +30,7 @@ class PresenceServiceTest {
         doCallRealMethod().when(tx).executeWithoutResult(any());
         when(db.now()).thenReturn(now);
         when(auth.requireLocked(identity)).thenReturn(identity);
-        service = new PresenceService(db, auth, tx);
+        service = new PresenceService(db, auth, tx, mock(SessionEvents.class));
     }
 
     @Test void explicitOnlineCreatesNewConnectionAndClampsDeadline() {
@@ -60,6 +60,16 @@ class PresenceServiceTest {
         service.offline(identity, "old");
         verify(db).clearConnection("account", "session", "old");
         verify(db, never()).revokeSession(any(), any());
+    }
+    @Test void streamValidationDoesNotRenewLeaseAndTakeoverPushesOldConnection() {
+        var events = mock(SessionEvents.class);
+        service = new PresenceService(db, auth, tx, events);
+        var owner = new Presence("account", "session", "old", now.plusSeconds(10));
+        when(db.lockPresence("account")).thenReturn(owner);
+        service.checkConnection(identity, "old");
+        verify(db, never()).savePresence(any());
+        service.online(identity);
+        verify(events).kick(owner, "ONLINE_TAKEN_OVER");
     }
 
     static void assertCode(ThrowingCallable call, String code) {

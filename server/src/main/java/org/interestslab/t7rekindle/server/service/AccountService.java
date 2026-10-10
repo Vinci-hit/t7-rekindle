@@ -18,25 +18,29 @@ public class AccountService {
     private final AdminService admins;
     private final Secrets secrets;
     private final TransactionTemplate tx;
+    private final SessionEvents events;
 
-    public AccountService(AuthMapper db, AdminMapper audit, AdminService admins, Secrets secrets, TransactionTemplate tx) {
+    public AccountService(AuthMapper db, AdminMapper audit, AdminService admins, Secrets secrets, TransactionTemplate tx, SessionEvents events) {
         this.db = db;
         this.audit = audit;
         this.admins = admins;
         this.secrets = secrets;
         this.tx = tx;
+        this.events = events;
     }
     public List<AccountView> list(String prefix, int page) { return db.accounts(Inputs.prefix(prefix), Inputs.offset(page)); }
     public AccountView account(String id) {
         Account account = db.account(id);
         if (account == null) throw Problem.missing();
-        return new AccountView(account.accountId(), account.loginName(), account.status(), account.createdAt());
+        return new AccountView(account.accountId(), account.loginName(), account.status(), account.createdAt(),
+                account.qqNumber(), account.nickname());
     }
     public List<SessionView> sessions(String id, int page) { return db.sessions(id, Inputs.offset(page)); }
     public List<Audit> audits(int page) { return audit.audits(Inputs.offset(page)); }
 
     public GeneratedPassword create(AdminIdentity admin, String name) {
         Inputs.loginName(name);
+        if (name.matches("[0-9]+")) throw new Problem(400, "LOGIN_NAME_RESERVED", "纯数字登录名保留给 QQ 账号");
         String password = secrets.randomToken();
         try {
             return tx.execute(status -> {
@@ -54,8 +58,10 @@ public class AccountService {
         return tx.execute(status -> {
             admins.requireManagement(admin);
             Account account = requireAccount(id);
+            if (account.qqNumber() != null) throw new Problem(400, "QQ_PASSWORD_UNSUPPORTED", "QQ 账号使用扫码登录");
             String password = secrets.randomToken();
             db.resetPassword(id, secrets.encode(password));
+            events.kick(db.lockPresence(id), "SESSION_REVOKED");
             db.clearPresence(id);
             audit.audit("admin", "ACCOUNT_PASSWORD_RESET", id);
             return new GeneratedPassword(account.loginName(), password);
@@ -66,6 +72,7 @@ public class AccountService {
             admins.requireManagement(admin);
             requireAccount(id);
             db.setStatus(id, enabled ? "ACTIVE" : "DISABLED");
+            events.kick(db.lockPresence(id), enabled ? "SESSION_REVOKED" : "ACCOUNT_DISABLED");
             db.clearPresence(id);
             audit.audit("admin", enabled ? "ACCOUNT_ENABLED" : "ACCOUNT_DISABLED", id);
         });
@@ -75,6 +82,7 @@ public class AccountService {
             admins.requireManagement(admin);
             requireAccount(id);
             db.bumpEpoch(id);
+            events.kick(db.lockPresence(id), "ADMIN_REVOKED");
             db.clearPresence(id);
             audit.audit("admin", "ALL_SESSIONS_REVOKED", id);
         });
@@ -86,6 +94,8 @@ public class AccountService {
             Session session = db.lockSession(sessionId);
             if (session == null || !session.accountId().equals(id)) throw Problem.missing();
             db.revokeSession(sessionId, "ADMIN_REVOKED");
+            Presence owner = db.lockPresence(id);
+            if (owner != null && owner.sessionId().equals(sessionId)) events.kick(owner, "ADMIN_REVOKED");
             db.clearSessionPresence(id, sessionId);
             audit.audit("admin", "SESSION_REVOKED", sessionId);
         });

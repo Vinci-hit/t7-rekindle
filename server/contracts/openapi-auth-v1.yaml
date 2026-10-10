@@ -5,6 +5,8 @@ info:
   description: |
     普通账户的凭证与在线资格分离。Session 创建后固定有效 30 天，无 refresh 接口。
     登录不占用在线资格；显式上线接管当前连接。被接管的 session 仍可鉴权。
+    QQ 登录会撤销该账号其他机器上的 session，loginName 为 QQ 号字符串。
+    机器绑定的 session 在所有请求（含 SSE）中必须附带匹配的 X-Machine-Id。
     客户端每 15 秒心跳，租约 45 秒；心跳不会延长 session 有效期。
     收到 ONLINE_TAKEN_OVER 或 NOT_ONLINE 后停止心跳，由用户显式重新上线。
     服务端响应使用 Cache-Control: no-store。部署环境必须使用 HTTPS。
@@ -13,6 +15,36 @@ servers:
 security:
   - sessionBearer: []
 paths:
+  /api/v1/auth/qq/sessions:
+    post:
+      operationId: createQqSession
+      summary: 验证 QQ 互联登录状态，创建或更新 QQ 账号并签发机器绑定凭证
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [machineId, qqSessionCookie]
+              properties:
+                machineId: {type: string, format: uuid, description: Windows MachineGuid}
+                qqSessionCookie: {type: string, maxLength: 16384, writeOnly: true, description: 仅包含 get_nick 地址作用域内的 Cookie，不持久化}
+      responses:
+        '201':
+          description: 新的 30 天 Session；其他机器的 Session 已撤销
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QqSessionCredentials'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409':
+          description: QQ_ACCOUNT_CONFLICT，保留同名旧密码账号，由管理员处理冲突
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/sessions:
     post:
       operationId: createSession
@@ -39,6 +71,8 @@ paths:
         '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/session:
+    parameters:
+      - {$ref: '#/components/parameters/MachineId'}
     get:
       operationId: getCurrentSession
       summary: 验证已保存的凭证，不续期
@@ -58,6 +92,8 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/online:
+    parameters:
+      - {$ref: '#/components/parameters/MachineId'}
     post:
       operationId: acquireOnlineConnection
       summary: 显式上线，原子接管账户的在线资格
@@ -73,6 +109,7 @@ paths:
   /api/v1/auth/online/{connectionId}/heartbeat:
     parameters:
       - {$ref: '#/components/parameters/ConnectionId'}
+      - {$ref: '#/components/parameters/MachineId'}
     post:
       operationId: heartbeat
       summary: 仅为当前匹配且尚未过期的在线连接续租
@@ -88,6 +125,7 @@ paths:
   /api/v1/auth/online/{connectionId}:
     parameters:
       - {$ref: '#/components/parameters/ConnectionId'}
+      - {$ref: '#/components/parameters/MachineId'}
     delete:
       operationId: leaveOnlineConnection
       summary: 下线但不撤销 session
@@ -95,6 +133,28 @@ paths:
       responses:
         '204': {description: 请求已处理，session 仍然有效}
         '401': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/online/{connectionId}/events:
+    parameters:
+      - {$ref: '#/components/parameters/ConnectionId'}
+      - {$ref: '#/components/parameters/MachineId'}
+    get:
+      operationId: subscribeOnlineEvents
+      summary: 当前在线连接的 SSE 踢下线通知
+      description: |
+        建连验证凭证及在线归属，不续租。首个事件为 ready（含 connectionId），每 15 秒发送保活注释。
+        kicked 事件携带 KickEvent，随后关闭连接。只重连原 connectionId，不自动调用上线接口。
+        推送是尽力投递，重连鉴权及心跳为丢失事件兜底，不支持 Last-Event-ID 补发。
+      responses:
+        '200':
+          description: SSE 事件流
+          headers:
+            X-Accel-Buffering: {schema: {type: string, const: 'no'}}
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/OnlineConflict'}
         '503': {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
@@ -104,6 +164,12 @@ components:
       bearerFormat: opaque-session-token
       description: 32 随机字节的无填充 Base64URL；sessionId 本身不是凭证
   parameters:
+    MachineId:
+      name: X-Machine-Id
+      in: header
+      required: false
+      description: 对 QQ 机器绑定 Session 必填，缺失或不匹配返回 401；旧密码 Session 不要求此字段
+      schema: {type: string, format: uuid}
     ConnectionId:
       name: connectionId
       in: path
@@ -125,6 +191,24 @@ components:
         sessionId: {type: string, format: uuid}
         loginName: {type: string}
         expiresAt: {type: string, format: date-time}
+        machineId: {type: [string, 'null'], format: uuid}
+        qqNumber: {type: [string, 'null'], description: QQ 号，不使用 JSON 数值表示}
+        nickname: {type: [string, 'null']}
+        avatarUrl: {type: [string, 'null'], format: uri}
+    QqSessionCredentials:
+      allOf:
+        - {$ref: '#/components/schemas/SessionCredentials'}
+        - {$ref: '#/components/schemas/Identity'}
+        - type: object
+          required: [machineId, qqNumber, nickname, avatarUrl]
+    KickEvent:
+      type: object
+      required: [accountId, sessionId, connectionId, reason]
+      properties:
+        accountId: {type: string, format: uuid}
+        sessionId: {type: string, format: uuid}
+        connectionId: {type: string, format: uuid}
+        reason: {type: string, enum: [MACHINE_CHANGED, ONLINE_TAKEN_OVER, ADMIN_REVOKED, ACCOUNT_DISABLED, SESSION_REVOKED]}
     OnlineConnection:
       type: object
       required: [connectionId, leaseExpiresAt, heartbeatIntervalSeconds]

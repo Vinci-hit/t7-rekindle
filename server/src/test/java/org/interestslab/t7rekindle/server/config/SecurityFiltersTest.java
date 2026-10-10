@@ -27,7 +27,7 @@ class SecurityFiltersTest {
         var filter = new SecurityConfig.ApiFilter(auth, new WebErrors(JsonMapper.builder().build()));
         var request = new MockHttpServletRequest("GET", "/api/v1/auth/session");
         request.addHeader("Authorization", "Bearer " + "A".repeat(43));
-        when(auth.authenticate(any())).thenThrow(new DataAccessResourceFailureException("database offline"));
+        when(auth.authenticate(any(), any())).thenThrow(new DataAccessResourceFailureException("database offline"));
         var response = new MockHttpServletResponse();
         filter.doFilter(request, response, chain);
         assertThat(response.getStatus()).isEqualTo(503);
@@ -46,7 +46,7 @@ class SecurityFiltersTest {
         assertThat(response.getStatus()).isEqualTo(401);
         request.removeHeader("Authorization");
         request.addHeader("Authorization", "Bearer TOKEN");
-        when(auth.authenticate(any())).thenThrow(Problem.unauthorized());
+        when(auth.authenticate(any(), any())).thenThrow(Problem.unauthorized());
         response = new MockHttpServletResponse();
         filter.doFilter(request, response, mock(FilterChain.class));
         assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("Bearer");

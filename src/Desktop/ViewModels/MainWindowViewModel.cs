@@ -198,6 +198,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         public string StopButtonText => _snapshot.State == SessionState.FailedCleaning ? "重试清理" : "结束游戏";
         public string CancelButtonText => _activeKind == OperationKind.Check ? "取消检查" : "取消启动";
         public AboutViewModel About { get; }
+        public AccountViewModel Account { get; } = AccountViewModel.CreateDefault();
         internal Task ValidationTask { get; private set; }
         public RelayCommand BrowseCommand { get; }
         public IAsyncRelayCommand CheckCommand { get; }
@@ -324,6 +325,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _poller.Stop();
             About.PropertyChanged -= OnUpdateActivityChanged;
             About.Dispose();
+            Account.Dispose();
             GameSessionEnded -= TriggerUpdateCheck;
             _validationCancellation?.Cancel();
             _operationCancellation?.Cancel();

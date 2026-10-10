@@ -3,6 +3,7 @@ package org.interestslab.t7rekindle.server.config;
 import java.io.IOException;
 import java.util.List;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -37,7 +38,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .requestCache(cache -> cache.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(rules -> rules.requestMatchers(HttpMethod.POST, "/api/v1/auth/sessions").permitAll()
+                .authorizeHttpRequests(rules -> rules.dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/sessions", "/api/v1/auth/qq/sessions").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint((request, response, error) -> errors.write(response, Problem.unauthorized()))
@@ -86,11 +88,12 @@ public class SecurityConfig {
         @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                 FilterChain chain) throws ServletException, IOException {
             response.setHeader("Cache-Control", "no-store");
-            if (!(request.getMethod().equals("POST") && request.getRequestURI().equals("/api/v1/auth/sessions"))) {
+            if (!(request.getMethod().equals("POST") && List.of("/api/v1/auth/sessions", "/api/v1/auth/qq/sessions")
+                    .contains(request.getRequestURI()))) {
                 try {
                     String authorization = request.getHeader("Authorization");
                     if (authorization == null || !authorization.startsWith("Bearer ")) throw Problem.unauthorized();
-                    authenticate(auth.authenticate(authorization.substring(7)), "ROLE_ACCOUNT");
+                    authenticate(auth.authenticate(authorization.substring(7), request.getHeader("X-Machine-Id")), "ROLE_ACCOUNT");
                 } catch (Problem error) {
                     errors.write(response, error);
                     return;

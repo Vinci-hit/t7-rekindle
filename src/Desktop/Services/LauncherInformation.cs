@@ -57,6 +57,7 @@ namespace T7.Rekindle.Desktop.Services
         public static string ContactAddress => ReadMetadata("ContactUrl");
         public static string IssuesAddress => ReadMetadata("IssuesUrl");
         public static string UpdateBaseAddress => ReadMetadata("UpdateBaseUrl");
+        public static string AuthBaseAddress => ReadMetadata("AuthBaseUrl");
         internal static LauncherBuild CurrentBuild => new LauncherBuild(
             ReadMetadata("BuildChannel") == "stable" ? UpdateChannel.Stable : UpdateChannel.Preview,
             Version, ReadNumber("PreviewRunId"), ReadNumber("PreviewRunNumber"),

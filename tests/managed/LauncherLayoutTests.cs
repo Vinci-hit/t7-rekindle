@@ -25,6 +25,7 @@ namespace T7.ManagedHarness
             var settingsDirectory = Path.Combine(Path.GetTempPath(), "T7-layout-" + Guid.NewGuid().ToString("N"));
             try
             {
+                AccountTests.Render(outputDirectory);
                 LaunchControlsLayoutTests.Run(settingsDirectory, outputDirectory);
                 GraphicsSettingsTests.Render(settingsDirectory, outputDirectory);
                 OutputDeviceTests.Render(settingsDirectory, outputDirectory);

@@ -14,6 +14,12 @@
           "System.Runtime.CompilerServices.Unsafe": "6.1.2"
         }
       },
+      "Microsoft.Web.WebView2": {
+        "type": "Direct",
+        "requested": "[1.0.4258.31, 1.0.4258.31]",
+        "resolved": "1.0.4258.31",
+        "contentHash": "sHVZ2MQrHT1J3q5/6csn0fIP27rzpTO/RRC+wPQDrZheB7T4t2n+vVbY6SdCKr4WRV9s/gmBM3PPMWWJtoDzMg=="
+      },
       "Newtonsoft.Json": {
         "type": "Direct",
         "requested": "[13.0.4, 13.0.4]",
@@ -76,6 +82,13 @@
         "type": "Project"
       }
     },
-    ".NETFramework,Version=v4.8/win7-x64": {}
+    ".NETFramework,Version=v4.8/win7-x64": {
+      "Microsoft.Web.WebView2": {
+        "type": "Direct",
+        "requested": "[1.0.4258.31, 1.0.4258.31]",
+        "resolved": "1.0.4258.31",
+        "contentHash": "sHVZ2MQrHT1J3q5/6csn0fIP27rzpTO/RRC+wPQDrZheB7T4t2n+vVbY6SdCKr4WRV9s/gmBM3PPMWWJtoDzMg=="
+      }
+    }
   }
 }

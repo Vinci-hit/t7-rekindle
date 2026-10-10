@@ -37,6 +37,7 @@ Name: "{autoprograms}\T7-Rekindle"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\T7-Rekindle"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "https://developer.microsoft.com/microsoft-edge/webview2/"; Description: "下载 WebView2 Runtime（QQ 扫码登录需要）"; Flags: postinstall shellexec skipifsilent unchecked; Check: WebView2Missing
 Filename: "{app}\{#MyAppExeName}"; Description: "运行 T7-Rekindle"; Flags: postinstall nowait; Check: AllowLauncherRun
 Filename: "{app}"; Description: "打开安装目录"; Flags: postinstall shellexec skipifsilent unchecked
 
@@ -64,6 +65,17 @@ var
 function AllowLauncherRun(): Boolean;
 begin
   Result := not RollbackActive or RollbackReady;
+end;
+
+function WebView2Missing(): Boolean;
+var
+  Version: String;
+begin
+  Result := True;
+  if RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+    if (Version <> '') and (Version <> '0.0.0.0') then Result := False;
+  if RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+    if (Version <> '') and (Version <> '0.0.0.0') then Result := False;
 end;
 
 procedure RequireSuccess(Success: Boolean; MessageText: String);

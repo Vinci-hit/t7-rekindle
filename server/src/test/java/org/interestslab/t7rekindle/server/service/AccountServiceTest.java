@@ -22,7 +22,7 @@ class AccountServiceTest {
     private AccountService service;
 
     @BeforeEach void setup() {
-        service = new AccountService(db, audit, admins, secrets, TestTransactions.immediate());
+        service = new AccountService(db, audit, admins, secrets, TestTransactions.immediate(), mock(SessionEvents.class));
         when(db.account("id")).thenReturn(account);
         when(db.lockAccount("id")).thenReturn(account);
         when(secrets.randomToken()).thenReturn("GENERATED_PASSWORD");
@@ -65,5 +65,26 @@ class AccountServiceTest {
         service.revoke(admin, "id", "session");
         verify(db).revokeSession("session", "ADMIN_REVOKED");
         verify(db).clearSessionPresence("id", "session");
+    }
+    @Test void reservedNumericNamesAndQqPasswordResetAreRejected() {
+        assertThatThrownBy(() -> service.create(admin, "12345")).isInstanceOfSatisfying(Problem.class,
+                e -> assertThat(e.code()).isEqualTo("LOGIN_NAME_RESERVED"));
+        when(db.lockAccount("id")).thenReturn(new Account("id", "12345", null, "ACTIVE", 0, Instant.EPOCH, "12345", "nick", "url"));
+        assertThatThrownBy(() -> service.resetPassword(admin, "id")).isInstanceOfSatisfying(Problem.class,
+                e -> assertThat(e.code()).isEqualTo("QQ_PASSWORD_UNSUPPORTED"));
+        verify(db, never()).resetPassword(any(), any());
+    }
+    @Test void revocationPushTargetsMatchingSessionOnly() {
+        var events = mock(SessionEvents.class);
+        service = new AccountService(db, audit, admins, secrets, TestTransactions.immediate(), events);
+        when(db.lockSession("session")).thenReturn(new Session("session", "id", "hash", 0, Instant.EPOCH, Instant.MAX, null, null));
+        var owner = new Presence("id", "session", "connection", Instant.MAX);
+        when(db.lockPresence("id")).thenReturn(owner);
+        service.revoke(admin, "id", "session");
+        verify(events).kick(owner, "ADMIN_REVOKED");
+        reset(events);
+        when(db.lockPresence("id")).thenReturn(new Presence("id", "other", "connection", Instant.MAX));
+        service.revoke(admin, "id", "session");
+        verifyNoInteractions(events);
     }
 }

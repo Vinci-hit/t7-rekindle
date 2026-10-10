@@ -10,6 +10,12 @@ public final class Inputs {
     public static void password(String value) {
         if (value == null || value.length() < 8 || value.length() > 128) throw Problem.invalid();
     }
+    public static String machineId(String value) {
+        if (value == null || !value.matches("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) {
+            throw Problem.invalid();
+        }
+        return value.toLowerCase(java.util.Locale.ROOT);
+    }
     public static int offset(int page) {
         if (page < 0 || page > 100_000) throw Problem.invalid();
         return page * 50;

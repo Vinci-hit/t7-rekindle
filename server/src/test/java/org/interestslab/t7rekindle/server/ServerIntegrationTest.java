@@ -21,6 +21,9 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.interestslab.t7rekindle.server.config.SecurityConfig;
+import org.interestslab.t7rekindle.server.config.OnlinePushConfig;
+import org.interestslab.t7rekindle.server.integration.QqClient;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.interestslab.t7rekindle.server.domain.Models.*;
 import org.interestslab.t7rekindle.server.domain.Problem;
 import org.interestslab.t7rekindle.server.persistence.AdminMapper;
@@ -31,6 +34,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {"server.servlet.session.cookie.secure=false", "spring.flyway.enabled=true"})
 @AutoConfigureMockMvc
@@ -57,12 +61,74 @@ class ServerIntegrationTest {
     @Autowired AdminService admins;
     @Autowired AccountService accounts;
     @Autowired AuthService auth;
+    @Autowired QqAuthService qq;
+    @Autowired SessionEvents events;
+    @MockitoBean QqClient qqClient;
     @Autowired PresenceService presence;
     @Autowired AuthMapper db;
     @Autowired AdminMapper adminDb;
     private static final String PASSWORD = "TEST_PASSWORD";
     private static final String NEXT_PASSWORD = "CHANGED_TEST_PASSWORD";
     private static final AdminIdentity ADMIN = new AdminIdentity(0, false);
+
+    @Test void qqExchangeBindsMachineAndPushesOldConnectionAfterNewMachineLogin() throws Exception {
+        String machine = "12345678-1234-1234-1234-123456789abc";
+        String other = "12345678-1234-1234-1234-123456789def";
+        String cookie = "uin=o12345; skey=TEST_SESSION";
+        when(qqClient.getNick(cookie)).thenReturn("t7QqNick({\"retcode\":0,\"result\":{\"nick\":\"测试昵称\"}})");
+        var response = mvc.perform(post("/api/v1/auth/qq/sessions").contentType("application/json")
+                .content(json.writeValueAsString(java.util.Map.of("machineId", machine, "qqSessionCookie", cookie))))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.loginName").value("12345")).andReturn();
+        var first = json.readValue(response.getResponse().getContentAsString(), QqSessionCredentials.class);
+        mvc.perform(get("/api/v1/auth/session").header("Authorization", "Bearer " + first.sessionToken())).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/auth/session").header("Authorization", "Bearer " + first.sessionToken()).header("X-Machine-Id", other))
+                .andExpect(status().isUnauthorized());
+        var identity = auth.authenticate(first.sessionToken(), machine);
+        var online = presence.online(identity);
+        var stream = mvc.perform(get("/api/v1/auth/online/" + online.connectionId() + "/events")
+                .header("Authorization", "Bearer " + first.sessionToken()).header("X-Machine-Id", machine))
+                .andExpect(request().asyncStarted()).andReturn();
+        assertThat(stream.getResponse().getContentAsString()).contains("event:ready");
+        var second = qq.login(other, cookie, "127.0.0.1");
+        assertThat(second.accountId()).isEqualTo(first.accountId());
+        assertThat(stream.getResponse().getContentAsString()).contains("event:kicked", "MACHINE_CHANGED", online.connectionId());
+        mvc.perform(asyncDispatch(stream)).andExpect(status().isOk());
+        assertThatThrownBy(() -> auth.authenticate(first.sessionToken(), machine)).isInstanceOf(Problem.class);
+        assertThat(auth.authenticate(second.sessionToken(), other).nickname()).isEqualTo("测试昵称");
+        assertThat(db.account(first.accountId()).passwordHash()).isNull();
+        assertThatThrownBy(() -> accounts.resetPassword(ADMIN, first.accountId())).isInstanceOf(Problem.class);
+    }
+
+    @Test void legacyNumericPasswordAccountIsPreservedAndConcurrentQqRegistrationIsUnique() throws Exception {
+        db.createAccount("00000000-0000-0000-0000-000000000001", "23456", secrets.encode(PASSWORD));
+        assertThat(auth.login("23456", PASSWORD, "IP")).isNotNull();
+        String cookie = "uin=23456; skey=TEST_SESSION";
+        when(qqClient.getNick(cookie)).thenReturn("t7QqNick({\"retcode\":0,\"result\":{\"nick\":\"name\"}})");
+        assertThatThrownBy(() -> qq.login("12345678-1234-1234-1234-123456789abc", cookie, "IP"))
+                .isInstanceOfSatisfying(Problem.class, e -> assertThat(e.code()).isEqualTo("QQ_ACCOUNT_CONFLICT"));
+        String concurrentCookie = "uin=34567; skey=TEST_SESSION";
+        when(qqClient.getNick(concurrentCookie)).thenReturn("t7QqNick({\"retcode\":0,\"result\":{\"nick\":\"name\"}})");
+        try (var pool = Executors.newFixedThreadPool(4)) {
+            var work = java.util.stream.IntStream.range(0, 4).<Callable<QqSessionCredentials>>mapToObj(i ->
+                    () -> qq.login("12345678-1234-1234-1234-123456789abc", concurrentCookie, "IP")).toList();
+            var ids = new java.util.HashSet<String>();
+            for (var result : pool.invokeAll(work)) ids.add(result.get().accountId());
+            assertThat(ids).hasSize(1);
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM account WHERE qq_number='34567'", Integer.class)).isEqualTo(1);
+    }
+
+    @Test void committedKickIsRelayedToAnotherInstanceSubscriber() throws Exception {
+        var received = new java.util.concurrent.CompletableFuture<KickEvent>();
+        var subscriber = new OnlinePushConfig().sessionNotifications(redis.getConnectionFactory(),
+                event -> received.complete((KickEvent) event), json);
+        try {
+            subscriber.afterPropertiesSet();
+            subscriber.start();
+            events.kick(new Presence("account", "session", "connection", java.time.Instant.MAX), "ADMIN_REVOKED");
+            assertThat(received.get(5, java.util.concurrent.TimeUnit.SECONDS).connectionId()).isEqualTo("connection");
+        } finally { subscriber.destroy(); }
+    }
 
     @BeforeEach void reset() {
         jdbc.update("DELETE FROM account_presence");
@@ -75,7 +141,7 @@ class ServerIntegrationTest {
 
     @Test void startupMigratesBeforeInitializingAdmin() {
         assertThat(flyway.info().applied()).extracting(migration -> migration.getScript())
-                .containsExactly("V001__authentication.sql", "V002__administration.sql");
+                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql");
         assertThat(flyway.info().pending()).isEmpty();
         assertThat(adminDb.admin()).isNotNull();
         assertThat(admins.initialize()).isNull();

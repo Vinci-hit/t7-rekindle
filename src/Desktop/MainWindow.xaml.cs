@@ -121,7 +121,7 @@ namespace T7.Rekindle.Desktop
             }
 
             var model = DataContext as MainWindowViewModel;
-            if (model != null && (!model.CanClose || model.About.IsUpdating))
+            if (model != null && (!model.CanClose || model.About.IsUpdating || model.Account.HasSession))
             {
                 e.Cancel = true;
                 _closePending = true;
@@ -130,6 +130,7 @@ namespace T7.Rekindle.Desktop
                     if (await model.RequestCloseAsync().ConfigureAwait(true))
                     {
                         await model.About.CancelUpdateDownloadAsync().ConfigureAwait(true);
+                        await model.Account.SuspendAsync().ConfigureAwait(true);
                         model.SaveSettings(ActualWidth, ActualHeight);
                         _closeAfterCleanup = true;
                         await Dispatcher.InvokeAsync(new Action(Close));
@@ -184,7 +185,12 @@ namespace T7.Rekindle.Desktop
             _closePending = true;
             try
             {
-                var installation = new UpdateInstallationService(model.RequestCloseAsync,
+                var installation = new UpdateInstallationService(async () =>
+                    {
+                        if (!await model.RequestCloseAsync().ConfigureAwait(true)) return false;
+                        await model.Account.SuspendAsync().ConfigureAwait(true);
+                        return true;
+                    },
                     () => model.SaveSettings(ActualWidth, ActualHeight),
                     path =>
                     {

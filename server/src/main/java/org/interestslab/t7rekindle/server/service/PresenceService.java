@@ -13,28 +13,42 @@ public class PresenceService {
     private final AuthMapper db;
     private final AuthService auth;
     private final TransactionTemplate tx;
+    private final SessionEvents events;
 
-    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx) {
+    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx, SessionEvents events) {
         this.db = db;
         this.auth = auth;
         this.tx = tx;
+        this.events = events;
     }
     public OnlineConnection online(Identity identity) {
-        return tx.execute(status -> save(auth.requireLocked(identity), UUID.randomUUID().toString(), db.now()));
+        return tx.execute(status -> {
+            Identity current = auth.requireLocked(identity);
+            Presence previous = db.lockPresence(current.accountId());
+            var result = save(current, UUID.randomUUID().toString(), db.now());
+            events.kick(previous, "ONLINE_TAKEN_OVER");
+            return result;
+        });
     }
     public OnlineConnection heartbeat(Identity identity, String connectionId) {
         return tx.execute(status -> {
             Identity current = auth.requireLocked(identity);
-            Presence owner = db.lockPresence(current.accountId());
             Instant now = db.now();
-            if (owner == null || !owner.leaseExpiresAt().isAfter(now)) {
-                throw new Problem(409, "NOT_ONLINE", "在线状态已过期，请重新上线");
-            }
-            if (!owner.sessionId().equals(current.sessionId()) || !owner.connectionId().equals(connectionId)) {
-                throw new Problem(409, "ONLINE_TAKEN_OVER", "在线资格已由其他连接接管");
-            }
+            requireOwner(current, connectionId, now);
             return save(current, connectionId, now);
         });
+    }
+    public void checkConnection(Identity identity, String connectionId) {
+        tx.executeWithoutResult(status -> requireOwner(auth.requireLocked(identity), connectionId, db.now()));
+    }
+    private void requireOwner(Identity identity, String connectionId, Instant now) {
+        Presence owner = db.lockPresence(identity.accountId());
+        if (owner == null || !owner.leaseExpiresAt().isAfter(now)) {
+            throw new Problem(409, "NOT_ONLINE", "在线状态已过期，请重新上线");
+        }
+        if (!owner.sessionId().equals(identity.sessionId()) || !owner.connectionId().equals(connectionId)) {
+            throw new Problem(409, "ONLINE_TAKEN_OVER", "在线资格已由其他连接接管");
+        }
     }
     public void offline(Identity identity, String connectionId) {
         tx.executeWithoutResult(status -> {

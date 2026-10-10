@@ -21,6 +21,7 @@ defaults:
     shell: pwsh
 
 env:
+  T7_AUTH_BASE_URL: ${{ vars.T7_AUTH_BASE_URL }}
   PYTHONUTF8: "1"
 
 jobs:

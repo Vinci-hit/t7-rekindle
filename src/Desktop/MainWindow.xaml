@@ -27,6 +27,7 @@
       </LinearGradientBrush></Border.Background>
     </Border>
     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,12,0" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+      <views:AccountPanel DataContext="{Binding Account}" />
       <Button Style="{StaticResource CaptionButton}" Click="OnMinimize" ToolTip="最小化" AutomationProperties.Name="最小化" TabIndex="1"><views:Icon Kind="minus" /></Button>
       <Button Style="{StaticResource CaptionButton}" Click="OnCloseClick" ToolTip="关闭" AutomationProperties.Name="关闭启动器" TabIndex="2"><views:Icon Kind="x" /></Button>
     </StackPanel>

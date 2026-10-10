@@ -29,8 +29,20 @@ public interface AuthMapper {
     void createAccount(String id, String name, String hash);
 
     @Insert("""
-        INSERT INTO auth_session(session_id,account_id,token_hash,auth_epoch,created_at,expires_at)
-        VALUES(#{sessionId},#{accountId},#{tokenHash},#{authEpoch},#{createdAt},#{expiresAt})
+        INSERT INTO account(account_id,login_name,qq_number,nickname,avatar_url)
+        VALUES(#{id},#{profile.qqNumber},#{profile.qqNumber},#{profile.nickname},#{profile.avatarUrl})
+        """)
+    void createQqAccount(String id, QqProfile profile);
+
+    @Update("UPDATE account SET nickname=#{profile.nickname},avatar_url=#{profile.avatarUrl} WHERE account_id=#{id}")
+    void updateQqProfile(String id, QqProfile profile);
+
+    @Select("SELECT * FROM auth_session WHERE account_id=#{id} AND revoked_at IS NULL ORDER BY session_id FOR UPDATE")
+    List<Session> lockSessions(String id);
+
+    @Insert("""
+        INSERT INTO auth_session(session_id,account_id,token_hash,auth_epoch,created_at,expires_at,machine_id)
+        VALUES(#{sessionId},#{accountId},#{tokenHash},#{authEpoch},#{createdAt},#{expiresAt},#{machineId})
         """)
     void createSession(Session session);
 
@@ -67,7 +79,7 @@ public interface AuthMapper {
     void clearConnection(String accountId, String sessionId, String connectionId);
 
     @Select("""
-        SELECT account_id,login_name,status,created_at FROM account
+        SELECT account_id,login_name,status,created_at,qq_number,nickname FROM account
         WHERE login_name LIKE CONCAT(#{prefix},'%') ORDER BY login_name LIMIT 50 OFFSET #{offset}
         """)
     List<AccountView> accounts(String prefix, int offset);
