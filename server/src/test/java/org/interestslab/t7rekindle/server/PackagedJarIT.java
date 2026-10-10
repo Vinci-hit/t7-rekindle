@@ -45,6 +45,9 @@ class PackagedJarIT {
             int port;
             try (var socket = new ServerSocket(0)) { port = socket.getLocalPort(); }
             base = "http://127.0.0.1:" + port;
+            Path unmigratedLog = Path.of("target/jar-unmigrated.log");
+            assertThat(command(unmigratedLog, "--spring.main.web-application-type=none")).isNotZero();
+            assertThat(Files.readString(unmigratedLog)).contains("admin_account", "doesn't exist");
             Path migrationLog = Path.of("target/jar-migration.log");
             assertThat(command(migrationLog, "--migrate")).isZero();
             assertThat(command(migrationLog, "--migrate")).isZero();

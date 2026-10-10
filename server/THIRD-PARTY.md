@@ -3,7 +3,7 @@
 服务端源码沿用仓库 MIT 许可。下表记录 Maven 发布元数据中的运行依赖许可，完整坐标固定在 `runtime-dependencies.lock`；上游 Jar 中的 LICENSE/NOTICE 随嵌套 Jar 保留。
 
 - Spring Boot 4.0.8 BOM 管理 Spring、MySQL Connector/J、Thymeleaf、Lettuce、Micrometer 等版本；MyBatis Starter 4.0.1、Bouncy Castle 1.86 显式固定。
-- Flyway core/mysql 固定为 11.20.3，覆盖 BOM 的 11.14.1，以支持 MySQL 8.4 而不产生旧验证版本告警。两者均为 Apache-2.0。
+- Flyway 通过 `spring-boot-starter-flyway` 接入自动配置；core/mysql 固定为 11.20.3，覆盖 BOM 的 11.14.1，以支持 MySQL 8.4 而不产生旧验证版本告警。两者均为 Apache-2.0。
 - MySQL Connector/J 除 GPL-2.0 外附带 Universal FOSS Exception 1.0；以 [上游完整许可](https://github.com/mysql/mysql-connector-j/blob/9.7.0/LICENSE) 为准。
 - 外部 MySQL Server 8.4.11 为 GPL-2.0；Redis Server 8.6.6 在其多许可选项中选择 AGPL-3.0，见 [Redis 官方许可](https://redis.io/legal/licenses/)。两种服务不打入应用 Jar。
 - 测试依赖：JUnit 6.0.3（EPL-2.0）、Testcontainers 2.0.5（MIT）、ArchUnit 1.4.2（Apache-2.0，包含 BSD 组件）、JaCoCo 0.8.14（EPL-2.0）；不进入生产 Jar。
@@ -63,6 +63,7 @@
 | `org.springframework.boot:spring-boot-autoconfigure` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-data-commons` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-data-redis` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| `org.springframework.boot:spring-boot-flyway` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-health` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-http-converter` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-jackson` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
@@ -77,6 +78,7 @@
 | `org.springframework.boot:spring-boot-starter` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-starter-actuator` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-starter-data-redis` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+| `org.springframework.boot:spring-boot-starter-flyway` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-starter-jackson` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-starter-jdbc` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 | `org.springframework.boot:spring-boot-starter-logging` | 4.0.8 | [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) |

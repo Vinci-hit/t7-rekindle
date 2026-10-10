@@ -32,7 +32,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {"server.servlet.session.cookie.secure=false"})
+@SpringBootTest(properties = {"server.servlet.session.cookie.secure=false", "spring.flyway.enabled=true"})
 @AutoConfigureMockMvc
 class ServerIntegrationTest {
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.11").withTmpFs(java.util.Map.of("/var/lib/mysql", "rw"));
@@ -40,7 +40,6 @@ class ServerIntegrationTest {
     static {
         MYSQL.start();
         REDIS.start();
-        Flyway.configure().dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()).load().migrate();
     }
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
@@ -52,6 +51,7 @@ class ServerIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired JsonMapper json;
     @Autowired JdbcTemplate jdbc;
+    @Autowired Flyway flyway;
     @Autowired StringRedisTemplate redis;
     @Autowired Secrets secrets;
     @Autowired AdminService admins;
@@ -71,6 +71,14 @@ class ServerIntegrationTest {
         jdbc.update("DELETE FROM audit_log");
         jdbc.update("UPDATE admin_account SET password_hash=?,must_change_password=FALSE,auth_epoch=0", secrets.encode(PASSWORD));
         try (var connection = redis.getConnectionFactory().getConnection()) { connection.serverCommands().flushDb(); }
+    }
+
+    @Test void startupMigratesBeforeInitializingAdmin() {
+        assertThat(flyway.info().applied()).extracting(migration -> migration.getScript())
+                .containsExactly("V001__authentication.sql", "V002__administration.sql");
+        assertThat(flyway.info().pending()).isEmpty();
+        assertThat(adminDb.admin()).isNotNull();
+        assertThat(admins.initialize()).isNull();
     }
 
     @Test void fixedExpiryAndExplicitTakeoverKeepBothCredentialsValid() {

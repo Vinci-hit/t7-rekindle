@@ -41,7 +41,7 @@ $env:REDIS_PASSWORD = Read-Host 'Redis 密码' -MaskInput
 java -jar target/rekindle-server-0.1.0-SNAPSHOT.jar
 ```
 
-默认监听 `127.0.0.1:8080`。运行启动不自动执行迁移，请先完成迁移；数据库或管理员表不可用时启动失败。
+默认监听 `127.0.0.1:8080`。运行启动默认不自动执行迁移（`spring.flyway.enabled=false`），请先完成迁移；数据库或管理员表不可用时启动失败。
 以 HTTPS 反向代理暴露服务，限制数据库和 Redis 的网络访问。`SERVER_ADDRESS`、`SERVER_PORT` 可调整监听。
 默认管理员 Cookie 为 Secure。仅本机 HTTP 调试时设置 `$env:COOKIE_SECURE = 'false'`，部署环境保持默认值。
 应用不信任任意转发头；代理部署按其网络策略限制登录流量，应用 IP 限流默认看到直连代理地址。
@@ -49,6 +49,18 @@ java -jar target/rekindle-server-0.1.0-SNAPSHOT.jar
 4. 首次成功启动会在控制台输出 `admin` 的随机密码。访问 `/admin/login`，首次登录必须改密，之后重新登录。
    同一数据库后续启动不重置密码、不重复输出。控制台可能被部署平台收集，应限制启动日志访问。
 5. 在“账户与会话”创建普通账户。系统生成的密码只在成功页面显示一次；丢失时重新生成。
+
+## 本地自动迁移
+
+本地开发可显式启用启动迁移，Flyway 会先执行 `db/migration` 中的脚本，再初始化管理员：
+
+```powershell
+java -jar target/rekindle-server-0.1.0-SNAPSHOT.jar --spring.flyway.enabled=true
+```
+
+自动迁移默认使用 `spring.datasource` 的数据库和账号，账号需具备建表等 DDL 权限。
+若在 `application-local.yml` 中设置 `spring.flyway.enabled=true`，启动时还需添加 `--spring.profiles.active=local`。
+部署环境仍建议使用前述独立迁移账号执行 `--migrate`，运行账号保留 DML 权限。
 
 ## 管理员恢复
 

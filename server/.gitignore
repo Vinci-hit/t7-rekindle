@@ -2,3 +2,7 @@
 .env
 /data/
 *.log
+
+### Envirnment Configuration File ###
+application-*.yml
+!application-env.template.yml
