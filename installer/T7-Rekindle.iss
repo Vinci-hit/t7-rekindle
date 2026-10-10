@@ -90,7 +90,7 @@ begin
       RequireSuccess(not DirExists(Source), '设置路径不是文件');
       SettingsExisted[I] := FileExists(Source);
       if SettingsExisted[I] then
-        RequireSuccess(FileCopy(Source, BackupDirectory + '\' + SettingsNames[I], True), '备份设置失败');
+        RequireSuccess(CopyFile(Source, BackupDirectory + '\' + SettingsNames[I], True), '备份设置失败');
       RequireSuccess(SetIniBool('files', SettingsNames[I], SettingsExisted[I], MetadataPath), '记录设置备份失败');
     end;
     StartupExisted := RegValueExists(HKCU, '{#RollbackRunKey}', 'T7-Rekindle');
@@ -117,7 +117,7 @@ begin
   for I := 0 to 3 do begin
     Destination := DataDirectory + '\' + SettingsNames[I];
     if SettingsExisted[I] then begin
-      if not FileCopy(BackupDirectory + '\' + SettingsNames[I], Destination, False) then Result := False;
+      if not CopyFile(BackupDirectory + '\' + SettingsNames[I], Destination, False) then Result := False;
     end
     else if FileExists(Destination) then begin
       if not DeleteFile(Destination) then Result := False;

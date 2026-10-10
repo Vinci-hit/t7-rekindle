@@ -70,7 +70,7 @@ def _compile_installer(work, settings_directory=None, startup_key=None, fail_res
         f'OutputDir={work}\n[Files]\nSource: "{payload}\\*"; DestDir: "{{app}}"; Flags: ignoreversion\n'
         f'[Run]\n{run_entries}\n[Code]\n{code}', encoding="utf-8-sig",
     )
-    compiled = subprocess.run([str(compiler), "/Q", str(script)], capture_output=True, timeout=60)
+    compiled = subprocess.run([str(compiler), "--messages-jsonl", str(script)], capture_output=True, timeout=60)
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
     assert b"warning" not in (compiled.stdout + compiled.stderr).lower()
     return work / "Setup.exe"
