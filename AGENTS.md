@@ -40,3 +40,8 @@
 
 - [create-commit](.agents/skills/create-commit/SKILL.md)：检查实际改动与提交范围，按逻辑边界适当拆分多个 commit，生成规范的中文提交信息并逐个创建本地提交。可通过 `$create-commit` 调用；仅起草提交信息时保持只读，推送单独处理。
 - [create-tag](.agents/skills/create-tag/SKILL.md)：根据提交变化推荐版本号，确认后创建 Git 版本标签，检查目标提交与同名标签，并按明确请求推送。可通过 `$create-tag` 调用；仅创建本地标签与触发远端发布分开处理。
+
+## 6. 本地运行规范
+
+- 开始项目任务前，若 `.local/AGENTS.md` 存在，应读取并遵循其中对当前项目的本地补充要求。
+- 本地补充要求保存在已被 Git 忽略的 `.local/` 目录中，不纳入 Git 提交或远程推送；共享规范不记录本地资料的具体路径或未公开信息。
