@@ -34,11 +34,18 @@
         </ComboBox>
         <Label Grid.Row="2" Content="画面质量" Target="{Binding ElementName=Quality}" Style="{StaticResource GraphicsLabel}" />
         <StackPanel Grid.Row="2" Grid.Column="1" VerticalAlignment="Center">
-          <Slider x:Name="Quality" TabIndex="14" Minimum="0" Maximum="4" LargeChange="1" Value="{Binding GraphicsQuality}" Style="{StaticResource GraphicsSlider}" AutomationProperties.Name="画面质量" />
-          <UniformGrid Columns="5" Margin="0,3,0,0" IsHitTestVisible="False">
-            <TextBlock Text="极低" HorizontalAlignment="Left" /><TextBlock Text="低" HorizontalAlignment="Center" />
-            <TextBlock Text="中" HorizontalAlignment="Center" /><TextBlock Text="高" HorizontalAlignment="Center" /><TextBlock Text="极高" HorizontalAlignment="Right" />
-          </UniformGrid>
+          <!-- The 13-DIP track inset plus 7-DIP margin centers the thumb in each 40-DIP label column. -->
+          <Slider x:Name="Quality" TabIndex="14" Minimum="0" Maximum="4" LargeChange="1" Value="{Binding GraphicsQuality}" Style="{StaticResource GraphicsSlider}" Margin="7,0" AutomationProperties.Name="画面质量" />
+          <Grid Margin="0,3,0,0" IsHitTestVisible="False">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="40" /><ColumnDefinition Width="*" />
+              <ColumnDefinition Width="40" /><ColumnDefinition Width="*" />
+              <ColumnDefinition Width="40" /><ColumnDefinition Width="*" />
+              <ColumnDefinition Width="40" /><ColumnDefinition Width="*" /><ColumnDefinition Width="40" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="极低" HorizontalAlignment="Center" /><TextBlock Grid.Column="2" Text="低" HorizontalAlignment="Center" />
+            <TextBlock Grid.Column="4" Text="中" HorizontalAlignment="Center" /><TextBlock Grid.Column="6" Text="高" HorizontalAlignment="Center" /><TextBlock Grid.Column="8" Text="极高" HorizontalAlignment="Center" />
+          </Grid>
         </StackPanel>
         <Label Grid.Row="3" Content="视野距离" Target="{Binding ElementName=Distance}" Style="{StaticResource GraphicsLabel}" />
         <Grid Grid.Row="3" Grid.Column="1" VerticalAlignment="Center">

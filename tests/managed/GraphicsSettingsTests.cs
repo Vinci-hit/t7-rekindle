@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using T7.Rekindle.Core;
 using T7.Rekindle.Desktop.Services;
 using T7.Rekindle.Desktop.ViewModels;
@@ -77,15 +78,20 @@ namespace T7.ManagedHarness
             {
                 RunTask(model.ValidationTask); model.Refresh();
                 var panel = new GraphicsSettingsPanel { DataContext = model };
-                var root = new Grid { Children = { panel }, Background = (System.Windows.Media.Brush)Application.Current.Resources["PanelBackgroundBrush"] };
+                var root = new Grid { Children = { panel }, UseLayoutRounding = true, SnapsToDevicePixels = true,
+                    Background = (System.Windows.Media.Brush)Application.Current.Resources["PanelBackgroundBrush"] };
                 System.Windows.Media.TextOptions.SetTextFormattingMode(root, System.Windows.Media.TextFormattingMode.Display);
                 TextElementFont(root);
-                foreach (var scale in new[] { 1.0, 1.5, 2.0 })
+                foreach (var scale in new[] { 1.0, 1.25, 1.5, 2.0 })
                 {
                     LauncherLayoutTests.Render(root, null, output, "graphics-" + (int)(scale * 100), 640, 660, scale);
                     LauncherLayoutTests.AssertSettingsHeader(panel, "ApplyGraphicsButton");
+                    AssertQualityLabelAlignment(panel);
                     LauncherLayoutTests.Render(root, null, output, "graphics-compact-" + (int)(scale * 100), 480, 660, scale);
                     LauncherLayoutTests.AssertSettingsHeader(panel, "ApplyGraphicsButton");
+                    AssertQualityLabelAlignment(panel);
+                    LauncherLayoutTests.Render(root, null, output, "graphics-wide-" + (int)(scale * 100), 860, 660, scale);
+                    AssertQualityLabelAlignment(panel);
                 }
                 var quality = (Slider)panel.FindName("Quality");
                 quality.Value = 2; Pump();
@@ -108,9 +114,30 @@ namespace T7.ManagedHarness
                     "resolution synchronization retained stale options or triggered an apply");
             }
         }
+        private static void AssertQualityLabelAlignment(GraphicsSettingsPanel panel)
+        {
+            var quality = (Slider)panel.FindName("Quality");
+            var track = (Track)quality.Template.FindName("PART_Track", quality);
+            var labels = ((Panel)((StackPanel)quality.Parent).Children[1]).Children.Cast<TextBlock>().ToArray();
+            var original = quality.Value;
+            Assert(labels.Length == 5, "quality scale must contain five labels");
+            for (var index = 0; index < labels.Length; index++)
+            {
+                quality.Value = index;
+                panel.UpdateLayout(); Pump();
+                var thumbCenter = track.Thumb.TranslatePoint(new Point(track.Thumb.ActualWidth / 2, 0), panel).X;
+                var labelCenter = labels[index].TranslatePoint(new Point(labels[index].ActualWidth / 2, 0), panel).X;
+                Assert(Math.Abs(thumbCenter - labelCenter) <= 1,
+                    "quality label is not centered below its thumb: " + labels[index].Text
+                    + ", thumb=" + thumbCenter + ", label=" + labelCenter);
+            }
+            quality.Value = original;
+            panel.UpdateLayout(); Pump();
+        }
         private static void TextElementFont(DependencyObject root)
         {
             root.SetValue(System.Windows.Documents.TextElement.FontFamilyProperty, Application.Current.Resources["UiFontFamily"]);
+            root.SetValue(System.Windows.Documents.TextElement.FontSizeProperty, 16.0);
             root.SetValue(System.Windows.Documents.TextElement.ForegroundProperty, Application.Current.Resources["TextBrush"]);
         }
         private static MainWindowViewModel CreateModel(FakeLauncherBridge bridge, string directory) =>
