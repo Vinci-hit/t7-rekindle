@@ -7,7 +7,7 @@
     <version>4.0.8</version>
     <relativePath />
   </parent>
-  <groupId>org.t7rekindle</groupId>
+  <groupId>org.interestslab.t7rekindle</groupId>
   <artifactId>rekindle-server</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <name>T7 Rekindle Server</name>
@@ -173,7 +173,7 @@
                 <rule>
                   <element>PACKAGE</element>
                   <includes>
-                    <include>org.t7rekindle.server.service</include>
+                    <include>org.interestslab.t7rekindle.server.service</include>
                   </includes>
                   <limits>
                     <limit>
