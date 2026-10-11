@@ -218,7 +218,7 @@ bool verifyGraphicsHookExecution() {
             require(rejected, "world accepted an unknown life-state getter");
             t7::writeClientMemory(process, BASE + 0x64C9D0, {0x83});
             for (const auto& anchor : std::vector<std::pair<uint32_t, uint32_t>>{
-                {0x400D30,0x8A}, {0x3FF3D0,0x55}, {0x3FF3FB,0x80}
+                {0x400D30,0x8A}, {0x3FF3D0,0x55}, {0x3FF3FB,0x80}, {0x4B2C70,0x80}
             }) {
                 t7::writeClientMemory(process, BASE + anchor.first, {0xCC});
                 rejected = false;

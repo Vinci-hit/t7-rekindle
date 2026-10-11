@@ -12,6 +12,8 @@ constexpr uint32_t ERRORS = CONTEXT + 12, CAMERA_BLOCKED = CONTEXT + 16;
 constexpr uint32_t FOCUS_RESETS = CONTEXT + 20, KEYBOARD_BLOCKED = CONTEXT + 24;
 constexpr uint32_t ASSOCIATE = BASE + 0xD400, SEND_MESSAGE = BASE + 0xD500;
 constexpr uint32_t UI = BASE + 0xD600, RESET_FOCUS = BASE + 0x3FF3D0;
+constexpr uint32_t CAMERA = BASE + 0xD800, CAMERA_GLOBAL = BASE + 0x2E35368;
+constexpr uint32_t CAMERA_VTABLE = BASE + 0x1785478;
 constexpr uint32_t UI_GLOBAL = BASE + 0x24396D0, UI_VTABLE = BASE + 0x177A9F4;
 constexpr uint32_t WINDOW_GLOBAL = BASE + 0x243B70C, IME_GLOBAL = BASE + 0x2E249EC;
 constexpr uint32_t ASSOCIATE_IMPORT = BASE + 0x16F611C, SEND_MESSAGE_IMPORT = BASE + 0x16F69E8;
@@ -20,14 +22,17 @@ inline void prepare(HANDLE process) {
     for (const auto& item : std::vector<std::pair<uint32_t, uint32_t>>{
         {WINDOW,BASE+0x172D034}, {WINDOW+0x138,1}, {IME,BASE+0x177AE48}, {IME+4,0x1234},
         {NEXT_IME,BASE+0x177AE48}, {NEXT_IME+4,0x5678}, {CONTEXT,0x1234},
-        {ASSOCIATE_IMPORT,ASSOCIATE}, {SEND_MESSAGE_IMPORT,SEND_MESSAGE}, {UI,UI_VTABLE}
+        {ASSOCIATE_IMPORT,ASSOCIATE}, {SEND_MESSAGE_IMPORT,SEND_MESSAGE}, {UI,UI_VTABLE},
+        {CAMERA,CAMERA_VTABLE}
     }) writeWord(process, item.first, item.second);
+    t7::writeClientMemory(process, CAMERA + 0x61, {1});
     // Signature anchors for the native window getter, text-focus getter and cursor mode handler.
     t7::writeClientMemory(process, BASE + 0x12670, {0x8B,0x81,0x38,1,0,0,0xC3});
     t7::writeClientMemory(process, BASE + 0x400D30, {0x8A,0x41,8,0xC2,4,0});
     t7::writeClientMemory(process, BASE + 0x7D33B,
         {0x0F,0x94,0xC0,0x80,0xB9,0x11,1,0,0,0,0x88,0x81,0x10,1,0,0});
     t7::writeClientMemory(process, BASE + 0x3FF3FB, {0x80,0x7E,0x7D,0});
+    t7::writeClientMemory(process, BASE + 0x4B2C70, {0x80,0x79,0x61,1,0x75,9,0x80,0x79,0x60,0});
     t7::WorldHookCode c;
     auto check = [&]() {
         const auto valid = c.branch(0x84);
@@ -97,6 +102,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     };
     writeWord(process, worldFixture::STATE + 0x38, 0);
     writeWord(process, WINDOW_GLOBAL, WINDOW); writeWord(process, IME_GLOBAL, IME); writeWord(process, UI_GLOBAL, UI);
+    writeWord(process, CAMERA_GLOBAL, CAMERA);
     expect(0x1234, false, "lobby input changed");
     require(readWord(process, ASSOCIATIONS) == 0 && readWord(process, MESSAGES) == 0
         && readWord(process, FOCUS_RESETS) == 0, "lobby called input APIs");
@@ -117,7 +123,11 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     expect(0x1234, true, "missing UI service accepted");
     writeWord(process, UI, BASE + 0x177A938); writeWord(process, UI_GLOBAL, UI);
     expect(0x1234, true, "uninitialized UI service accepted");
-    writeWord(process, UI, UI_VTABLE);
+    writeWord(process, CAMERA_GLOBAL, 0); writeWord(process, UI, UI_VTABLE);
+    expect(0x1234, true, "missing camera service accepted");
+    writeWord(process, CAMERA, BASE + 0x172D4A0); writeWord(process, CAMERA_GLOBAL, CAMERA);
+    expect(0x1234, true, "uninitialized camera service accepted");
+    writeWord(process, CAMERA, CAMERA_VTABLE);
     expect(0, false, "GAME entry kept preparation focus, IME or camera lock");
     require(readWord(process, KEYBOARD_BLOCKED) == 0 && readWord(process, FOCUS_RESETS) == 1,
         "GAME entry did not reset native keyboard/text focus");
@@ -144,6 +154,50 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     pollWorld();
     focus(false); expect(0, true, "chat stole the previous free-cursor mode");
     require(readWord(process, MESSAGES) == beforeFreeChat + 2, "redundant native cursor events");
+
+    auto captureCursor = [&]() {
+        writeWord(process, CAMERA_BLOCKED, 0);
+        t7::writeClientMemory(process, WINDOW + 0x114, {0});
+    };
+    auto menu = [&](bool opened, bool textFocus) {
+        // Complete one frame, then publish the native menu event before allowing the next frame.
+        writeWord(process, worldFixture::FRAME_GATE, 2);
+        const auto deadline = GetTickCount64() + 3000;
+        while (readWord(process, worldFixture::FRAME_GATE) != 1) {
+            require(GetTickCount64() < deadline, "menu event frame timeout"); Sleep(1);
+        }
+        t7::writeClientMemory(process, CAMERA + 0x61, {static_cast<unsigned char>(!opened)});
+        focus(textFocus);
+        if (opened) freeCursor(); else captureCursor();
+        writeWord(process, worldFixture::FRAME_GATE, 0);
+    };
+    auto closeMenu = [&]() {
+        menu(false, false);
+        expect(0, false, "closing the menu did not return camera control");
+    };
+    menu(true, true);
+    expect(0x1234, true, "menu text focus was treated as chat and lost its cursor");
+    const auto menuMessages = readWord(process, MESSAGES), menuAssociations = readWord(process, ASSOCIATIONS);
+    pollWorld();
+    require(readWord(process, MESSAGES) == menuMessages && readWord(process, ASSOCIATIONS) == menuAssociations
+        && readWord(process, KEYBOARD_BLOCKED) == 1 && readWord(process, FOCUS_RESETS) == 1,
+        "stable menu changed focus, IME composition or cursor ownership");
+    // Blur the settings field while the parent Esc panel remains open.
+    focus(false); expect(0, true, "menu focus loss restored a stale chat cursor");
+    closeMenu();
+
+    for (bool textFocus : {false, true}) {
+        focus(true); expect(0x1234, false, "chat before opening the menu");
+        menu(true, textFocus);
+        expect(textFocus ? 0x1234 : 0, true, "menu opened over chat lost its cursor");
+        captureCursor();
+        expect(textFocus ? 0x1234 : 0, true, "open menu did not recover a hidden cursor");
+        closeMenu();
+    }
+    focus(true); expect(0x1234, false, "chat stopped capturing after closing the menu");
+    focus(false); expect(0, false, "chat restored an obsolete menu cursor after closing");
+    require((readWord(process, CAMERA + 0x61) & 0xFF) == 1,
+        "chat adapter changed native operator activation");
 
     writeWord(process, worldFixture::STATE + 0x38, 0); pump(process);
     writeWord(process, CONTEXT, 0x1234);
@@ -172,7 +226,32 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     writeWord(process, IME_GLOBAL, NEXT_IME); expect(0, false, "replacement IME not detached");
     writeWord(process, worldFixture::STATE + 0x38, 0);
     expect(0x5678, false, "replacement window restored a stale IME context");
+
+    // A menu open across the countdown must retain its text focus and cursor on GAME entry.
+    writeWord(process, IME_GLOBAL, IME);
+    writeWord(process, worldFixture::STATE + 0x38, 2); pump(process);
+    menu(true, true);
+    const auto resetsBeforeMenuEntry = readWord(process, FOCUS_RESETS);
+    writeWord(process, worldFixture::STATE + 0x38, 4);
+    expect(0x1234, true, "GAME entry stole the open menu focus or cursor");
+    require(readWord(process, FOCUS_RESETS) == resetsBeforeMenuEntry && readWord(process, KEYBOARD_BLOCKED) == 1,
+        "GAME entry reset menu keyboard focus");
+    closeMenu();
+    require(readWord(process, FOCUS_RESETS) == resetsBeforeMenuEntry,
+        "closing the entry menu triggered a delayed focus reset");
+
+    writeWord(process, worldFixture::STATE + 0x38, 0); pump(process);
+    writeWord(process, CONTEXT, 0x1234);
+    writeWord(process, worldFixture::STATE + 0x38, 4);
+    expect(0, false, "IME association was not detached before menu ownership test");
+    menu(true, false);
+    expect(0x1234, true, "menu without text focus did not restore the hook-owned IME association");
+    const auto restoredAssociations = readWord(process, ASSOCIATIONS);
+    pollWorld();
+    require(readWord(process, ASSOCIATIONS) == restoredAssociations, "menu restored IME every frame");
+    closeMenu();
     writeWord(process, WINDOW_GLOBAL, 0); writeWord(process, IME_GLOBAL, 0); writeWord(process, UI_GLOBAL, 0);
+    writeWord(process, CAMERA_GLOBAL, 0);
     writeWord(process, worldFixture::STATE + 0x38, 4); pump(process);
 }
 }

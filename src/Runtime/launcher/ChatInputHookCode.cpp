@@ -8,6 +8,7 @@ constexpr uint32_t CHAT_INPUT_DATA_OFFSET = 0x400;
 constexpr uint32_t WINDOW_RVA = 0x243B70C, WINDOW_VTABLE_RVA = 0x172D034;
 constexpr uint32_t IME_RVA = 0x2E249EC, IME_VTABLE_RVA = 0x177AE48;
 constexpr uint32_t UI_RVA = 0x24396D0, UI_VTABLE_RVA = 0x177A9F4, RESET_FOCUS_RVA = 0x3FF3D0;
+constexpr uint32_t CAMERA_RVA = 0x2E35368, CAMERA_VTABLE_RVA = 0x1785478;
 constexpr uint32_t ASSOCIATE_CONTEXT_RVA = 0x16F611C, SEND_MESSAGE_RVA = 0x16F69E8;
 constexpr uint32_t CURSOR_MODE_MESSAGE = 0x41E;
 }
@@ -18,6 +19,7 @@ void verifyChatInputFunctions(HANDLE process, uint32_t imageBase) {
         {0x400D30, {0x8A,0x41,8,0xC2,4,0}}, // IME interface text-focus flag.
         {RESET_FOCUS_RVA, {0x55,0x8B,0xEC,0x6A,0xFF}},
         {0x3FF3FB, {0x80,0x7E,0x7D,0}}, // UIResetFocus checks the UI interface's text-focus flag.
+        {0x4B2C70, {0x80,0x79,0x61,1,0x75,9,0x80,0x79,0x60,0}}, // Native operator/camera input gate.
         {0x7D33B, {0x0F,0x94,0xC0,0x80,0xB9,0x11,1,0,0,0,0x88,0x81,0x10,1,0,0}}
     }) {
         if (readClientMemory(process, imageBase + entry.first, entry.second.size()) != entry.second)
@@ -67,6 +69,10 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     c.emit({0xA1}); c.word(imageBase + 0x2E405F8);
     c.emit({0x85,0xC0}); const auto noActor = c.branch(0x84);
     c.emit({0x83,0x78,0x38,4}); const auto outsideBattle = c.branch(0x85);
+    c.emit({0x8B,0x0D}); c.word(imageBase + CAMERA_RVA); nonzero(0xC9);
+    c.emit({0x81,0x39}); c.word(imageBase + CAMERA_VTABLE_RVA); done.push_back(c.branch(0x85));
+    // Menus disable the operator; text focus alone does not distinguish a settings field from chat.
+    c.emit({0x80,0x79,0x61,1}); const auto menuOpen = c.branch(0x85);
     c.emit({0x83,0x3D}); c.word(inBattle); c.emit({0}); const auto alreadyInBattle = c.branch(0x85);
     c.emit({0x8B,0x0D}); c.word(imageBase + UI_RVA); nonzero(0xC9);
     c.emit({0x81,0x39}); c.word(imageBase + UI_VTABLE_RVA); done.push_back(c.branch(0x85));
@@ -95,6 +101,15 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     c.emit({0xA1}); c.word(previousCursor);
     c.emit({0x38,0x83}); c.word(0x114); done.push_back(c.branch(0x84));
     cursorMode(); done.push_back(c.jump());
+
+    c.bind(menuOpen);
+    // The menu also owns a countdown-to-GAME handoff. Never replay its pre-chat cursor on blur/close.
+    c.store(inBattle, 1); c.store(chatting, 0);
+    c.emit({0x80,0x7E,8,0}); const auto menuWithoutTextFocus = c.branch(0x84);
+    c.store(context, 0); // Native focus gain already restored the IME association.
+    c.bind(menuWithoutTextFocus); restoreIme();
+    c.emit({0x80,0xBB}); c.word(0x114); c.emit({1}); done.push_back(c.branch(0x84));
+    c.emit({0xB8}); c.word(1); cursorMode(); done.push_back(c.jump());
 
     c.bind(noActor); c.bind(outsideBattle);
     restoreIme();
