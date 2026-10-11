@@ -67,6 +67,15 @@ python scripts/build.py --project managed --configuration Debug
 ### QQ 账号服务
 
 构建前设置 `$env:T7_AUTH_BASE_URL = 'https://HOST'`，地址作为 `AuthBaseUrl` 嵌入启动器，运行时不提供地址编辑入口。
+Debug 构建额外允许本机回环 HTTP（如 `localhost`、`127.0.0.1`、`[::1]`），Release 始终只接受 HTTPS。
+本地调试示例：
+
+```powershell
+$env:T7_AUTH_BASE_URL = 'http://localhost:8080'
+python scripts/build.py --project managed --configuration Debug
+```
+
+地址只填写服务端根地址，不追加 `/api/v1/auth`；修改后需要重新生成启动器。
 未配置时仅禁用账号登录，本地游戏功能不受影响。QQ 登录使用 WebView2 Evergreen Runtime；安装器和登录窗口均提供缺失时的官方安装入口。
 SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包检查将验证这些文件。
 

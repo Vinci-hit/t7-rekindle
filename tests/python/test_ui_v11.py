@@ -30,6 +30,35 @@ def test_v11_shell_has_five_sidebar_entries_and_a_fixed_window():
     ]
 
 
+def test_sidebar_mask_fades_top_to_bottom_without_dimming_controls():
+    root = ET.parse(DESKTOP / "MainWindow.xaml").getroot()
+    shell = root.find(f"{{{WPF}}}Grid")
+    named = {item.attrib.get(f"{{{XAML}}}Name"): item for item in root.iter()}
+    overlay = named["ContentArtworkOverlay"]
+    assert overlay.attrib["Grid.Row"] == overlay.attrib["Grid.Column"] == "1"
+    assert overlay.attrib.get("Grid.RowSpan", "1") == "1"
+    assert overlay.attrib.get("Grid.ColumnSpan", "1") == "1"
+    assert overlay.attrib["Background"] == "{DynamicResource WindowBackgroundBrush}"
+    assert overlay.attrib["Opacity"] == "0.6"
+    sidebar_overlay = named["SidebarArtworkOverlay"]
+    assert sidebar_overlay.attrib["Grid.Column"] == "0"
+    assert sidebar_overlay.attrib.get("Grid.ColumnSpan", "1") == "1"
+    assert sidebar_overlay.attrib["Grid.RowSpan"] == "2"
+    gradient = sidebar_overlay.find(f"{{{WPF}}}Border.Background/{{{WPF}}}LinearGradientBrush")
+    assert gradient.attrib["StartPoint"] == "0,0"
+    assert gradient.attrib["EndPoint"] == "0,1"
+    assert [(stop.attrib["Color"], stop.attrib["Offset"]) for stop in gradient] == [
+        ("#FFFFFFFF", "0"), ("#00FFFFFF", "1")
+    ]
+    children = list(shell)
+    for background, controls in ((sidebar_overlay, "Sidebar"), (overlay, "ContentScroll")):
+        assert background.attrib["Visibility"] == "{DynamicResource LauncherArtworkVisibility}"
+        assert background.attrib["IsHitTestVisible"] == "False"
+        assert children.index(named["SceneArtwork"]) < children.index(background) < children.index(named[controls])
+    for name in ("SceneArtwork", "Sidebar", "BrandLogo", "SidebarNavigation", "ContentScroll", "ContentViewport"):
+        assert named[name].attrib.get("Opacity", "1") == "1"
+
+
 def test_sidebar_brand_reclaims_caption_space_without_duplicate_title():
     root = ET.parse(DESKTOP / "MainWindow.xaml").getroot()
     named = {item.attrib.get(f"{{{XAML}}}Name"): item for item in root.iter()}
@@ -50,7 +79,7 @@ def test_sidebar_brand_reclaims_caption_space_without_duplicate_title():
     assert not root.findall(f"./{{{WPF}}}Grid/{{{WPF}}}StackPanel/{{{WPF}}}Image")
     assert not root.findall(f"./{{{WPF}}}Grid/{{{WPF}}}StackPanel/{{{WPF}}}TextBlock")
     shell = "clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-    assert root.find(f".//{{{shell}}}WindowChrome").attrib["CaptionHeight"] == "60"
+    assert root.find(f".//{{{shell}}}WindowChrome").attrib["CaptionHeight"] == "62"
     captions = root.find(f"./{{{WPF}}}Grid/{{{WPF}}}StackPanel")
     assert captions.attrib["Grid.Column"] == "1"
     assert captions.attrib[f"{{{shell}}}WindowChrome.IsHitTestVisibleInChrome"] == "True"

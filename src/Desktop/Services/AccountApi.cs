@@ -21,11 +21,21 @@ namespace T7.Rekindle.Desktop.Services
         internal AccountApi(string address, HttpClient client)
         {
             if (!Uri.TryCreate(address.TrimEnd('/') + "/", UriKind.Absolute, out _baseAddress)
-                || _baseAddress.Scheme != Uri.UriSchemeHttps || _baseAddress.UserInfo.Length != 0
+                || !IsAllowedScheme(_baseAddress) || _baseAddress.UserInfo.Length != 0
                 || _baseAddress.Query.Length != 0 || _baseAddress.Fragment.Length != 0)
-                throw new ArgumentException("账号服务地址必须为 HTTPS 地址。", nameof(address));
+                throw new ArgumentException("账号服务地址必须为 HTTPS；仅 Debug 构建允许本机回环 HTTP。", nameof(address));
             _client = client;
             _client.Timeout = Timeout.InfiniteTimeSpan;
+        }
+
+        private static bool IsAllowedScheme(Uri address)
+        {
+            if (address.Scheme == Uri.UriSchemeHttps) return true;
+#if DEBUG
+            return address.Scheme == Uri.UriSchemeHttp && address.IsLoopback;
+#else
+            return false;
+#endif
         }
 
         public Task<AccountSession> LoginAsync(string machineId, string cookie, CancellationToken cancellation) =>

@@ -14,6 +14,11 @@ namespace T7.ManagedHarness
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--login-ui-native")
+            {
+                try { LoginNativeUiTests.Run(args[1]); return 0; }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+            }
             if (args.Length >= 1 && args[0] == "--account-tests")
             {
                 try
@@ -25,6 +30,16 @@ namespace T7.ManagedHarness
                         app.InitializeComponent();
                         app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                         AccountTests.Render(args[1]);
+                        foreach (var theme in new[] { "Dark", "HighContrast" })
+                        {
+                            var resources = new System.Windows.ResourceDictionary
+                            {
+                                Source = new Uri("/T7-Rekindle;component/Resources/Theme." + theme + ".xaml", UriKind.Relative)
+                            };
+                            app.Resources.MergedDictionaries.Add(resources);
+                            try { AccountTests.Render(System.IO.Path.Combine(args[1], theme)); }
+                            finally { app.Resources.MergedDictionaries.Remove(resources); }
+                        }
                         app.Shutdown();
                     }
                     Console.WriteLine("account checks passed");

@@ -15,7 +15,7 @@ namespace T7.ManagedHarness
     {
         internal static void Run(string directory, string output)
         {
-            foreach (var size in new[] { new Size(1200, 900), new Size(928, 460) })
+            foreach (var size in new[] { new Size(1200, 900), new Size(1200, 880), new Size(928, 460) })
             foreach (var scale in new[] { 1.0, 1.25, 1.5, 1.75, 2.0 })
                 VerifyStates(directory, size.Width == 1200 && scale == 1 ? output : null, size, scale);
         }
@@ -44,6 +44,18 @@ namespace T7.ManagedHarness
                         (ScrollViewer)home.FindName("HomeScroll"), (Border)home.FindName("HeroPanel")
                     };
                     LauncherLayoutTests.Render(root, window, output, "launch-controls-ready", size.Width, size.Height, scale);
+                    if (size.Height >= 880)
+                    {
+                        var scroll = (ScrollViewer)home.FindName("HomeScroll");
+                        LauncherTests.Assert(scroll.ComputedVerticalScrollBarVisibility == Visibility.Collapsed
+                            && scroll.ScrollableHeight == 0,
+                            "home requires unnecessary scrolling: " + size + " / " + scale
+                                + " / extent " + scroll.ExtentHeight + " / viewport " + scroll.ViewportHeight);
+                        var announcement = (Border)home.FindName("AnnouncementCard");
+                        LauncherLayoutTests.AssertWithin(announcement, scroll, scroll.ViewportWidth, scroll.ViewportHeight);
+                        LauncherLayoutTests.AssertWithin((TextBlock)home.FindName("AnnouncementSummary"),
+                            announcement, announcement.ActualWidth, announcement.ActualHeight);
+                    }
                     var expected = Array.ConvertAll(elements, element => Bounds(element, root));
                     Action<string> verify = state =>
                     {

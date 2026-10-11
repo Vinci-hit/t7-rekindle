@@ -149,7 +149,7 @@ namespace T7.ManagedHarness
             }
         }
 
-        private static void VerifyCaptionHitTesting(MainWindow window, IntPtr handle)
+        internal static void VerifyCaptionHitTesting(MainWindow window, IntPtr handle)
         {
             Assert(HitTest(window, handle, new Point(108, 30)) == 2, "brand area lost native caption dragging");
             Assert(HitTest(window, handle, new Point(400, 30)) == 2, "main caption lost native dragging");
@@ -157,7 +157,7 @@ namespace T7.ManagedHarness
             foreach (var child in ((Grid)window.Content).Children)
             {
                 if (!(child is StackPanel panel) || Grid.GetColumn(panel) != 1) continue;
-                foreach (Button button in panel.Children)
+                foreach (FrameworkElement button in panel.Children)
                 {
                     var position = button.TranslatePoint(new Point(button.ActualWidth / 2, button.ActualHeight / 2), window);
                     Assert(HitTest(window, handle, position) == 1, "caption button was captured by window dragging");

@@ -22,7 +22,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private AccountSession _session;
         private AccountConnection _connection;
         private int _generation;
-        private bool _signedIn, _busy, _disposed;
+        private bool _signedIn, _busy, _disposed, _loginOpen, _waitingForServer;
         private string _status = "未登录";
 
         public AccountViewModel(IAccountApi api, IAccountSessionStore store, Func<string> machineId,
@@ -58,7 +58,14 @@ namespace T7.Rekindle.Desktop.ViewModels
         public bool IsSignedOut => !_signedIn;
         public bool HasSession => _session != null;
         public bool CanReconnect => HasSession && !_busy && _connection == null;
-        public string DisplayName => _signedIn ? _session.Nickname : "QQ 扫码登录";
+        public bool IsOnline => _signedIn && _connection != null && _heartbeatHealthy;
+        public bool IsLoginOpen => _loginOpen;
+        public bool IsWaitingForServer => _waitingForServer;
+        public string AccountState => !_signedIn ? "guest" : IsOnline ? "online" : "offline";
+        public string DisplayName => _signedIn ? _session.Nickname : "未登录";
+        public string AccountHint => IsWaitingForServer ? Status + "，请稍候。" : _signedIn
+            ? DisplayName + "（" + QqNumber + "），" + (IsOnline ? "在线" : "离线") + "。" + Status
+            : "未登录，打开 QQ 登录页。" + Status;
         public string QqNumber => _signedIn ? _session.QqNumber : string.Empty;
         public string AvatarUrl => _signedIn ? _session.AvatarUrl : null;
         public string Status => _status;
@@ -76,6 +83,8 @@ namespace T7.Rekindle.Desktop.ViewModels
                 if (saved == null) { SetStatus("未登录"); return; }
                 Validate(saved, _machineId());
                 _session = saved;
+                _waitingForServer = true;
+                Changed();
                 var current = await _api.CurrentAsync(saved, cancellation).ConfigureAwait(true);
                 if (!IsCurrent(generation)) return;
                 Validate(current, saved.MachineId);
@@ -96,7 +105,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     Record("恢复账号登录失败", error);
                 }
             }
-            finally { if (IsCurrent(generation)) { _busy = false; Changed(); } }
+            finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
         }
 
         public async Task LoginAsync()
@@ -110,9 +119,14 @@ namespace T7.Rekindle.Desktop.ViewModels
             try
             {
                 string machine = _machineId();
-                string cookie = await _scan(cancellation).ConfigureAwait(true);
+                string cookie;
+                _loginOpen = true;
+                Changed();
+                try { cookie = await _scan(cancellation).ConfigureAwait(true); }
+                finally { if (IsCurrent(generation)) { _loginOpen = false; Changed(); } }
                 if (!IsCurrent(generation)) return;
                 if (string.IsNullOrEmpty(cookie)) { SetStatus("未登录"); return; }
+                _waitingForServer = true;
                 SetStatus("正在验证登录");
                 var session = await _api.LoginAsync(machine, cookie, cancellation).ConfigureAwait(true);
                 if (!IsCurrent(generation)) return;
@@ -132,7 +146,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     Record("QQ 扫码登录失败", error);
                 }
             }
-            finally { if (IsCurrent(generation)) { _busy = false; Changed(); } }
+            finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
         }
 
         private void Accept(AccountSession session)
@@ -168,6 +182,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private int Begin()
         {
             _generation++;
+            _loginOpen = _waitingForServer = false;
             _lifetime.Cancel();
             _lifetime.Dispose();
             _lifetime = new CancellationTokenSource();
@@ -225,6 +240,8 @@ namespace T7.Rekindle.Desktop.ViewModels
             _lifetime.Cancel();
             _lifetime.Dispose();
             _api?.Dispose();
+            _busy = _loginOpen = _waitingForServer = false;
+            Changed();
         }
     }
 }

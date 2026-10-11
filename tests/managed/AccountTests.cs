@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -13,52 +14,80 @@ using static T7.ManagedHarness.LauncherTests;
 
 namespace T7.ManagedHarness
 {
-    internal static class AccountTests
+    internal static partial class AccountTests
     {
         private const string Machine = "12345678-1234-1234-1234-123456789abc";
         internal static void Run() => RunAsync().GetAwaiter().GetResult();
         internal static void Render(string output)
         {
-            var api = new FakeApi();
-            var session = api.Session;
-            api.Session = new AccountSession(session.SessionId, session.SessionToken, session.ExpiresAt, session.AccountId,
-                session.LoginName, session.MachineId, session.QqNumber, session.Nickname, null);
-            using (var model = Model(api, new MemoryStore(), new ManualDelay()))
+            using (var warnings = new StringWriter())
+            using (var listener = new TextWriterTraceListener(warnings))
             {
-                var panel = new T7.Rekindle.Desktop.Views.AccountPanel { DataContext = model };
-                var popup = (System.Windows.Controls.Primitives.Popup)panel.FindName("AccountPopup");
-                var card = (System.Windows.Controls.Border)popup.Child;
-                popup.Child = null;
-                card.DataContext = model;
-                var root = new System.Windows.Controls.Grid
-                    { Background = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["WindowBackgroundBrush"] };
-                System.Windows.Documents.TextElement.SetFontFamily(root,
-                    (System.Windows.Media.FontFamily)System.Windows.Application.Current.Resources["UiFontFamily"]);
-                System.Windows.Documents.TextElement.SetFontSize(root, 16);
-                System.Windows.Documents.TextElement.SetForeground(root,
-                    (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["TextBrush"]);
-                System.Windows.Media.TextOptions.SetTextFormattingMode(root, System.Windows.Media.TextFormattingMode.Display);
-                root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = new System.Windows.GridLength(60) });
-                root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition());
-                root.Children.Add(panel); root.Children.Add(card);
-                System.Windows.Controls.Grid.SetRow(card, 1);
-                LauncherLayoutTests.Render(root, null, output, "account-signed-out", 340, 330);
-                RunTask(model.LoginAsync());
-                LauncherLayoutTests.Render(root, null, output, "account-online", 340, 330);
-                api.Kick(new AccountKick(api.Session.SessionId, api.Connection.ConnectionId, "MACHINE_CHANGED"));
-                LauncherLayoutTests.Render(root, null, output, "account-kicked", 340, 330);
+                var source = PresentationTraceSources.DataBindingSource;
+                var previousLevel = source.Switch.Level;
+                source.Switch.Level = SourceLevels.Warning;
+                source.Listeners.Add(listener);
+                try
+                {
+                    RenderAccountUi(output);
+                    RenderAccountLoading(output);
+                    VerifyAccountLoadingAnimation();
+                    QqLoginUiTests.Run(output);
+                    Assert(warnings.ToString().Length == 0, "account WPF binding warning: " + warnings);
+                }
+                finally { source.Listeners.Remove(listener); source.Switch.Level = previousLevel; }
             }
         }
         private static async Task RunAsync()
         {
+            AddressValidation();
+            await PresentationStateAsync();
+            await WaitingForServerAsync();
+            await RestoreWaitingForServerAsync();
+            await CancelWaitingForServerAsync();
             await LoginAndKickAsync();
             await OnlineTakeoverAsync();
             await GroupMembershipErrorsAsync();
             await SilentLogoutAndLateLoginAsync();
             await RestoreAndHeartbeatAsync();
             await PushReconnectAndCloseAsync();
-            await HttpContractsAsync();
+            await HttpContractsAsync("https://auth.example.invalid/");
+#if DEBUG
+            await HttpContractsAsync("http://localhost:8080/");
+#endif
             ProtectedStore();
+        }
+
+        private static void AddressValidation()
+        {
+            foreach (string address in new[] { "https://auth.example.invalid", "https://localhost:8443/" })
+                CheckAddress(address, true);
+#if DEBUG
+            const bool allowLoopbackHttp = true;
+#else
+            const bool allowLoopbackHttp = false;
+#endif
+            foreach (string address in new[] { "http://localhost:8080", "http://127.0.0.1:8080/", "http://[::1]:8080/" })
+                CheckAddress(address, allowLoopbackHttp);
+            foreach (string address in new[]
+            {
+                "http://auth.example.invalid", "http://192.0.2.1:8080", "http://0.0.0.0:8080",
+                "http://localhost.example.invalid:8080", "http://user@localhost:8080",
+                "http://localhost:8080/?query=value", "http://localhost:8080/#fragment",
+                "https://user@auth.example.invalid", "https://auth.example.invalid/?query=value",
+                "https://auth.example.invalid/#fragment", "ftp://localhost", "relative/path"
+            }) CheckAddress(address, false);
+        }
+
+        private static void CheckAddress(string address, bool expected)
+        {
+            bool accepted = false;
+            using (var client = new HttpClient())
+            {
+                try { using (var api = new AccountApi(address, client)) accepted = true; }
+                catch (ArgumentException) { }
+            }
+            Assert(accepted == expected, "account address validation mismatch: " + address);
         }
 
         private static async Task LoginAndKickAsync()
@@ -240,11 +269,13 @@ namespace T7.ManagedHarness
             }
         }
 
-        private static async Task HttpContractsAsync()
+        private static async Task HttpContractsAsync(string address)
         {
             var session = Session();
             using (var handler = new ResponseHandler(async request =>
             {
+                Assert(request.RequestUri.GetLeftPart(UriPartial.Authority) == new Uri(address).GetLeftPart(UriPartial.Authority),
+                    "account request did not use the configured service address");
                 string path = request.RequestUri.AbsolutePath;
                 if (path.EndsWith("qq/sessions", StringComparison.Ordinal))
                 {
@@ -262,7 +293,7 @@ namespace T7.ManagedHarness
                         JsonConvert.SerializeObject(new AccountKick(session.SessionId, "connection", "ADMIN_REVOKED")) + "\n\n", Encoding.UTF8, "text/event-stream") };
                 return Json(session.WithToken(null));
             }))
-            using (var api = new AccountApi("https://auth.example.invalid/", new HttpClient(handler)))
+            using (var api = new AccountApi(address, new HttpClient(handler)))
             {
                 Assert((await api.LoginAsync(Machine, "TEST_COOKIE", CancellationToken.None)).LoginName == "12345", "QQ response decoding failed");
                 Assert((await api.CurrentAsync(session, CancellationToken.None)).SessionToken == session.SessionToken, "restoration discarded token");
@@ -347,7 +378,8 @@ namespace T7.ManagedHarness
             public AccountConnection Connection = new AccountConnection(Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddSeconds(45), 15);
             public Action<AccountKick> Kick;
             public Exception LogoutError, CurrentError, HeartbeatError, ListenError, LoginError, OnlineError;
-            public Task<AccountSession> PendingLogin;
+            public Task<AccountSession> PendingLogin, PendingCurrent;
+            public Task<AccountConnection> PendingOnline;
             public Task PendingLogout;
             public AccountSession LastOnlineSession;
             public CancellationToken ListenCancellation;
@@ -355,9 +387,9 @@ namespace T7.ManagedHarness
             public Task<AccountSession> LoginAsync(string machine, string cookie, CancellationToken token)
             { LoginCalls++; return LoginError == null ? PendingLogin ?? Task.FromResult(Session) : Task.FromException<AccountSession>(LoginError); }
             public Task<AccountSession> CurrentAsync(AccountSession session, CancellationToken token)
-            { CurrentCalls++; return CurrentError == null ? Task.FromResult(Session) : Task.FromException<AccountSession>(CurrentError); }
+            { CurrentCalls++; return CurrentError == null ? PendingCurrent ?? Task.FromResult(Session) : Task.FromException<AccountSession>(CurrentError); }
             public Task<AccountConnection> OnlineAsync(AccountSession session, CancellationToken token)
-            { OnlineCalls++; LastOnlineSession = session; return OnlineError == null ? Task.FromResult(Connection) : Task.FromException<AccountConnection>(OnlineError); }
+            { OnlineCalls++; LastOnlineSession = session; return OnlineError == null ? PendingOnline ?? Task.FromResult(Connection) : Task.FromException<AccountConnection>(OnlineError); }
             public Task<AccountConnection> HeartbeatAsync(AccountSession session, string connection, CancellationToken token) =>
                 HeartbeatError == null ? Task.FromResult(Connection) : Task.FromException<AccountConnection>(HeartbeatError);
             public Task OfflineAsync(AccountSession session, string connection, CancellationToken token)

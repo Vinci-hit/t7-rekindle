@@ -20,11 +20,12 @@ namespace T7.Rekindle.Desktop.ViewModels
             {
                 if (IsCurrent(generation) && !HandleTerminal(error)) { SetStatus("已登录 · 上线失败，请重试"); Record("账号上线失败", error); }
             }
-            finally { if (IsCurrent(generation)) { _busy = false; Changed(); } }
+            finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
         }
 
         private async Task ConnectAsync(int generation, CancellationToken cancellation)
         {
+            _waitingForServer = true;
             SetStatus("已登录 · 正在上线");
             var connection = await _api.OnlineAsync(_session, cancellation).ConfigureAwait(true);
             if (!IsCurrent(generation)) return;

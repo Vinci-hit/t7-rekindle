@@ -1,23 +1,63 @@
 <Window x:Class="T7.Rekindle.Desktop.Views.QqLoginDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:web="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="QQ 扫码登录" Width="700" Height="620" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        FontFamily="{StaticResource UiFontFamily}" FontSize="16" Background="{DynamicResource PanelBackgroundBrush}"
-        Foreground="{DynamicResource TextBrush}" Loaded="OnLoaded" Closed="OnClosed" KeyboardNavigation.TabNavigation="Cycle">
-  <Grid Margin="24">
-    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-    <StackPanel Margin="0,0,0,16">
-      <TextBlock Text="QQ 扫码登录" FontSize="24" FontWeight="SemiBold" />
-      <TextBlock Text="扫码后，QQ 互联登录状态将发送至账号服务进行验证。" FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource MutedTextBrush}" />
-    </StackPanel>
-    <TextBlock Grid.Row="1" x:Name="Feedback" Text="正在加载登录页面…" TextWrapping="Wrap" Margin="0,0,0,12" />
-    <web:WebView2 Grid.Row="2" x:Name="Browser" />
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-      <Button x:Name="InstallRuntime" Content="安装 WebView2" Click="OnInstallRuntime" Visibility="Collapsed" Margin="0,0,12,0"
-              AutomationProperties.Name="安装 WebView2" TabIndex="0" />
-      <Button Content="刷新二维码" Click="OnRefresh" Margin="0,0,12,0" AutomationProperties.Name="刷新二维码" TabIndex="1" />
-      <Button Content="取消" IsCancel="True" AutomationProperties.Name="取消" TabIndex="2" />
+        Title="QQ 登录" Width="636" Height="378" WindowStyle="None" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        FontFamily="{StaticResource UiFontFamily}" FontSize="14" Background="White"
+        Foreground="{DynamicResource LoginTextBrush}" TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True" Loaded="OnLoaded" Closed="OnClosed" PreviewKeyDown="OnKeyDown"
+        KeyboardNavigation.TabNavigation="Cycle">
+  <Grid x:Name="LoginRoot" Background="White">
+    <Grid x:Name="BrowserHost" Background="White" />
+    <TextBlock x:Name="LoadingLabel" Text="正在加载登录页面…" HorizontalAlignment="Center" VerticalAlignment="Center"
+               Foreground="{DynamicResource LoginMutedBrush}" />
+    <ScrollViewer x:Name="RuntimePanel" Visibility="Collapsed" Background="{DynamicResource LoginRuntimeBrush}"
+                  HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Focusable="False">
+      <Border Padding="24,48,24,36">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+          <Border Width="48" Height="48" CornerRadius="11" BorderThickness="1" BorderBrush="{DynamicResource LoginRuntimeIconBorderBrush}"
+                  Background="{DynamicResource LoginRuntimeIconBackgroundBrush}" HorizontalAlignment="Center">
+            <Viewbox Width="26" Height="26"><Canvas Width="24" Height="24">
+              <Path Data="{StaticResource LoginIcon.Window}" Stroke="{DynamicResource LoginRuntimeIconBrush}" StrokeThickness="1.6"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            </Canvas></Viewbox>
+          </Border>
+          <TextBlock x:Name="RuntimeTitle" Text="暂时无法打开 QQ 登录页" FontSize="21" FontWeight="Medium"
+                     Foreground="{DynamicResource LoginTextBrush}" Margin="0,17,0,0" TextAlignment="Center" TextWrapping="Wrap" />
+          <TextBlock x:Name="RuntimeDescription" Text="未检测到可用的网页组件。请安装适用组件后，点击「重新检测」。"
+                     Foreground="{DynamicResource LoginMutedBrush}" Margin="0,10,0,0" MaxWidth="370"
+                     LineHeight="24.5" LineStackingStrategy="BlockLineHeight" TextAlignment="Center" TextWrapping="Wrap" />
+          <WrapPanel HorizontalAlignment="Center" Margin="0,23,0,0">
+            <Button x:Name="InstallRuntime" Style="{StaticResource LoginPrimaryButton}" Click="OnInstallRuntime" Margin="0,0,12,0"
+                    ToolTip="打开 Microsoft Edge WebView2 Runtime 下载页" AutomationProperties.Name="前往下载" TabIndex="0">
+              <StackPanel Orientation="Horizontal">
+                <Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.External}" Width="16" Height="16" Margin="0,0,8,0" />
+                <TextBlock Text="前往下载" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="DetectRuntime" Style="{StaticResource LoginActionButton}" Click="OnDetectRuntime"
+                    AutomationProperties.Name="重新检测" TabIndex="1">
+              <StackPanel Orientation="Horizontal">
+                <Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.Reload}" Width="16" Height="16" Margin="0,0,8,0" />
+                <TextBlock x:Name="DetectLabel" Text="重新检测" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+          </WrapPanel>
+          <TextBlock x:Name="RuntimeHelp" Text="组件下载页将在系统浏览器中打开。" FontSize="12"
+                     Foreground="{DynamicResource LoginMutedBrush}" Margin="0,14,0,0" MaxWidth="370"
+                     TextAlignment="Center" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+    </ScrollViewer>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10">
+      <Button x:Name="ReloadButton" Style="{StaticResource LoginIconButton}" Click="OnRefresh" Margin="0,0,4,0"
+              ToolTip="重载登录页" AutomationProperties.Name="重载登录页" TabIndex="2" IsEnabled="False">
+        <Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.Reload}" />
+      </Button>
+      <Button x:Name="CancelButton" Style="{StaticResource LoginIconButton}" Click="OnCancel" IsCancel="True"
+              ToolTip="取消登录" AutomationProperties.Name="取消登录" TabIndex="3">
+        <Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.Close}" />
+      </Button>
     </StackPanel>
   </Grid>
 </Window>

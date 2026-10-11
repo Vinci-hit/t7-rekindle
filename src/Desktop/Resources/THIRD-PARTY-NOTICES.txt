@@ -3208,7 +3208,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Lucide Icons 1.8.0 — shield-check / flask-conical
+Lucide Icons 1.8.0 — shield-check / flask-conical / user-round / chevron-down /
+log-out / rotate-cw / external-link / x / minus / app-window
 https://lucide.dev/
 https://github.com/lucide-icons/lucide
 

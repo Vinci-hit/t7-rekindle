@@ -39,6 +39,9 @@
         <ResourceDictionary Source="Resources/Controls.xaml" />
         <ResourceDictionary Source="Resources/Navigation.xaml" />
         <ResourceDictionary Source="Resources/VersionCapsule.xaml" />
+        <ResourceDictionary Source="Resources/LoginPalette.xaml" />
+        <ResourceDictionary Source="Resources/LoginControls.xaml" />
+        <ResourceDictionary Source="Resources/AccountCapsule.xaml" />
       </ResourceDictionary.MergedDictionaries>
       <BooleanToVisibilityConverter x:Key="BoolVisibility" />
     </ResourceDictionary>

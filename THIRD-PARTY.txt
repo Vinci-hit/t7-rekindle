@@ -10,7 +10,7 @@
 - py_trees 2.6.0 — BSD-3-Clause（电脑玩家行为树）
 - pydot 4.0.1 — MIT，含 Python-2.0 授权代码（py_trees 依赖）
 - pyparsing 3.3.3 — MIT（pydot 依赖）
-- Lucide Icons 1.8.0（shield-check、flask-conical 两个矢量图标）— ISC
+- Lucide Icons 1.8.0（版本胶囊与登录界面的矢量图标）— ISC
   项目：https://lucide.dev/；上游：https://github.com/lucide-icons/lucide
   路径保存在 src/Desktop/Resources/VersionCapsule.xaml，不引入图标运行时依赖。
 

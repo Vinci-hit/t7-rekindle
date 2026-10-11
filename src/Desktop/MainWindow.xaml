@@ -11,25 +11,29 @@
         Foreground="{DynamicResource TextBrush}" UseLayoutRounding="True" SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen" Closing="OnClosing" Closed="OnClosed">
   <shell:WindowChrome.WindowChrome>
-    <shell:WindowChrome CaptionHeight="60" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+    <shell:WindowChrome CaptionHeight="62" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
   </shell:WindowChrome.WindowChrome>
   <Grid Background="{DynamicResource WindowBackgroundBrush}" ClipToBounds="True" SizeChanged="OnViewportSizeChanged">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" MinWidth="216" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-    <Grid.RowDefinitions><RowDefinition Height="60" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="62" /><RowDefinition Height="*" /></Grid.RowDefinitions>
     <Image x:Name="SceneArtwork" Grid.ColumnSpan="2" Grid.RowSpan="2"
            Source="/T7-Rekindle;component/Resources/Assets/art/launcher-background.png"
            Stretch="UniformToFill" IsHitTestVisible="False" Focusable="False"
            Visibility="{DynamicResource LauncherArtworkVisibility}" ImageFailed="OnSceneArtworkFailed"
            RenderOptions.BitmapScalingMode="HighQuality" />
-    <Border Grid.RowSpan="2" IsHitTestVisible="False" Visibility="{DynamicResource LauncherArtworkVisibility}">
+    <Border x:Name="SidebarArtworkOverlay" Grid.Column="0" Grid.RowSpan="2" IsHitTestVisible="False" Visibility="{DynamicResource LauncherArtworkVisibility}">
       <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-        <GradientStop Color="#F5FFFFFF" Offset="0" /><GradientStop Color="#EFFFFFFF" Offset="0.45" /><GradientStop Color="#00FFFFFF" Offset="0.95" />
+        <GradientStop Color="#FFFFFFFF" Offset="0" /><GradientStop Color="#00FFFFFF" Offset="1" />
       </LinearGradientBrush></Border.Background>
     </Border>
-    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,12,0" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-      <views:AccountPanel DataContext="{Binding Account}" />
-      <Button Style="{StaticResource CaptionButton}" Click="OnMinimize" ToolTip="最小化" AutomationProperties.Name="最小化" TabIndex="1"><views:Icon Kind="minus" /></Button>
-      <Button Style="{StaticResource CaptionButton}" Click="OnCloseClick" ToolTip="关闭" AutomationProperties.Name="关闭启动器" TabIndex="2"><views:Icon Kind="x" /></Button>
+    <Border x:Name="ContentArtworkOverlay" Grid.Row="1" Grid.Column="1"
+            Background="{DynamicResource WindowBackgroundBrush}" Opacity="0.6"
+            IsHitTestVisible="False" Visibility="{DynamicResource LauncherArtworkVisibility}" />
+    <Border Grid.Column="1" Background="{DynamicResource LoginTitlebarBrush}" BorderBrush="{DynamicResource LoginTitlebarLineBrush}" BorderThickness="0,0,0,1" IsHitTestVisible="False" />
+    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,20,0" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+      <views:AccountPanel x:Name="TitlebarAccount" DataContext="{Binding Account}" Margin="0,0,16,0" Visibility="Collapsed" />
+      <Button Style="{StaticResource LoginIconButton}" Click="OnMinimize" ToolTip="最小化" AutomationProperties.Name="最小化" TabIndex="1" Margin="0,0,12,0"><Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.Minus}" /></Button>
+      <Button Style="{StaticResource LoginIconButton}" Click="OnCloseClick" ToolTip="关闭" AutomationProperties.Name="关闭启动器" TabIndex="2"><Control Style="{StaticResource LoginGlyph}" Tag="{StaticResource LoginIcon.Close}" /></Button>
     </StackPanel>
     <Grid Grid.Row="0" Grid.RowSpan="2" x:Name="Sidebar">
       <Grid.RowDefinitions><RowDefinition x:Name="SidebarBrandRow" Height="180" /><RowDefinition Height="*" /><RowDefinition x:Name="SidebarVersionRow" Height="Auto" /></Grid.RowDefinitions>
@@ -107,5 +111,13 @@
     </ScrollViewer>
     <views:ToastHost Grid.Row="1" Grid.Column="1" Panel.ZIndex="20" VerticalAlignment="Top" Margin="36,32,36,44" />
     <Border Grid.ColumnSpan="2" Grid.RowSpan="2" BorderThickness="1" BorderBrush="{DynamicResource ControlBorderBrush}" IsHitTestVisible="False" />
+    <Border x:Name="LoginBackdrop" Grid.ColumnSpan="2" Grid.RowSpan="2" Panel.ZIndex="30">
+      <Border.Style><Style TargetType="Border">
+        <Setter Property="Visibility" Value="Collapsed" />
+        <Style.Triggers><DataTrigger Binding="{Binding Account.IsLoginOpen}" Value="True">
+          <Setter Property="Visibility" Value="Visible" /><Setter Property="Background" Value="#661B2628" />
+        </DataTrigger></Style.Triggers>
+      </Style></Border.Style>
+    </Border>
   </Grid>
 </Window>

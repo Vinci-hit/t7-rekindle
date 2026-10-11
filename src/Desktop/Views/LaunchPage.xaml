@@ -27,7 +27,7 @@
             </StackPanel>
           </Grid>
         </Border>
-        <Border x:Name="AnnouncementCard" Grid.Row="1" Style="{StaticResource Card}" Margin="0,24,0,0" Padding="24,20" MinHeight="136">
+        <Border x:Name="AnnouncementCard" Grid.Row="1" Style="{StaticResource Card}" Margin="0,24,0,0" Padding="24,16" MinHeight="136">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="112" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,0,20,0">

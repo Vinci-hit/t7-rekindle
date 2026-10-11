@@ -15,19 +15,25 @@ namespace T7.Rekindle.Desktop.Services
         private bool _scheduled;
         private bool _disposed;
         private readonly Size _preferredSize;
+        private readonly double _sizeIncrement;
 
-        internal WindowLayoutController(Window window, Action<Exception> reportError, double preferredWidth = 1200, double preferredHeight = 900)
+        internal WindowLayoutController(Window window, Action<Exception> reportError, double preferredWidth = 1200,
+            double preferredHeight = 900, double sizeIncrement = 4)
         {
             _window = window; _reportError = reportError;
             _preferredSize = new Size(preferredWidth, preferredHeight);
+            _sizeIncrement = sizeIncrement;
             window.SourceInitialized += OnSourceInitialized;
         }
 
-        internal static Size CalculateSize(double workWidthPx, double workHeightPx, double scale, double preferredWidth = 1200, double preferredHeight = 900)
+        internal static Size CalculateSize(double workWidthPx, double workHeightPx, double scale, double preferredWidth = 1200,
+            double preferredHeight = 900, double sizeIncrement = 4)
         {
             if (scale <= 0 || double.IsNaN(scale)) throw new ArgumentOutOfRangeException(nameof(scale));
-            return new Size(Math.Max(4, Math.Floor(Math.Min(preferredWidth, workWidthPx / scale - 32) / 4) * 4),
-                Math.Max(4, Math.Floor(Math.Min(preferredHeight, workHeightPx / scale - 32) / 4) * 4));
+            if (sizeIncrement <= 0 || double.IsNaN(sizeIncrement) || double.IsInfinity(sizeIncrement))
+                throw new ArgumentOutOfRangeException(nameof(sizeIncrement));
+            return new Size(Math.Max(sizeIncrement, Math.Floor(Math.Min(preferredWidth, workWidthPx / scale - 32) / sizeIncrement) * sizeIncrement),
+                Math.Max(sizeIncrement, Math.Floor(Math.Min(preferredHeight, workHeightPx / scale - 32) / sizeIncrement) * sizeIncrement));
         }
 
         private void OnSourceInitialized(object sender, EventArgs e)
@@ -70,7 +76,7 @@ namespace T7.Rekindle.Desktop.Services
             if (dpi == 0) throw new InvalidOperationException("窗口 DPI 暂不可用。");
             var scale = dpi / 96.0;
             var work = info.Work;
-            var size = CalculateSize(work.Right - work.Left, work.Bottom - work.Top, scale, _preferredSize.Width, _preferredSize.Height);
+            var size = CalculateSize(work.Right - work.Left, work.Bottom - work.Top, scale, _preferredSize.Width, _preferredSize.Height, _sizeIncrement);
             _window.MinWidth = Math.Min(_window.MinWidth, size.Width);
             _window.MinHeight = Math.Min(_window.MinHeight, size.Height);
             _window.Width = size.Width; _window.Height = size.Height;
