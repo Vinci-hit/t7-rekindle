@@ -81,7 +81,6 @@ namespace T7.ManagedHarness
                 var configuration = new LoggingConfiguration();
                 configuration.AddRule(LogLevel.Info, LogLevel.Fatal, target);
                 configuration.AddRule(LogLevel.Error, LogLevel.Fatal, errors, "NativeBridge");
-                LogManager.Configuration = configuration;
 
                 const string timestamp = "2026-01-02 03:04:05";
                 var nativeLines = new[]
@@ -102,6 +101,8 @@ namespace T7.ManagedHarness
                     new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "Player" }, null,
                     path => Task.FromResult(ValidDirectory(path)), new FakeDesktopInteraction()))
                 {
+                    // Account initialization logs are outside the forwarding contract.
+                    LogManager.Configuration = configuration;
                     RunTask(model.ValidationTask);
                     var deadline = DateTime.UtcNow.AddSeconds(5);
                     while (target.Logs.Count < nativeLines.Length && DateTime.UtcNow < deadline)
