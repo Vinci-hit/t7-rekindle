@@ -40,16 +40,17 @@ namespace T7.Rekindle.Desktop.Services
     public sealed class AccountKick
     {
         [JsonConstructor]
-        public AccountKick(string sessionId, string connectionId, string reason)
-        { SessionId = sessionId; ConnectionId = connectionId; Reason = reason; }
+        public AccountKick(string sessionId, string connectionId, string reason, string groupNumber = null)
+        { SessionId = sessionId; ConnectionId = connectionId; Reason = reason; GroupNumber = groupNumber; }
         public string SessionId { get; }
         public string ConnectionId { get; }
         public string Reason { get; }
+        public string GroupNumber { get; }
     }
 
     public sealed class AccountApiException : Exception
     {
-        public AccountApiException(int status, string code) : base("账号请求失败：" + status)
+        public AccountApiException(int status, string code, string message = null) : base(message ?? "账号请求失败：" + status)
         { Status = status; Code = code; }
         public int Status { get; }
         public string Code { get; }

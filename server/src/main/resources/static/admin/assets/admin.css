@@ -60,6 +60,16 @@ td:has(code) { max-width: 290px; min-width: 160px; }
 .time { font: 12px/1.7 Consolas, monospace; min-width: 155px; overflow-wrap: anywhere; }
 .badge { display: inline-block; background: var(--canvas); padding: 3px 9px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
 .badge.good { background: #e7f0eb; color: #256447; }
+.badge.bad { background: #f8eaea; color: var(--danger); }
+.group-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin: 0 0 24px; }
+.group-setup { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 1fr); gap: 40px; }
+.group-choice { border-left: 1px solid var(--line); padding-left: 40px; }
+.group-status { margin: 20px 0 0; overflow-wrap: anywhere; }
+.qr-frame { width: 244px; padding: 12px; border: 1px solid var(--line); margin-top: 24px; background: #fff; }
+.qr-frame img { display: block; image-rendering: pixelated; }
+.check-field { display: flex; align-items: center; gap: 10px; }
+.check-field input { width: 18px; min-height: 18px; accent-color: var(--gold); }
+select { font: inherit; border: 1px solid #a4b5be; border-radius: 5px; padding: 10px 12px; width: 100%; background: var(--panel); color: var(--ink); }
 .empty { padding: 36px; text-align: center; color: var(--muted); }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 24px; margin-top: 20px; color: var(--muted); font-size: 13px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -80,6 +90,8 @@ dt { color: var(--muted); font-size: 13px; margin-top: 18px; }
 dd { margin: 6px 0 0; }
 .secret { display: block; background: var(--canvas); padding: 18px; font-size: 16px; border-left: 3px solid var(--gold); user-select: all; }
 @media (max-width: 900px) {
+  .group-setup, .group-details { grid-template-columns: minmax(0, 1fr); }
+  .group-choice { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }
   .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { padding: 20px; border-right: 0; border-bottom: 1px solid var(--line); gap: 20px; }
   .sidebar nav { display: flex; flex-wrap: wrap; gap: 4px; }

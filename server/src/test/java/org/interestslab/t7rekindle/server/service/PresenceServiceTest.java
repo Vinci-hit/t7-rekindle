@@ -30,7 +30,7 @@ class PresenceServiceTest {
         doCallRealMethod().when(tx).executeWithoutResult(any());
         when(db.now()).thenReturn(now);
         when(auth.requireLocked(identity)).thenReturn(identity);
-        service = new PresenceService(db, auth, tx, mock(SessionEvents.class));
+        service = new PresenceService(db, auth, tx, mock(SessionEvents.class), mock(QqGroupService.class));
     }
 
     @Test void explicitOnlineCreatesNewConnectionAndClampsDeadline() {
@@ -63,7 +63,7 @@ class PresenceServiceTest {
     }
     @Test void streamValidationDoesNotRenewLeaseAndTakeoverPushesOldConnection() {
         var events = mock(SessionEvents.class);
-        service = new PresenceService(db, auth, tx, events);
+        service = new PresenceService(db, auth, tx, events, mock(QqGroupService.class));
         var owner = new Presence("account", "session", "old", now.plusSeconds(10));
         when(db.lockPresence("account")).thenReturn(owner);
         service.checkConnection(identity, "old");

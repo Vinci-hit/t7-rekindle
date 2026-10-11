@@ -20,9 +20,10 @@ public class QqAuthService {
     private final QqSessionVerifier verifier;
     private final SessionEvents events;
     private final TransactionTemplate tx;
+    private final QqGroupService groups;
 
     public QqAuthService(AuthMapper db, AdminMapper audit, Secrets secrets, LoginLimiter limiter,
-                         QqSessionVerifier verifier, SessionEvents events, TransactionTemplate tx) {
+                         QqSessionVerifier verifier, SessionEvents events, TransactionTemplate tx, QqGroupService groups) {
         this.db = db;
         this.audit = audit;
         this.secrets = secrets;
@@ -30,21 +31,37 @@ public class QqAuthService {
         this.verifier = verifier;
         this.events = events;
         this.tx = tx;
+        this.groups = groups;
     }
 
     public QqSessionCredentials login(String machineId, String cookie, String address) {
         String machine = Inputs.machineId(machineId);
         limiter.check("qq", QqSessionVerifier.qqNumber(cookie), address);
         QqProfile profile = verifier.verify(cookie);
+        Problem rejection = groupRejection(profile.qqNumber());
+        QqSessionCredentials result;
         try {
-            return tx.execute(status -> createSession(machine, profile));
+            result = tx.execute(status -> completeLogin(machine, profile, rejection));
         } catch (DuplicateKeyException error) {
             // A concurrent first login may have created the same QQ account.
-            return tx.execute(status -> createSession(machine, profile));
+            result = tx.execute(status -> completeLogin(machine, profile, rejection));
+        }
+        // 拒绝结果在事务提交后抛出，保留账户与操作记录。
+        if (rejection != null) throw rejection;
+        return result;
+    }
+
+    private Problem groupRejection(String qqNumber) {
+        try {
+            groups.require(qqNumber, false);
+            return null;
+        } catch (Problem error) {
+            if (!error.code().equals("QQ_GROUP_NOT_MEMBER")) throw error;
+            return error;
         }
     }
 
-    private QqSessionCredentials createSession(String machine, QqProfile profile) {
+    private QqSessionCredentials completeLogin(String machine, QqProfile profile, Problem rejection) {
         Account account = db.lockByName(profile.qqNumber());
         if (account == null) {
             db.createQqAccount(UUID.randomUUID().toString(), profile);
@@ -52,6 +69,11 @@ public class QqAuthService {
         }
         if (!profile.qqNumber().equals(account.qqNumber())) {
             throw new Problem(409, "QQ_ACCOUNT_CONFLICT", "QQ 号与已有密码账号重名，请联系管理员处理");
+        }
+        if (rejection != null) {
+            db.updateQqProfile(account.accountId(), profile);
+            audit.audit(account.accountId(), "QQ_GROUP_NOT_MEMBER", rejection.getMessage());
+            return null;
         }
         if (!account.status().equals("ACTIVE")) throw Problem.unauthorized();
         var revoked = new HashSet<String>();

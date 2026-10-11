@@ -14,14 +14,17 @@ public class PresenceService {
     private final AuthService auth;
     private final TransactionTemplate tx;
     private final SessionEvents events;
+    private final QqGroupService groups;
 
-    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx, SessionEvents events) {
+    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx, SessionEvents events, QqGroupService groups) {
         this.db = db;
         this.auth = auth;
         this.tx = tx;
         this.events = events;
+        this.groups = groups;
     }
     public OnlineConnection online(Identity identity) {
+        groups.require(identity.qqNumber(), false);
         return tx.execute(status -> {
             Identity current = auth.requireLocked(identity);
             Presence previous = db.lockPresence(current.accountId());
@@ -31,10 +34,13 @@ public class PresenceService {
         });
     }
     public OnlineConnection heartbeat(Identity identity, String connectionId) {
+        checkConnection(identity, connectionId);
+        groups.require(identity.qqNumber(), true);
         return tx.execute(status -> {
             Identity current = auth.requireLocked(identity);
             Instant now = db.now();
             requireOwner(current, connectionId, now);
+            db.heartbeat(current.accountId(), now);
             return save(current, connectionId, now);
         });
     }

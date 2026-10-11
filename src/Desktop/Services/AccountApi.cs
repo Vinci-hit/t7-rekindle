@@ -50,7 +50,7 @@ namespace T7.Rekindle.Desktop.Services
             using (var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
             using (var request = Request(method, path, session))
             {
-                limit.CancelAfter(TimeSpan.FromSeconds(8));
+                limit.CancelAfter(TimeSpan.FromSeconds(path == "qq/sessions" ? 20 : 8));
                 if (body != null) request.Content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
                 using (var response = await _client.SendAsync(request, limit.Token).ConfigureAwait(false))
                 {
@@ -117,9 +117,15 @@ namespace T7.Rekindle.Desktop.Services
         {
             if (response.IsSuccessStatusCode) return;
             string code = string.Empty;
-            try { code = (string)JObject.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false))["code"] ?? string.Empty; }
+            string message = null;
+            try
+            {
+                var body = JObject.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
+                code = (string)body["code"] ?? string.Empty;
+                if (code == "QQ_GROUP_NOT_MEMBER" || code == "QQ_GROUP_UNAVAILABLE") message = (string)body["message"];
+            }
             catch (JsonException) { code = "INVALID_RESPONSE"; }
-            throw new AccountApiException((int)response.StatusCode, code);
+            throw new AccountApiException((int)response.StatusCode, code, message);
         }
 
         private static string ConnectionPath(string id) => "online/" + Uri.EscapeDataString(id);

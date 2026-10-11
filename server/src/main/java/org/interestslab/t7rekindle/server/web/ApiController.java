@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 import org.interestslab.t7rekindle.server.domain.Models.*;
 import org.interestslab.t7rekindle.server.service.AuthService;
 import org.interestslab.t7rekindle.server.service.PresenceService;
+import org.interestslab.t7rekindle.server.service.QqGroupService;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -14,8 +15,11 @@ public class ApiController {
     public record Login(String loginName, String password) { }
     private final AuthService auth;
     private final PresenceService presence;
+    private final QqGroupService groups;
 
-    public ApiController(AuthService auth, PresenceService presence) { this.auth = auth; this.presence = presence; }
+    public ApiController(AuthService auth, PresenceService presence, QqGroupService groups) {
+        this.auth = auth; this.presence = presence; this.groups = groups;
+    }
 
     @PostMapping("/sessions")
     @ResponseStatus(HttpStatus.CREATED)
@@ -23,7 +27,10 @@ public class ApiController {
         return auth.login(login.loginName(), login.password(), request.getRemoteAddr());
     }
     @GetMapping("/session")
-    public Identity current(@AuthenticationPrincipal Identity identity) { return identity; }
+    public Identity current(@AuthenticationPrincipal Identity identity) {
+        groups.require(identity.qqNumber(), false);
+        return identity;
+    }
     @DeleteMapping("/session")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void logout(@AuthenticationPrincipal Identity identity) { auth.logout(identity); }

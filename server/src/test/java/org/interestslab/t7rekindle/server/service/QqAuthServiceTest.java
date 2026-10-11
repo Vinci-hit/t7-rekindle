@@ -10,6 +10,8 @@ import org.interestslab.t7rekindle.server.domain.Problem;
 import org.interestslab.t7rekindle.server.persistence.AdminMapper;
 import org.interestslab.t7rekindle.server.persistence.AuthMapper;
 import static org.assertj.core.api.Assertions.*;
+import static org.interestslab.t7rekindle.server.domain.QqGroupModels.notMember;
+import static org.interestslab.t7rekindle.server.domain.QqGroupModels.unavailable;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -25,7 +27,8 @@ class QqAuthServiceTest {
     private final LoginLimiter limiter = mock(LoginLimiter.class);
     private final QqSessionVerifier verifier = mock(QqSessionVerifier.class);
     private final SessionEvents events = mock(SessionEvents.class);
-    private final QqAuthService service = new QqAuthService(db, audit, secrets, limiter, verifier, events, TestTransactions.immediate());
+    private final QqGroupService groups = mock(QqGroupService.class);
+    private final QqAuthService service = new QqAuthService(db, audit, secrets, limiter, verifier, events, TestTransactions.immediate(), groups);
 
     @BeforeEach void setup() {
         when(verifier.verify(COOKIE)).thenReturn(profile);
@@ -52,6 +55,64 @@ class QqAuthServiceTest {
         doThrow(new DuplicateKeyException("duplicate")).when(db).createQqAccount(any(), eq(profile));
         assertThat(service.login(MACHINE, COOKIE, "IP").accountId()).isEqualTo("id");
         verify(verifier, times(1)).verify(COOKIE);
+    }
+
+    @Test void rejectedNonMemberStillCreatesAnAccountAndAuditsWithoutIssuingSession() {
+        when(db.lockByName("12345")).thenReturn(null, account);
+        var rejection = notMember("123456");
+        doThrow(rejection).when(groups).require("12345", false);
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isSameAs(rejection);
+        verify(db).createQqAccount(any(), eq(profile));
+        verify(db).updateQqProfile("id", profile);
+        verify(audit).audit("id", "QQ_GROUP_NOT_MEMBER", rejection.getMessage());
+        verify(db, never()).lockSessions(any());
+        verify(db, never()).createSession(any());
+        verify(db, never()).savePresence(any());
+        verifyNoInteractions(secrets, events);
+    }
+
+    @Test void rejectedConcurrentCreationRetriesAndKeepsOriginalRejection() {
+        when(db.lockByName("12345")).thenReturn(null, account);
+        doThrow(new DuplicateKeyException("duplicate")).when(db).createQqAccount(any(), eq(profile));
+        var rejection = notMember("123456");
+        doThrow(rejection).when(groups).require("12345", false);
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isSameAs(rejection);
+        verify(audit).audit("id", "QQ_GROUP_NOT_MEMBER", rejection.getMessage());
+        verify(verifier).verify(COOKIE);
+        verify(groups).require("12345", false);
+        verify(db, never()).createSession(any());
+    }
+
+    @Test void repeatedRejectionUpdatesProfileWithoutChangingAccountStatusOrSessions() {
+        var rejection = notMember("123456");
+        doThrow(rejection).when(groups).require("12345", false);
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isSameAs(rejection);
+        when(db.lockByName("12345")).thenReturn(new Account("id", "12345", null, "DISABLED", 1, now, "12345", "nick", "url"));
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isSameAs(rejection);
+        verify(audit, times(2)).audit("id", "QQ_GROUP_NOT_MEMBER", rejection.getMessage());
+        verify(db, times(2)).updateQqProfile("id", profile);
+        verify(db, never()).createQqAccount(any(), any());
+        verify(db, never()).setStatus(any(), any());
+        verify(db, never()).revokeSession(any(), any());
+        verify(db, never()).createSession(any());
+    }
+
+    @Test void groupOutageDoesNotCreateAnAccountOrRecordNonMembership() {
+        var failure = unavailable();
+        doThrow(failure).when(groups).require("12345", false);
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isSameAs(failure);
+        verifyNoInteractions(db, audit, secrets, events);
+    }
+
+    @Test void nonMemberRejectionNeverBindsAnExistingPasswordAccount() {
+        doThrow(notMember("123456")).when(groups).require("12345", false);
+        when(db.lockByName("12345")).thenReturn(new Account("old", "12345", "hash", "ACTIVE", 0, now));
+        assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isInstanceOfSatisfying(Problem.class,
+                error -> assertThat(error.code()).isEqualTo("QQ_ACCOUNT_CONFLICT"));
+        verify(db, never()).updateQqProfile(any(), any());
+        verify(db, never()).createQqAccount(any(), any());
+        verify(db, never()).createSession(any());
+        verifyNoInteractions(audit);
     }
 
     @Test void conflictNeverBindsPasswordAccountAndDisabledAccountCannotLogin() {
@@ -86,7 +147,7 @@ class QqAuthServiceTest {
             assertThatThrownBy(() -> service.login(machine, COOKIE, "IP")).isInstanceOf(Problem.class);
         when(verifier.verify(COOKIE)).thenThrow(Problem.unauthorized());
         assertThatThrownBy(() -> service.login(MACHINE, COOKIE, "IP")).isInstanceOf(Problem.class);
-        verifyNoInteractions(db);
+        verifyNoInteractions(db, groups, audit);
     }
 
     private Session session(String id, String machine) {

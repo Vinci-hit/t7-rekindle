@@ -1,6 +1,6 @@
 spring:
   application:
-    name: rekindle-server
+    name: t7rekindle-server
   datasource:
     url: ${DB_URL}
     username: ${DB_USER}

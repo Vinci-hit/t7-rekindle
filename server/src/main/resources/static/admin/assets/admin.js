@@ -19,7 +19,7 @@ window.addEventListener("pagehide", () => {
 });
 
 window.addEventListener("pageshow", () => {
-  document.querySelectorAll('button[type="submit"]').forEach((button) => {
+  document.querySelectorAll('button[type="submit"]:not([data-managed-disabled])').forEach((button) => {
     button.disabled = false;
   });
 });

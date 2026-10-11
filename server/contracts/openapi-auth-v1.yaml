@@ -9,6 +9,9 @@ info:
     机器绑定的 session 在所有请求（含 SSE）中必须附带匹配的 X-Machine-Id。
     客户端每 15 秒心跳，租约 45 秒；心跳不会延长 session 有效期。
     收到 ONLINE_TAKEN_OVER 或 NOT_ONLINE 后停止心跳，由用户显式重新上线。
+    可选 QQ 群校验在登录、恢复及上线时执行，在线成功结果每 15 分钟复查。
+    QQ_GROUP_NOT_MEMBER 的 message 包含目标群号；取消在线资格但保留 Session。
+    QQ_GROUP_UNAVAILABLE 暂缓登录、恢复和上线；已有合法在线连接遇到群查询故障时继续续租。
     服务端响应使用 Cache-Control: no-store。部署环境必须使用 HTTPS。
 servers:
   - url: https://HOST
@@ -19,6 +22,7 @@ paths:
     post:
       operationId: createQqSession
       summary: 验证 QQ 互联登录状态，创建或更新 QQ 账号并签发机器绑定凭证
+      description: QQ 身份已验证但未加入指定群时，仍创建或更新账户并记录 QQ_GROUP_NOT_MEMBER 操作日志，返回 403 且不签发新 Session；既有 Session 不因此撤销。
       security: []
       requestBody:
         required: true
@@ -38,6 +42,7 @@ paths:
               schema: {$ref: '#/components/schemas/QqSessionCredentials'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/GroupRequired'}
         '409':
           description: QQ_ACCOUNT_CONFLICT，保留同名旧密码账号，由管理员处理冲突
           content:
@@ -83,6 +88,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Identity'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/GroupRequired'}
         '503': {$ref: '#/components/responses/Error'}
     delete:
       operationId: revokeCurrentSession
@@ -105,6 +111,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/OnlineConnection'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/GroupRequired'}
         '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/online/{connectionId}/heartbeat:
     parameters:
@@ -120,6 +127,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/OnlineConnection'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/GroupRequired'}
         '409': {$ref: '#/components/responses/OnlineConflict'}
         '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/online/{connectionId}:
@@ -208,7 +216,8 @@ components:
         accountId: {type: string, format: uuid}
         sessionId: {type: string, format: uuid}
         connectionId: {type: string, format: uuid}
-        reason: {type: string, enum: [MACHINE_CHANGED, ONLINE_TAKEN_OVER, ADMIN_REVOKED, ACCOUNT_DISABLED, SESSION_REVOKED]}
+        reason: {type: string, enum: [MACHINE_CHANGED, ONLINE_TAKEN_OVER, ADMIN_REVOKED, ACCOUNT_DISABLED, SESSION_REVOKED, QQ_GROUP_NOT_MEMBER]}
+        groupNumber: {type: [string, 'null'], description: QQ_GROUP_NOT_MEMBER 时为目标群号；其他原因可为空或省略}
     OnlineConnection:
       type: object
       required: [connectionId, leaseExpiresAt, heartbeatIntervalSeconds]
@@ -225,8 +234,13 @@ components:
         requestId: {type: string, format: uuid}
         retryable: {type: boolean}
   responses:
+    GroupRequired:
+      description: QQ_GROUP_NOT_MEMBER；message 包含目标群号码，加入后可重新上线，不撤销已有 Session。
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
     Error:
-      description: INVALID_INPUT / INVALID_CREDENTIALS / SERVICE_UNAVAILABLE；503 可重试，401 需要重新登录
+      description: INVALID_INPUT / INVALID_CREDENTIALS / SERVICE_UNAVAILABLE / QQ_GROUP_UNAVAILABLE；503 可重试，401 需要重新登录
       content:
         application/json:
           schema: {$ref: '#/components/schemas/Error'}

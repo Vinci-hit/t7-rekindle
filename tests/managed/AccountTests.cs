@@ -53,6 +53,7 @@ namespace T7.ManagedHarness
         {
             await LoginAndKickAsync();
             await OnlineTakeoverAsync();
+            await GroupMembershipErrorsAsync();
             await SilentLogoutAndLateLoginAsync();
             await RestoreAndHeartbeatAsync();
             await PushReconnectAndCloseAsync();
@@ -118,6 +119,40 @@ namespace T7.ManagedHarness
                     previousKick?.Invoke(new AccountKick(api.Session.SessionId, previousConnection, "MACHINE_CHANGED"));
                     Assert(model.IsSignedIn && !model.CanReconnect, "old connection event changed the reconnected session");
                 }
+            }
+        }
+
+        private static async Task GroupMembershipErrorsAsync()
+        {
+            var api = new FakeApi(); var store = new MemoryStore(); var time = new ManualDelay();
+            const string groupMessage = "当前 QQ 未加入指定群（群号：123456），请加入后重试。";
+            using (var model = Model(api, store, time))
+            {
+                api.LoginError = new AccountApiException(403, "QQ_GROUP_NOT_MEMBER", groupMessage);
+                await model.LoginAsync();
+                Assert(model.Status == groupMessage && !model.HasSession, "group rejection lost the server message");
+                api.LoginError = null;
+                await model.LoginAsync();
+                api.Kick(new AccountKick(api.Session.SessionId, api.Connection.ConnectionId, "QQ_GROUP_NOT_MEMBER", "123456"));
+                Assert(model.IsSignedIn && model.HasSession && model.CanReconnect && model.Status.Contains("123456"),
+                    "group kick did not preserve the session or show the target group");
+                api.OnlineError = new AccountApiException(503, "QQ_GROUP_UNAVAILABLE", "入群校验暂不可用，请稍后重试");
+                await model.ReconnectAsync();
+                Assert(model.HasSession && model.CanReconnect && model.Status.Contains("校验暂不可用"), "group outage cleared the saved session");
+                api.OnlineError = null;
+                api.Connection = new AccountConnection(Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddSeconds(45), 15);
+                await model.ReconnectAsync();
+                api.HeartbeatError = new AccountApiException(403, "QQ_GROUP_NOT_MEMBER", groupMessage);
+                await time.TickAsync(15);
+                await Until(() => model.CanReconnect);
+                Assert(model.Status == groupMessage && store.Value != null, "heartbeat group rejection discarded login");
+            }
+            using (var handler = new ResponseHandler(request => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            { Content = new StringContent(JsonConvert.SerializeObject(new { code = "QQ_GROUP_NOT_MEMBER", message = groupMessage })) })))
+            using (var client = new AccountApi("https://auth.example.invalid/", new HttpClient(handler)))
+            {
+                try { await client.LoginAsync(Machine, "TEST_COOKIE", CancellationToken.None); throw new InvalidOperationException("expected group rejection"); }
+                catch (AccountApiException error) { Assert(error.Message == groupMessage && error.Code == "QQ_GROUP_NOT_MEMBER", "HTTP group message lost"); }
             }
         }
 
@@ -311,18 +346,18 @@ namespace T7.ManagedHarness
             public AccountSession Session = AccountTests.Session();
             public AccountConnection Connection = new AccountConnection(Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddSeconds(45), 15);
             public Action<AccountKick> Kick;
-            public Exception LogoutError, CurrentError, HeartbeatError, ListenError;
+            public Exception LogoutError, CurrentError, HeartbeatError, ListenError, LoginError, OnlineError;
             public Task<AccountSession> PendingLogin;
             public Task PendingLogout;
             public AccountSession LastOnlineSession;
             public CancellationToken ListenCancellation;
             public int LoginCalls, OnlineCalls, LogoutCalls, CurrentCalls, ListenCalls, OfflineCalls;
             public Task<AccountSession> LoginAsync(string machine, string cookie, CancellationToken token)
-            { LoginCalls++; return PendingLogin ?? Task.FromResult(Session); }
+            { LoginCalls++; return LoginError == null ? PendingLogin ?? Task.FromResult(Session) : Task.FromException<AccountSession>(LoginError); }
             public Task<AccountSession> CurrentAsync(AccountSession session, CancellationToken token)
             { CurrentCalls++; return CurrentError == null ? Task.FromResult(Session) : Task.FromException<AccountSession>(CurrentError); }
             public Task<AccountConnection> OnlineAsync(AccountSession session, CancellationToken token)
-            { OnlineCalls++; LastOnlineSession = session; return Task.FromResult(Connection); }
+            { OnlineCalls++; LastOnlineSession = session; return OnlineError == null ? Task.FromResult(Connection) : Task.FromException<AccountConnection>(OnlineError); }
             public Task<AccountConnection> HeartbeatAsync(AccountSession session, string connection, CancellationToken token) =>
                 HeartbeatError == null ? Task.FromResult(Connection) : Task.FromException<AccountConnection>(HeartbeatError);
             public Task OfflineAsync(AccountSession session, string connection, CancellationToken token)

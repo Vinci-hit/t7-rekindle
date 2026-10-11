@@ -36,13 +36,21 @@ public final class Models {
     public record QqProfile(String qqNumber, String nickname, String avatarUrl) { }
     public record QqSessionCredentials(String sessionId, String sessionToken, Instant expiresAt,
             String accountId, String loginName, String machineId, String qqNumber, String nickname, String avatarUrl) { }
-    public record KickEvent(String accountId, String sessionId, String connectionId, String reason) { }
+    public record KickEvent(String accountId, String sessionId, String connectionId, String reason, String groupNumber) {
+        public KickEvent(String accountId, String sessionId, String connectionId, String reason) {
+            this(accountId, sessionId, connectionId, reason, null);
+        }
+    }
     public record OnlineConnection(String connectionId, Instant leaseExpiresAt, int heartbeatIntervalSeconds) { }
     public record AccountView(String accountId, String loginName, String status, Instant createdAt,
-                              String qqNumber, String nickname) {
+                              String qqNumber, String nickname, Instant lastHeartbeatAt, boolean online,
+                              Instant groupCheckedAt, String groupCheckResult) {
         @AutomapConstructor public AccountView { }
         public AccountView(String accountId, String loginName, String status, Instant createdAt) {
             this(accountId, loginName, status, createdAt, null, null);
+        }
+        public AccountView(String accountId, String loginName, String status, Instant createdAt, String qqNumber, String nickname) {
+            this(accountId, loginName, status, createdAt, qqNumber, nickname, null, false, null, null);
         }
     }
     public record SessionView(String sessionId, Instant createdAt, Instant expiresAt,

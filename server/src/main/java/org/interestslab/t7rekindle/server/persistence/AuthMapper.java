@@ -78,9 +78,21 @@ public interface AuthMapper {
     @Delete("DELETE FROM account_presence WHERE account_id=#{accountId} AND session_id=#{sessionId} AND connection_id=#{connectionId}")
     void clearConnection(String accountId, String sessionId, String connectionId);
 
+    @Update("UPDATE account SET last_heartbeat_at=#{now} WHERE account_id=#{accountId}")
+    void heartbeat(String accountId, Instant now);
+
     @Select("""
-        SELECT account_id,login_name,status,created_at,qq_number,nickname FROM account
-        WHERE login_name LIKE CONCAT(#{prefix},'%') ORDER BY login_name LIMIT 50 OFFSET #{offset}
+        SELECT a.account_id,a.login_name,a.status,a.created_at,a.qq_number,a.nickname,a.last_heartbeat_at,
+          (p.session_id IS NOT NULL AND p.lease_expires_at > UTC_TIMESTAMP(3) AND a.status='ACTIVE'
+            AND s.expires_at > UTC_TIMESTAMP(3) AND s.revoked_at IS NULL AND s.auth_epoch=a.auth_epoch) AS online,
+          c.checked_at AS group_checked_at,c.result AS group_check_result
+        FROM account a
+        LEFT JOIN account_presence p ON p.account_id=a.account_id
+        LEFT JOIN auth_session s ON s.session_id=p.session_id
+        LEFT JOIN qq_group_config g ON g.config_id=1
+        LEFT JOIN qq_group_check c ON c.qq_number=a.qq_number AND g.enabled=TRUE
+          AND c.group_number=g.group_number AND c.policy_version=g.policy_version
+        WHERE a.login_name LIKE CONCAT(#{prefix},'%') ORDER BY a.login_name LIMIT 50 OFFSET #{offset}
         """)
     List<AccountView> accounts(String prefix, int offset);
 

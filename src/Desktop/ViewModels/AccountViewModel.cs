@@ -196,6 +196,8 @@ namespace T7.Rekindle.Desktop.ViewModels
             if (problem?.Status == 401) { ClearSession("登录已失效，请重新扫码"); return true; }
             if (problem?.Code == "ONLINE_TAKEN_OVER") { Disconnect("账号已在其他连接上线"); return true; }
             if (problem?.Code == "NOT_ONLINE") { Disconnect("已登录 · 离线"); return true; }
+            if (problem?.Code == "QQ_GROUP_NOT_MEMBER" || problem?.Code == "QQ_GROUP_UNAVAILABLE")
+            { Disconnect(problem.Message); return true; }
             return false;
         }
         private static void Validate(AccountSession session, string machine)

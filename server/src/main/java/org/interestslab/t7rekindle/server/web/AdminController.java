@@ -11,6 +11,7 @@ import org.interestslab.t7rekindle.server.domain.Models.AdminIdentity;
 import org.interestslab.t7rekindle.server.domain.Problem;
 import org.interestslab.t7rekindle.server.service.AccountService;
 import org.interestslab.t7rekindle.server.service.AdminService;
+import org.interestslab.t7rekindle.server.service.QqGroupAdminService;
 
 @Controller
 @RequestMapping("/admin")
@@ -18,11 +19,13 @@ public class AdminController {
     private final AdminService admins;
     private final AccountService accounts;
     private final SecretResults results;
+    private final QqGroupAdminService groups;
 
-    public AdminController(AdminService admins, AccountService accounts, SecretResults results) {
+    public AdminController(AdminService admins, AccountService accounts, SecretResults results, QqGroupAdminService groups) {
         this.admins = admins;
         this.accounts = accounts;
         this.results = results;
+        this.groups = groups;
     }
     @GetMapping("/login") String login() { return "login"; }
     @PostMapping("/login")
@@ -54,6 +57,7 @@ public class AdminController {
     @GetMapping("/accounts")
     String accounts(@RequestParam(defaultValue = "") String query, @RequestParam(defaultValue = "0") int page, Model model) {
         model.addAttribute("accounts", accounts.list(query, page));
+        model.addAttribute("groupChecksEnabled", groups.view().enabled());
         model.addAttribute("query", query);
         model.addAttribute("page", page);
         return "accounts";

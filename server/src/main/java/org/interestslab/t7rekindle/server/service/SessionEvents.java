@@ -25,8 +25,11 @@ public class SessionEvents {
     }
 
     public void kick(Presence owner, String reason) {
+        kick(owner, reason, null);
+    }
+    public void kick(Presence owner, String reason, String groupNumber) {
         if (owner == null) return;
-        var event = new KickEvent(owner.accountId(), owner.sessionId(), owner.connectionId(), reason);
+        var event = new KickEvent(owner.accountId(), owner.sessionId(), owner.connectionId(), reason, groupNumber);
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override public void afterCommit() { publish(event); }

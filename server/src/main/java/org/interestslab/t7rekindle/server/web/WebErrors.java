@@ -39,7 +39,7 @@ public class WebErrors {
             case TransactionException ignored -> Problem.unavailable();
             default -> Problem.invalid();
         };
-        if (request.getRequestURI().startsWith("/api/")) {
+        if (request.getRequestURI().startsWith("/api/") || "XMLHttpRequest".equals(request.getHeader("X-Requested-With"))) {
             write(response, problem);
             return null;
         }

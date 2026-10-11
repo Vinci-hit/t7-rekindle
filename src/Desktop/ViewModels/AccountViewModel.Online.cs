@@ -108,6 +108,12 @@ namespace T7.Rekindle.Desktop.ViewModels
             if (!IsCurrent(generation) || kick == null || kick.SessionId != _session?.SessionId
                 || kick.ConnectionId != _connection?.ConnectionId) return;
             if (kick.Reason == "ONLINE_TAKEN_OVER") { Disconnect("账号已在其他连接上线"); return; }
+            if (kick.Reason == "QQ_GROUP_NOT_MEMBER")
+            {
+                string group = string.IsNullOrEmpty(kick.GroupNumber) ? string.Empty : "（群号：" + kick.GroupNumber + "）";
+                Disconnect("当前 QQ 未加入指定群" + group + "，请加入后重新上线。");
+                return;
+            }
             string reason = kick.Reason == "MACHINE_CHANGED" ? "账号已在其他机器登录"
                 : kick.Reason == "ACCOUNT_DISABLED" ? "账号已被停用"
                 : "账号已下线，请重新扫码登录";

@@ -23,6 +23,12 @@ import org.testcontainers.utility.DockerImageName;
 import org.interestslab.t7rekindle.server.config.SecurityConfig;
 import org.interestslab.t7rekindle.server.config.OnlinePushConfig;
 import org.interestslab.t7rekindle.server.integration.QqClient;
+import org.interestslab.t7rekindle.server.integration.QqGroupClient;
+import org.interestslab.t7rekindle.server.integration.QqQrClient;
+import org.interestslab.t7rekindle.server.integration.QqCookies;
+import org.interestslab.t7rekindle.server.integration.QqCookieVault;
+import org.interestslab.t7rekindle.server.domain.QqGroupModels.*;
+import org.interestslab.t7rekindle.server.persistence.QqGroupMapper;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.interestslab.t7rekindle.server.domain.Models.*;
 import org.interestslab.t7rekindle.server.domain.Problem;
@@ -34,9 +40,11 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
-@SpringBootTest(properties = {"server.servlet.session.cookie.secure=false", "spring.flyway.enabled=true"})
+@SpringBootTest(properties = {"server.servlet.session.cookie.secure=false", "spring.flyway.enabled=true",
+        "QQ_GROUP_COOKIE_KEY=TEST_KEY"})
 @AutoConfigureMockMvc
 class ServerIntegrationTest {
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4.11").withTmpFs(java.util.Map.of("/var/lib/mysql", "rw"));
@@ -64,6 +72,11 @@ class ServerIntegrationTest {
     @Autowired QqAuthService qq;
     @Autowired SessionEvents events;
     @MockitoBean QqClient qqClient;
+    @MockitoBean QqGroupClient groupClient;
+    @MockitoBean QqQrClient qrClient;
+    @Autowired QqGroupAdminService groupAdmin;
+    @Autowired QqGroupMapper groupDb;
+    @Autowired QqCookieVault cookieVault;
     @Autowired PresenceService presence;
     @Autowired AuthMapper db;
     @Autowired AdminMapper adminDb;
@@ -135,13 +148,15 @@ class ServerIntegrationTest {
         jdbc.update("DELETE FROM auth_session");
         jdbc.update("DELETE FROM account");
         jdbc.update("DELETE FROM audit_log");
+        jdbc.update("DELETE FROM qq_group_check");
+        jdbc.update("UPDATE qq_group_config SET enabled=FALSE, group_number=NULL,group_name=NULL,qq_number=NULL,nickname=NULL,encrypted_cookie=NULL,policy_version=0,credential_version=0,health_status='MISSING',last_verified_at=NULL");
         jdbc.update("UPDATE admin_account SET password_hash=?,must_change_password=FALSE,auth_epoch=0", secrets.encode(PASSWORD));
         try (var connection = redis.getConnectionFactory().getConnection()) { connection.serverCommands().flushDb(); }
     }
 
     @Test void startupMigratesBeforeInitializingAdmin() {
         assertThat(flyway.info().applied()).extracting(migration -> migration.getScript())
-                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql");
+                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql", "V004__qq_group_verification.sql");
         assertThat(flyway.info().pending()).isEmpty();
         assertThat(adminDb.admin()).isNotNull();
         assertThat(admins.initialize()).isNull();
@@ -328,6 +343,169 @@ class ServerIntegrationTest {
         var created = accounts.create(ADMIN, name);
         return auth.authenticate(auth.login(name, created.password(), "127.0.0.1").sessionToken());
     }
+    @Test void groupAdminScansBeforeSelectionAndProtectsCandidateOwnership() throws Exception {
+        var cookies = groupCookies();
+        when(qrClient.start()).thenReturn(new QqQrClient.Ticket(cookies, new byte[] {1, 2}, "1"));
+        when(qrClient.poll(any())).thenReturn(new QqQrClient.Poll("CONFIRMED", cookies));
+        when(groupClient.identity(any())).thenReturn(new QqGroupClient.Result<>(new Administrator("54321", "测试管理员"), cookies));
+        when(groupClient.groups(any())).thenReturn(new QqGroupClient.Result<>(List.of(new Group("123456", "测试群")), cookies));
+        var admin = adminSession();
+        mvc.perform(get("/admin/qq-group").session(admin)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("扫码登录群站")));
+        mvc.perform(post("/admin/qq-group/qr").session(admin)).andExpect(status().isForbidden());
+        var started = mvc.perform(post("/admin/qq-group/qr").session(admin).with(csrf())).andExpect(status().isOk()).andReturn();
+        String id = json.readTree(started.getResponse().getContentAsString()).path("id").asString();
+        mvc.perform(get("/admin/qq-group/qr/{id}/image", id).session(admin)).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"));
+        mvc.perform(post("/admin/qq-group/qr/{id}/poll", id).session(adminSession()).with(csrf()))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/admin/qq-group/qr/{id}/poll", id).session(admin).with(csrf()))
+                .andExpect(jsonPath("$.state").value("READY")).andExpect(jsonPath("$.groups[0].number").value("123456"));
+        assertThat(groupDb.policy().encryptedCookie()).isNull();
+        mvc.perform(post("/admin/qq-group/settings").session(admin).with(csrf()).param("scanId", id)
+                .param("groupNumber", "999999").param("version", "0").param("enabled", "true")).andExpect(status().isBadRequest());
+        mvc.perform(post("/admin/qq-group/settings").session(admin).with(csrf()).param("scanId", id)
+                .param("groupNumber", "123456").param("version", "0").param("enabled", "true")).andExpect(status().is3xxRedirection());
+        assertThat(groupDb.policy().enabled()).isTrue();
+        assertThat(groupDb.policy().encryptedCookie()).doesNotContain("TEST_GROUP_SECRET");
+        assertThat(cookieVault.decrypt(groupDb.policy().encryptedCookie())).isEqualTo(cookies);
+        var html = mvc.perform(get("/admin/qq-group").session(admin)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(html).contains("测试群", "54321").doesNotContain("TEST_GROUP_SECRET", groupDb.policy().encryptedCookie());
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target/qq-group-preview.html"), html, java.nio.charset.StandardCharsets.UTF_8);
+        mvc.perform(post("/admin/qq-group/groups").session(admin).with(csrf())).andExpect(jsonPath("$[0].number").value("123456"));
+        mvc.perform(post("/admin/qq-group/check").session(admin).with(csrf())).andExpect(status().is3xxRedirection());
+        mvc.perform(post("/admin/qq-group/disable").session(admin).with(csrf())).andExpect(status().is3xxRedirection());
+        assertThat(groupDb.policy().enabled()).isFalse();
+    }
+
+    @Test void groupGateRechecksOnlineAndPersistsAccountTelemetryWithoutRevokingSession() throws Exception {
+        var cookies = groupCookies();
+        groupDb.configure(true, new Group("123456", "测试群"), new Administrator("54321", "管理员"), cookieVault.encrypt(cookies));
+        String loginCookie = "uin=12345; skey=TEST_USER";
+        String machine = "12345678-1234-1234-1234-123456789abc";
+        when(qqClient.getNick(loginCookie)).thenReturn("t7QqNick({\"retcode\":0,\"result\":{\"nick\":\"测试用户\"}})");
+        when(groupClient.member(any(), eq("123456"), eq("12345"))).thenReturn(new QqGroupClient.Result<>(true, cookies));
+        var session = qq.login(machine, loginCookie, "IP");
+        var identity = auth.authenticate(session.sessionToken(), machine);
+        var connection = presence.online(identity);
+        assertThat(accounts.list("12345", 0).getFirst().lastHeartbeatAt()).isNull();
+        presence.heartbeat(identity, connection.connectionId());
+        var account = accounts.list("12345", 0).getFirst();
+        assertThat(account.online()).isTrue();
+        assertThat(account.lastHeartbeatAt()).isNotNull();
+        assertThat(account.groupCheckedAt()).isNotNull();
+        assertThat(account.groupCheckResult()).isEqualTo("MEMBER");
+        verify(groupClient, times(1)).member(any(), eq("123456"), eq("12345"));
+        assertThat(redis.getExpire("rekindle:qq-group:1:12345")).isBetween(880L, 900L);
+        var checked = account.groupCheckedAt();
+        mvc.perform(get("/api/v1/auth/session").header("Authorization", "Bearer " + session.sessionToken()).header("X-Machine-Id", machine))
+                .andExpect(status().isOk());
+        assertThat(accounts.list("12345", 0).getFirst().groupCheckedAt()).isEqualTo(checked);
+        String accountsHtml = mvc.perform(get("/admin/accounts").session(adminSession())).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("最近入群检测"))).andReturn().getResponse().getContentAsString();
+        java.nio.file.Files.writeString(java.nio.file.Path.of("target/qq-group-accounts-preview.html"), accountsHtml, java.nio.charset.StandardCharsets.UTF_8);
+
+        redis.delete("rekindle:qq-group:1:12345");
+        when(groupClient.member(any(), anyString(), anyString())).thenReturn(new QqGroupClient.Result<>(false, cookies));
+        mvc.perform(post("/api/v1/auth/online/{id}/heartbeat", connection.connectionId())
+                .header("Authorization", "Bearer " + session.sessionToken()).header("X-Machine-Id", machine))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("QQ_GROUP_NOT_MEMBER"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("123456")));
+        account = accounts.list("12345", 0).getFirst();
+        assertThat(account.online()).isFalse();
+        assertThat(account.lastHeartbeatAt()).isNotNull();
+        assertThat(account.groupCheckResult()).isEqualTo("NOT_MEMBER");
+        assertThat(auth.authenticate(session.sessionToken(), machine)).isEqualTo(identity);
+
+        redis.delete("rekindle:qq-group:1:12345");
+        when(groupClient.member(any(), anyString(), anyString())).thenReturn(new QqGroupClient.Result<>(true, cookies));
+        connection = presence.online(identity);
+        redis.delete("rekindle:qq-group:1:12345");
+        when(groupClient.member(any(), anyString(), anyString())).thenThrow(Problem.unavailable());
+        presence.heartbeat(identity, connection.connectionId());
+        assertThat(accounts.list("12345", 0).getFirst().online()).isTrue();
+        assertThat(accounts.list("12345", 0).getFirst().groupCheckResult()).isEqualTo("ERROR");
+        assertThatThrownBy(() -> presence.online(identity)).isInstanceOfSatisfying(Problem.class,
+                error -> assertThat(error.code()).isEqualTo("QQ_GROUP_UNAVAILABLE"));
+        assertThatThrownBy(() -> qq.login(machine, loginCookie, "IP")).isInstanceOf(Problem.class);
+        mvc.perform(get("/api/v1/auth/session").header("Authorization", "Bearer " + session.sessionToken()).header("X-Machine-Id", machine))
+                .andExpect(status().isServiceUnavailable());
+
+        groupAdmin.disable(ADMIN);
+        presence.online(identity);
+        assertThat(accounts.list("12345", 0).getFirst().groupCheckedAt()).isNull();
+        mvc.perform(get("/admin/accounts").session(adminSession())).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("最近入群检测"))));
+        assertThat(jdbc.queryForObject("SELECT checked_at FROM qq_group_check WHERE qq_number='12345'", java.sql.Timestamp.class)).isNotNull();
+        accounts.setEnabled(ADMIN, identity.accountId(), false);
+        assertThatThrownBy(() -> presence.heartbeat(identity, "old")).isInstanceOf(Problem.class);
+    }
+
+    @Test void nonMemberLoginCommitsAccountAndAuditButDoesNotIssueOrRevokeSessions() throws Exception {
+        var cookies = groupCookies();
+        groupDb.configure(true, new Group("123456", "测试群"), new Administrator("54321", "管理员"), cookieVault.encrypt(cookies));
+        String loginCookie = "uin=12345; skey=TEST_USER";
+        String machine = "12345678-1234-1234-1234-123456789abc";
+        when(qqClient.getNick(loginCookie)).thenReturn("t7QqNick({\"retcode\":0,\"result\":{\"nick\":\"测试用户\"}})");
+        when(groupClient.member(any(), eq("123456"), eq("12345"))).thenReturn(new QqGroupClient.Result<>(false, cookies));
+        String request = json.writeValueAsString(java.util.Map.of("machineId", machine, "qqSessionCookie", loginCookie));
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(post("/api/v1/auth/qq/sessions").contentType("application/json").content(request))
+                    .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("QQ_GROUP_NOT_MEMBER"))
+                    .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("123456")))
+                    .andExpect(jsonPath("$.sessionToken").doesNotExist());
+        }
+        var listed = accounts.list("12345", 0);
+        assertThat(listed).hasSize(1);
+        var account = listed.getFirst();
+        assertThat(account.qqNumber()).isEqualTo("12345");
+        assertThat(account.nickname()).isEqualTo("测试用户");
+        assertThat(account.status()).isEqualTo("ACTIVE");
+        assertThat(account.online()).isFalse();
+        assertThat(account.lastHeartbeatAt()).isNull();
+        assertThat(account.groupCheckResult()).isEqualTo("NOT_MEMBER");
+        assertThat(account.groupCheckedAt()).isNotNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM auth_session", Integer.class)).isZero();
+        var rejected = adminDb.audits(0).stream().filter(item -> item.action().equals("QQ_GROUP_NOT_MEMBER")).toList();
+        assertThat(rejected).hasSize(2).allSatisfy(item -> {
+            assertThat(item.actor()).isEqualTo(account.accountId());
+            assertThat(item.target()).contains("123456").doesNotContain("TEST_USER");
+        });
+        mvc.perform(get("/admin/audit").session(adminSession())).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("QQ_GROUP_NOT_MEMBER")));
+
+        redis.delete("rekindle:qq-group:1:12345");
+        when(groupClient.member(any(), eq("123456"), eq("12345"))).thenReturn(new QqGroupClient.Result<>(true, cookies));
+        var session = qq.login(machine, loginCookie, "IP");
+        assertThat(session.accountId()).isEqualTo(account.accountId());
+        var identity = auth.authenticate(session.sessionToken(), machine);
+        presence.online(identity);
+
+        redis.delete("rekindle:qq-group:1:12345");
+        when(groupClient.member(any(), eq("123456"), eq("12345"))).thenReturn(new QqGroupClient.Result<>(false, cookies));
+        assertThatThrownBy(() -> qq.login("12345678-1234-1234-1234-123456789def", loginCookie, "IP"))
+                .isInstanceOfSatisfying(Problem.class, error -> assertThat(error.code()).isEqualTo("QQ_GROUP_NOT_MEMBER"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM auth_session", Integer.class)).isEqualTo(1);
+        assertThat(auth.authenticate(session.sessionToken(), machine)).isEqualTo(identity);
+        assertThat(accounts.list("12345", 0).getFirst().online()).isFalse();
+        assertThat(adminDb.audits(0).stream().filter(item -> item.action().equals("QQ_GROUP_NOT_MEMBER"))).hasSize(3);
+    }
+
+    @Test void groupPolicyVersionHidesOldChecksAndPreventsStaleCredentialWrites() {
+        groupDb.configure(true, new Group("123456", "群一"), new Administrator("54321", "管理员"), cookieVault.encrypt(groupCookies()));
+        var now = java.time.Instant.now();
+        groupDb.record("12345", new Decision("123456", 1, "MEMBER", now));
+        groupDb.configure(true, new Group("234567", "群二"), new Administrator("54321", "管理员"), cookieVault.encrypt(groupCookies()));
+        assertThat(groupDb.refreshed(1, "STALE_CREDENTIAL")).isZero();
+        groupDb.record("12345", new Decision("123456", 1, "ERROR", now.plusSeconds(2)));
+        assertThat(jdbc.queryForObject("SELECT result FROM qq_group_check WHERE qq_number='12345'", String.class)).isEqualTo("MEMBER");
+    }
+
+    private QqCookies groupCookies() {
+        return QqCookies.empty().accept(java.net.URI.create("https://qun.qq.com/"),
+                List.of("skey=TEST_GROUP_SECRET; Domain=.qq.com; Path=/; Secure; HttpOnly"), java.time.Instant.now());
+    }
+
     private MockHttpSession adminSession() {
         var session = new MockHttpSession();
         session.setAttribute(SecurityConfig.ADMIN_IDENTITY, ADMIN);
