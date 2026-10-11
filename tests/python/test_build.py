@@ -189,6 +189,17 @@ def test_ci_installs_the_pinned_sdk_before_building():
     assert setup < workflow.index("python scripts/build.py --project managed")
 
 
+def test_ci_exposes_pinned_inno_setup_before_python_tests():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    setup = next(step for step in workflow.split("      - name: ")
+                 if step.startswith("Set up Inno Setup 7.1.0\n"))
+    export = "Add-Content -LiteralPath $env:GITHUB_PATH -Value $innoDirectory -Encoding utf8"
+    assert '$innoDirectory = Join-Path $env:RUNNER_TEMP "InnoSetup"' in setup
+    assert export in setup
+    assert setup.index("if ($process.ExitCode -ne 0)") < setup.index(export)
+    assert workflow.index("Set up Inno Setup 7.1.0") < workflow.index("Run Python tests")
+
+
 def test_managed_sdk_check_accepts_portable_sdk_without_system_dotnet(tmp_path):
     build = load_build()
     build.ROOT = tmp_path
