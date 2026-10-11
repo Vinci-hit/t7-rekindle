@@ -40,7 +40,8 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         DWORD previous = 0;
         if (!VirtualProtectEx(process, reinterpret_cast<void*>(pointer + GRAPHICS_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + GRAPHICS_PAGE_SIZE + AUDIO_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
-            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + WORLD_CODE_OFFSET), WORLD_PAGE_SIZE - WORLD_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + WORLD_CODE_OFFSET), ACTORS_DATA_OFFSET - WORLD_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + CONTACT_CODE_OFFSET), LIVE_ACTORS_OFFSET - CONTACT_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
             || !FlushInstructionCache(process, remote, bytes.size()))
             throw std::runtime_error(errorText("graphics code protection/cache"));
         Bytes jump(7, 0x90); jump[0] = 0xE9;

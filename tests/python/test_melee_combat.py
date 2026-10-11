@@ -9,6 +9,7 @@ from Business.scripts import app, battle, bot, combat, contracts as wire, contro
 from Business.scripts.codec import attr_flow, battle_flow
 from Business.scripts.navigation import NavMesh
 from test_bot_player import flowAt, snapshot
+from blade_fixture import contact, publish
 
 
 @pytest.fixture
@@ -20,6 +21,8 @@ def arena(monkeypatch):
     controls.groundState(flow)["heading"] = 0
     combat.initialize(flow)
     snapshot(flow, (0., 0., .2))
+    for actorId in (1, 2):
+        publish(flow, actorId, [contact(3 - actorId)])
     return flow
 
 
@@ -66,8 +69,13 @@ def test_swing_hits_once_updates_only_target_and_recovers(arena, attacker, targe
     else:
         assert packet["command"] == 4
         assert battle_flow.decode_battle_data_update_notify(packet["body"]).result_data == before
-    assert not any(p["command"] == 4 and p["body"][:2] in (b"\0\x09", b"\0\x0a")
-                   for p in flow.result["send"])
+    results = [battle_flow.decode_battle_result(p['body']) for p in flow.result['send']
+               if p['command'] == 4 and p['body'][:2] == b'\0\x09']
+    assert len(results) == (1 if attacker == wire.ACTOR_ID else 0)
+    if results:
+        assert (results[0].attacker_rid, results[0].target_rid, results[0].target_result_data,
+                results[0].target_life_state) == (attacker, target, -combat.DAMAGE, battle_flow.LIFE_STATE_NONE)
+    assert not any(p['command'] == 4 and p['body'][:2] == b'\0\x0a' for p in flow.result['send'])
     advance(flow, combat.hurtTimer(target))
     assert "hurtUntil" not in battle.actorData(flow, target)
     assert states(flow)[-1] == (target, battle_flow.ACT_STATE_IDLE)
@@ -82,9 +90,10 @@ def test_every_attack_direction_has_a_contact_window(arena, intent):
 
 @pytest.mark.parametrize("position,heading", [((3., 0., .2), 180), ((1.5, 0., 2.), 180),
                                             ((-1.5, 0., .2), 0), ((0., 1.5, .2), 0)])
-def test_out_of_range_height_or_facing_misses(arena, position, heading):
+def test_no_native_contact_at_different_actor_positions_misses(arena, position, heading):
     arena.session["bot"].update(position=list(position), heading=heading)
     snapshot(arena, (0., 0., .2))
+    publish(arena, 1, [])
     swing(arena)
     advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == combat.MAX_HEALTH
@@ -156,7 +165,7 @@ def test_lateral_parry_uses_relative_positions_and_current_facing(
 
 @pytest.mark.parametrize("attacker", [1, 2])
 @pytest.mark.parametrize("attack,defence", [(300540, 300610), (300550, 300590)])
-@pytest.mark.parametrize("failure", ["range", "height", "attack-facing", "stale", "epoch"])
+@pytest.mark.parametrize("failure", ["no-contact", "blade-unready", "stale", "epoch"])
 def test_lateral_guard_does_not_bypass_contact_requirements(arena, attacker, attack, defence, failure):
     defender = 3 - attacker
     battle.startAction(arena, defence, actorId=defender)
@@ -164,11 +173,8 @@ def test_lateral_guard_does_not_bypass_contact_requirements(arena, attacker, att
     swing(arena, attacker, attack)
     world = arena.context["botWorld"]
     world["sampledAt"] = arena.session["pending"][combat.hitTimer(attacker)]
-    if failure == "range": world["bot"][0] = 2.3
-    if failure == "height": world["bot"][2] += 1.1
-    if failure == "attack-facing":
-        key = "playerHeading" if attacker == 1 else "botHeading"
-        world[key] = (world[key] + 270) % 360 - 180
+    if failure == "no-contact": world["blades"][str(attacker)]["contacts"] = []
+    if failure == "blade-unready": world["blades"][str(attacker)]["ready"] = False
     if failure == "stale": world["sampledAt"] -= 1000
     if failure == "epoch": world["instanceStartedAt"] += 1
     advance(arena, combat.hitTimer(attacker), fresh=False)
@@ -186,14 +192,15 @@ def test_back_facing_parry_does_not_block(arena):
     assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
 
 
-def test_hurt_interrupts_attack_motion_and_new_inputs(arena):
+def test_hurt_interrupts_attack_and_new_inputs_but_preserves_movement(arena):
     battle.startAction(arena, 300550, actorId=2)
     arena.session["bot"]["moving"] = True
     arena.later(bot.MOVE_TIMER, 50)
     swing(arena)
     advance(arena, combat.hitTimer(1))
     assert battle.actionState(arena, 2)["index"] == -1
-    assert bot.MOVE_TIMER not in arena.session["pending"]
+    assert bot.MOVE_TIMER in arena.session['pending']
+    assert arena.session['bot']['moving']
     assert bot.ACTION_TIMER not in arena.session["pending"]
     arena.result["send"].clear()
     bot.think(arena)
@@ -225,14 +232,14 @@ def test_charge_recovery_and_expired_swing_never_hit(arena):
     assert hp(arena, 2) == combat.MAX_HEALTH
 
 
-@pytest.mark.parametrize("change", ["stale", "epoch", "leaving", "prepare", "terrain"])
+@pytest.mark.parametrize("change", ["stale", "epoch", "leaving", "prepare", "blade"])
 def test_unavailable_world_or_game_never_hits(arena, monkeypatch, change):
     swing(arena)
     if change == "stale": arena.context["botWorld"]["sampledAt"] -= 1000
     if change == "epoch": arena.context["botWorld"]["instanceStartedAt"] += 1
     if change == "leaving": arena.session["leaving"] = True
     if change == "prepare": arena.session["groundEnabled"] = False
-    if change == "terrain": arena.context["botWorld"].pop("terrain")
+    if change == "blade": arena.context["botWorld"].pop("blades")
     advance(arena, combat.hitTimer(1), fresh=False)
     assert hp(arena, 2) == combat.MAX_HEALTH
 
@@ -264,7 +271,7 @@ def test_vision_refresh_and_migration_keep_current_health(arena):
     assert not app.validateState(arena.state)
 
 
-def test_new_round_resets_health_but_old_state_migration_is_unchanged(arena):
+def test_new_round_resets_health_but_old_state_migration_is_unchanged(arena, spawnPoints):
     arena.session["health"] = 37
     arena.session["bot"]["health"] = 52
     scene.begin(arena)
@@ -289,18 +296,20 @@ def test_hurt_state_wire_preserves_full_target_and_animation_index():
     assert struct.unpack(">HHHHIHBQb", body) == (4, 2, 4, 35, 500, 0, 0, 1, 0)
 
 
-@pytest.mark.parametrize("target", [1, 2])
-def test_health_stops_at_zero_without_death_settlement_or_automatic_heal(arena, target):
+def test_player_zero_health_enters_death_without_settlement_or_automatic_heal(arena):
+    target = 1
     for _ in range(7):
         combat.applyHit(arena, 3 - target, target, arena.context["botWorld"])
         assert app.validateState(arena.state)
     assert hp(arena, target) == 0
-    advance(arena, combat.hurtTimer(target))
     battle.startAction(arena, 300560, actorId=target)
-    assert battle.actionState(arena, target)["index"] == 0
+    assert battle.actionState(arena, target)["index"] == -1
     assert hp(arena, target) == 0
-    assert not any(p["command"] == 4 and p["body"][:2] in (b"\0\x09", b"\0\x0a")
-                   for p in arena.result["send"])
+    assert arena.session['life']['state'] == 'dead'
+    assert sum(p['reason'] == 'player-dead' for p in arena.result['send']) == 1
+    results = [battle_flow.decode_battle_result(p['body']) for p in arena.result['send']
+               if p['command'] == 4 and p['body'][:2] == b'\0\x09']
+    assert results == []
 
 
 def test_hurt_recovery_waits_for_fresh_world_and_never_touches_another_epoch(arena):

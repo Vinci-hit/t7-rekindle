@@ -39,8 +39,12 @@ public:
     void command(const std::string& name);
     ServerSnapshot snapshot();
     std::vector<std::string> lines();
+    bool needsWorld() const;
     void updateWorld(const WorldSnapshot& world);
 private:
+#ifdef T7_NATIVE_BRIDGE_TESTING
+    friend struct ServerEventOrderTests;
+#endif
     using TimePoint = detail::TimePoint;
     struct PendingWrite { Bytes bytes; size_t offset = 0; std::string version, reason; };
     struct Session {
@@ -51,7 +55,7 @@ private:
         TimePoint blockedUntil{};
     };
     struct Timer { TimePoint due; uint64_t connection; std::string event; };
-    struct QueuedEvent : Event { TimePoint queuedAt{}, due = TimePoint::max(); };
+    struct QueuedEvent : Event { TimePoint queuedAt{}, due = TimePoint::max(); std::string timerId; };
     using Timers = std::map<std::string, Timer>;
     Config config_;
     fs::path root_, writableRoot_, run_;
@@ -72,6 +76,7 @@ private:
     std::unique_ptr<detail::ServerSignals> signals_;
     ServerSnapshot snapshot_;
     WorldSnapshot world_;
+    bool worldPending_ = false;
     std::vector<std::string> lastLines_;
     std::unique_ptr<Journal> journal_;
     std::thread io_, business_;

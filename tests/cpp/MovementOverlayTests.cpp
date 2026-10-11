@@ -64,8 +64,8 @@ bool verifyOverlayMemory(HANDLE process) {
         failure.clear();
         try { overlay.install(process, base); }
         catch (const std::runtime_error& error) { failure = error.what(); }
-        valid = expect(failure.find("movement XML loader signature mismatch") != std::string::npos
-                       && !overlay.installed(), "XML signature mismatch did not reject the entire install") && valid;
+        valid = expect(failure.find(i == 3 ? "movement command signature mismatch" : "movement XML loader signature mismatch") != std::string::npos
+                       && !overlay.installed(), "movement signature mismatch did not reject the entire install") && valid;
         valid = expect(readBytes(process, target, sizeof(ENTRY)) == t7::Bytes(std::begin(ENTRY), std::end(ENTRY)),
                        "a later mismatch changed the first hook") && valid;
         writeBytes(process, base + site.rva, site.original.data(), site.original.size());

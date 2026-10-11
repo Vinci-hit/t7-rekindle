@@ -16,6 +16,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ServerLifecycleSmoke.cpp" />
+    <ClCompile Include="ServerEventOrderTests.cpp" />
     <ClCompile Include="JournalContractTests.cpp" />
     <ClCompile Include="DiagnosticLogTests.cpp" />
     <ClCompile Include="SessionCleanupTests.cpp" />
@@ -41,6 +42,10 @@
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/TerrainHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/BladePoseHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/BladeSweepHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/ContactFrameHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/WeaponTrailHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/bridge/SessionGraphics.cpp" />
     <ClCompile Include="../../src/Runtime/bridge/SessionAudio.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/StartupGate.cpp" />

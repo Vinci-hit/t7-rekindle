@@ -231,11 +231,7 @@ def encode_battle_result(
 ) -> bytes:
     if target_life_state not in (LIFE_STATE_NONE, LIFE_STATE_KILL, LIFE_STATE_REVIVE):
         raise ValueError("life_state must be NONE(0), KILL(1), or REVIVE(2)")
-    empty_result = struct.pack(">hi", 0, 0)
-    attacker_results = empty_result * 10
-    target_results = struct.pack(">hi", target_result_type, target_result_data) + (
-        empty_result * 9
-    )
+    # TDR arrays use their refer counts on the wire, not their decoded capacity.
     try:
         return struct.pack(
             ">HQQHbbh",
@@ -246,8 +242,11 @@ def encode_battle_result(
             0,
             target_life_state,
             0,
-        ) + attacker_results + struct.pack(">h", 1) + target_results + struct.pack(
-            ">ibb",
+        ) + struct.pack(
+            ">hhiibb",
+            1,
+            target_result_type,
+            target_result_data,
             attack_weapon_id,
             0,
             0,
@@ -259,8 +258,8 @@ def encode_battle_result(
 def decode_battle_result(body: bytes) -> BattleResult:
     if not isinstance(body, bytes):
         raise TypeError("body must be bytes")
-    if len(body) != 152:
-        raise ValueError(f"battle result must contain exactly 152 bytes, got {len(body)}")
+    if len(body) != 38:
+        raise ValueError(f"single-target battle result must contain exactly 38 bytes, got {len(body)}")
     selector = struct.unpack_from(">H", body)[0]
     if selector != BATTLE_RESULT:
         raise ValueError(f"battle result expected selector 0x{BATTLE_RESULT:04X}")
@@ -269,12 +268,12 @@ def decode_battle_result(body: bytes) -> BattleResult:
     attacker_seq_no = struct.unpack_from(">H", body, 18)[0]
     target_life_state = body[21]
     attacker_num = struct.unpack_from(">h", body, 22)[0]
-    target_num = struct.unpack_from(">h", body, 84)[0]
+    target_num = struct.unpack_from(">h", body, 24)[0]
     if attacker_num != 0 or target_num != 1:
         raise ValueError("battle result fixed counts must be attacker=0 target=1")
-    target_result_type = struct.unpack_from(">h", body, 86)[0]
-    target_result_data = struct.unpack_from(">i", body, 88)[0]
-    attack_weapon_id = struct.unpack_from(">i", body, 146)[0]
+    target_result_type = struct.unpack_from(">h", body, 26)[0]
+    target_result_data = struct.unpack_from(">i", body, 28)[0]
+    attack_weapon_id = struct.unpack_from(">i", body, 32)[0]
     return BattleResult(
         attacker_rid=attacker_rid,
         target_rid=target_rid,

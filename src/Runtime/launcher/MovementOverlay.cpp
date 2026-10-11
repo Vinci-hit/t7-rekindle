@@ -49,7 +49,7 @@ void MovementOverlay::install(HANDLE process, uintptr_t imageBase,
                               const std::function<void(std::string)>& log, bool skipStartupAnimation) {
     if (!process || !imageBase) throw std::runtime_error("movement overlay requires a client process");
     if (installed()) throw std::runtime_error("movement overlay is already installed");
-    if (imageBase > UINT32_MAX - MOVEMENT_HOOK_SITES.back().rva - 5)
+    if (imageBase > UINT32_MAX - MOVEMENT_HOOK_SITES.back().rva - 8)
         throw std::runtime_error("x86 client image base is outside 32-bit range");
     // Validate every site before writing any code or allocating remote storage.
     for (size_t i = 0; i < MOVEMENT_HOOK_SITES.size(); ++i) {
@@ -57,7 +57,7 @@ void MovementOverlay::install(HANDLE process, uintptr_t imageBase,
         const Bytes expected(site.original.begin(), site.original.end());
         const auto observed = readClientMemory(process, imageBase + site.rva, expected.size());
         if (observed != expected)
-            throw std::runtime_error(std::string(i == 0 ? "movement resource loader" : "movement XML loader")
+            throw std::runtime_error(std::string(i == 0 ? "movement resource loader" : i == 3 ? "movement command" : "movement XML loader")
                 + " signature mismatch at " + hexValue(imageBase + site.rva)
                 + "; expected=" + hexBytes(expected) + "; observed=" + hexBytes(observed));
     }

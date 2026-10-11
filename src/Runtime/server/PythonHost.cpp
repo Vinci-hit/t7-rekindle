@@ -73,6 +73,62 @@ void put(PyObject* dict, const char* key, PyObject* owned) {
     auto value = checked(owned);
     if (PyDict_SetItemString(dict, key, value.get()) < 0) throw std::runtime_error(error());
 }
+Object terrainValue(const TerrainContact& contact) {
+    auto value = checked(PyDict_New());
+    put(value.get(), "ready", PyBool_FromLong(contact.ready ? 1 : 0));
+    put(value.get(), "hit", PyBool_FromLong(contact.hit ? 1 : 0));
+    put(value.get(), "material", PyLong_FromLong(contact.material));
+    put(value.get(), "position", Py_BuildValue("[fff]", contact.position[0], contact.position[1], contact.position[2]));
+    put(value.get(), "normal", Py_BuildValue("[fff]", contact.normal[0], contact.normal[1], contact.normal[2]));
+    put(value.get(), "direction", Py_BuildValue("[fff]", contact.direction[0], contact.direction[1], contact.direction[2]));
+    return value;
+}
+Object bladeValue(const BladeTrace& blade) {
+    auto value = checked(PyDict_New());
+    put(value.get(), "ready", PyBool_FromLong(blade.ready ? 1 : 0));
+    put(value.get(), "spanMs", PyLong_FromUnsignedLong(blade.spanMs));
+    put(value.get(), "length", PyFloat_FromDouble(blade.length));
+    put(value.get(), "base", Py_BuildValue("[fff]", blade.base[0], blade.base[1], blade.base[2]));
+    put(value.get(), "tip", Py_BuildValue("[fff]", blade.tip[0], blade.tip[1], blade.tip[2]));
+    auto contacts = checked(PyList_New(0));
+    for (const auto& hit : blade.contacts) {
+        if (!hit.contact.hit) continue;
+        auto contact = terrainValue(hit.contact);
+        put(contact.get(), "targetId", PyLong_FromUnsignedLong(hit.targetId));
+        put(contact.get(), "time", PyFloat_FromDouble(hit.time));
+        put(contact.get(), "along", PyFloat_FromDouble(hit.along));
+        if (PyList_Append(contacts.get(), contact.get()) < 0) throw std::runtime_error(error());
+    }
+    put(value.get(), "contacts", contacts.release());
+    return value;
+}
+Object contactJournal(const WorldSnapshot& world) {
+    auto journal = checked(PyDict_New());
+    put(journal.get(), "throughAt", PyLong_FromUnsignedLongLong(world.sampledAt));
+    put(journal.get(), "frames", PyLong_FromUnsignedLong(world.contactFrames));
+    put(journal.get(), "dropped", PyLong_FromUnsignedLong(world.droppedContacts));
+    put(journal.get(), "batchId", PyLong_FromUnsignedLong(world.contactBatchId));
+    auto events = checked(PyList_New(0));
+    for (const auto& event : world.contacts) {
+        auto value = terrainValue(event.hit.contact);
+        for (const auto& field : std::initializer_list<std::pair<const char*, uint32_t>>{
+            {"actorId", event.actorId}, {"targetId", event.hit.targetId}, {"entity", event.entity},
+            {"targetEntity", event.targetEntity}, {"state", event.state}, {"seq", event.sequence},
+            {"targetState", event.targetState}, {"targetSeq", event.targetSequence}})
+            put(value.get(), field.first, PyLong_FromUnsignedLong(field.second));
+        put(value.get(), "phaseAt", PyLong_FromUnsignedLongLong(event.phaseAt));
+        put(value.get(), "targetPhaseAt", PyLong_FromUnsignedLongLong(event.targetPhaseAt));
+        put(value.get(), "occurredAt", PyFloat_FromDouble(event.occurredAt));
+        put(value.get(), "along", PyFloat_FromDouble(event.hit.along));
+        put(value.get(), "sourcePosition", Py_BuildValue("[fff]", event.sourcePosition[0], event.sourcePosition[1], event.sourcePosition[2]));
+        put(value.get(), "targetPosition", Py_BuildValue("[fff]", event.targetPosition[0], event.targetPosition[1], event.targetPosition[2]));
+        put(value.get(), "sourceHeading", PyFloat_FromDouble(event.sourceHeading));
+        put(value.get(), "targetHeading", PyFloat_FromDouble(event.targetHeading));
+        if (PyList_Append(events.get(), value.get()) < 0) throw std::runtime_error(error());
+    }
+    put(journal.get(), "events", events.release());
+    return journal;
+}
 PyObject* field(PyObject* object, const char* key) {
     if (!object || !PyDict_Check(object)) throw std::runtime_error("Python field container is not a dict");
     PyObject* value = PyDict_GetItemString(object, key);
@@ -147,27 +203,38 @@ std::string PythonHost::context(const Config& config, uint64_t now, const std::v
     put(snapshot.get(), "ready", PyBool_FromLong(world.ready ? 1 : 0));
     put(snapshot.get(), "sampledAt", PyLong_FromUnsignedLongLong(world.sampledAt));
     put(snapshot.get(), "instanceStartedAt", PyLong_FromUnsignedLongLong(world.instanceStartedAt));
+    if (world.contactsReady) put(snapshot.get(), "contactJournal", contactJournal(world).release());
     put(snapshot.get(), "player", Py_BuildValue("[fff]", world.player[0], world.player[1], world.player[2]));
     put(snapshot.get(), "bot", Py_BuildValue("[fff]", world.bot[0], world.bot[1], world.bot[2]));
     put(snapshot.get(), "playerHeading", PyFloat_FromDouble(world.playerHeading));
     put(snapshot.get(), "botHeading", PyFloat_FromDouble(world.botHeading));
-    auto terrain = checked(PyList_New(0));
-    for (const auto& actor : world.terrain) {
+    auto allActors = checked(PyDict_New());
+    auto blades = checked(PyDict_New());
+    for (size_t rid = 1; rid <= world.actors.size(); ++rid) {
+        const auto& actor = world.actors[rid - 1];
+        put(blades.get(), std::to_string(rid).c_str(), bladeValue(actor.blade).release());
+        auto entry = checked(PyDict_New());
+        put(entry.get(), "ready", PyBool_FromLong(actor.ready ? 1 : 0));
+        put(entry.get(), "position", Py_BuildValue("[fff]", actor.position[0], actor.position[1], actor.position[2]));
+        put(entry.get(), "heading", PyFloat_FromDouble(actor.heading));
+        put(entry.get(), "targetId", PyLong_FromUnsignedLong(actor.targetId));
+        put(entry.get(), "entity", PyLong_FromUnsignedLong(actor.entity));
+        put(entry.get(), "state", PyLong_FromUnsignedLong(actor.state));
+        put(entry.get(), "seq", PyLong_FromUnsignedLong(actor.sequence));
+        put(entry.get(), "phaseAt", PyLong_FromUnsignedLongLong(actor.phaseAt));
         auto probes = checked(PyDict_New());
-        for (size_t i = 0; i < actor.size(); ++i) {
-            const auto& contact = actor[i];
-            auto value = checked(PyDict_New());
-            put(value.get(), "ready", PyBool_FromLong(contact.ready ? 1 : 0));
-            put(value.get(), "hit", PyBool_FromLong(contact.hit ? 1 : 0));
-            put(value.get(), "material", PyLong_FromLong(contact.material));
-            put(value.get(), "position", Py_BuildValue("[fff]", contact.position[0], contact.position[1], contact.position[2]));
-            put(value.get(), "normal", Py_BuildValue("[fff]", contact.normal[0], contact.normal[1], contact.normal[2]));
-            put(value.get(), "direction", Py_BuildValue("[fff]", contact.direction[0], contact.direction[1], contact.direction[2]));
-            put(probes.get(), i == 0 ? "forward" : "target", value.release());
-        }
-        if (PyList_Append(terrain.get(), probes.get()) < 0) throw std::runtime_error(error());
+        for (size_t i = 0; i < actor.terrain.size(); ++i)
+            put(probes.get(), i == 0 ? "forward" : "target", terrainValue(actor.terrain[i]).release());
+        put(entry.get(), "terrain", probes.release());
+        auto targets = checked(PyDict_New());
+        for (size_t target = 0; target < actor.targetTerrain.size(); ++target)
+            if (actor.targetTerrain[target].ready)
+                put(targets.get(), std::to_string(target + 1).c_str(), terrainValue(actor.targetTerrain[target]).release());
+        put(entry.get(), "targetTerrain", targets.release());
+        put(allActors.get(), std::to_string(rid).c_str(), entry.release());
     }
-    put(snapshot.get(), "terrain", terrain.release());
+    put(snapshot.get(), "actors", allActors.release());
+    put(snapshot.get(), "blades", blades.release());
     put(dict.get(), "botWorld", snapshot.release());
     auto list = checked(PyList_New(0));
     for (auto id : connections) {

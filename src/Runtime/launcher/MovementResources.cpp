@@ -20,27 +20,24 @@ std::string animationEvent(const std::string& id, const char* event) {
     return "<Node Type=\"ACTION\" ID=\"" + id + "\" Name=\"" + encoded(L"动画系统事件") + "\">"
         + "<Param Name=\"" + encoded(L"事件名") + "\" Type=\"str\" Value=\"" + event + "\"/></Node>";
 }
-std::vector<Edit> modelActions(std::string_view source, const std::vector<Element>& nodes) {
-    uint32_t maxId = 0;
-    for (const auto& node : nodes)
-        if (node.name == "Node") maxId = std::max(maxId, static_cast<uint32_t>(std::stoul(attribute(node, "ID"))));
-    auto nextId = [&]() {
-        if (maxId == INT32_MAX) invalid();
-        return std::to_string(++maxId);
-    };
+std::vector<Edit> modelActions(const std::vector<Element>& nodes) {
     int jumps = 0, crouches = 0, stands = 0, landings = 0;
     std::vector<Edit> edits;
     for (size_t i = 0; i < nodes.size(); ++i) {
         const auto& node = nodes[i];
         if (node.name != "Node") continue;
         if (attribute(node, "Event") == "JUMP_LAND") {
-            // The router has placed the original landing sequence after its gates.
-            const auto sequence = unique(nodes, i, "Node", "Type", "SEQ");
-            // End the jump override instead of entering another persistent landing pose.
-            edits.push_back({nodes[sequence].content, nodes[sequence].content, animationEvent(nextId(), "EndJump")});
+            // Retain landing sounds; the frame hook owns Jump/EndJump from physical state.
+            unique(nodes, i, "Node", "Type", "SEQ");
             ++landings;
         }
         const auto name = attribute(node, "Name");
+        if (name == encoded(L"动画系统整型参数")) {
+            const auto param = unique(nodes, i, "Param", "Name", encoded(L"参数名"));
+            // GeMovable derives MoveDir from its movement state and owns its cache.
+            if (attribute(nodes[param], "Value") == "MoveDir")
+                edits.push_back({node.begin, node.end, ""});
+        }
         if (name == encoded(L"直线移动")) {
             const auto speed = unique(nodes, i, "Param", "Name", encoded(L"速度"));
             if (attribute(nodes[speed], "Type") != "f32" || attribute(nodes[speed], "Value") != "5.0") invalid();
@@ -53,10 +50,6 @@ std::vector<Edit> modelActions(std::string_view source, const std::vector<Elemen
         while (parent != NO_PARENT && attribute(nodes[parent], "Event").empty()) parent = nodes[parent].parent;
         if (parent == NO_PARENT || attribute(nodes[parent], "Event") != "GeEventKeyDown;GeEventKeyUp") invalid();
         if (name == encoded(L"跳跃")) {
-            const auto sequenceId = nextId(), eventId = nextId();
-            edits.push_back({node.begin, node.end, "<Node Type=\"SEQ\" ID=\"" + sequenceId + "\">"
-                + std::string(source.substr(node.begin, node.end - node.begin))
-                + animationEvent(eventId, "Jump") + "</Node>"});
             ++jumps;
         } else {
             const bool crouch = name == encoded(L"请求进入下蹲");
@@ -187,7 +180,7 @@ std::string transformMovementResource(MovementResource resource, std::string_vie
     auto edits = resource == MovementResource::Infantry ? infantry(nodes)
         : resource == MovementResource::Router ? router(source, nodes) : birth(source, nodes);
     auto result = applyEdits(source, std::move(edits));
-    if (resource == MovementResource::Router) result = applyEdits(result, modelActions(result, elements(result)));
+    if (resource == MovementResource::Router) result = applyEdits(result, modelActions(elements(result)));
     if (result.size() > source.size() + MOVEMENT_XML_RESERVE) invalid();
     return result;
 }

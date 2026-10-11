@@ -24,7 +24,9 @@ POSITION = (272.451, 157.634, 0.218)
 ENEMY_POSITION = (271.046, 156.857, 0.218)
 # Keep the synthetic fixture's preparation window deterministic across runs.
 PREPARE_MS = 30000
-START_MS = 5000
+# The native HUD truncates seconds, then waits one second before its first tick.
+# Just under six seconds gives 5..1 without showing 6 at the exact start boundary.
+START_MS = 5999
 GAME_MS = 1200000
 GROUND_STEP_DISTANCE = 0.25
 GROUND_STEP_MS = 50
@@ -89,10 +91,11 @@ def actorVision(camp, heroId=HERO_ID, actorName=USER_NAME, *, runtimeMovement=Fa
     if runtimeMovement:
         if heroId != RUNTIME_HERO_IDS[0]:
             raise ValueError("runtime movement gravity is bound to local hero 110001")
-        gravityOffset = 79
-        if body[gravityOffset:gravityOffset + 2] != b"\0\0":
-            raise ValueError("canonical VISION gravity layout changed")
-        body = body[:gravityOffset] + struct.pack(">h", -10000) + body[gravityOffset + 2:]
+        # Native body and attached shapes share one actor group, not one roster group.
+        filterOffset = 75
+        if body[filterOffset:filterOffset + 6] != bytes(6):
+            raise ValueError("canonical VISION collision/gravity layout changed")
+        body = body[:filterOffset] + struct.pack(">ih", actorId, -10000) + body[filterOffset + 6:]
     # CS_VISION_ACTOR's weapon count follows the fixed identity/move/avatar prefix.
     # Keep the canonical encoder and insert the listener's one 29-byte weapon entry.
     weaponCountOffset = 150

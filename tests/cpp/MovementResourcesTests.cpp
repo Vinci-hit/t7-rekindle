@@ -143,8 +143,17 @@ bool verifyMovementResources() {
         require(inputActions(router, 4, true, true, "W", true) == std::vector<std::string>{"fixture-move"},
                 "first combat movement input changed");
         require(inputActions(router, 4, true, true, "Space", true)
-                    == std::vector<std::string>{gbk(L"跳跃"), "animation:Jump"},
-                "jump must retain local physics and also start the model animation");
+                    == std::vector<std::string>{gbk(L"跳跃")},
+                "queueing a jump must not animate a rejected or airborne jump");
+        require(inputActions(router, 4, true, true, "", false, "JUMPING").empty(),
+                "jump animation must have one owner: the native physical-state observer");
+        for (const auto& event : {"JUMPING", "JUMP_LAND"}) {
+            require(inputActions(router, 2, true, true, "", false, event).empty(), "pre-game jump event escaped gates");
+            require(inputActions(router, 4, false, true, "", false, event).empty(), "remote jump event escaped gates");
+            require(inputActions(router, 4, true, false, "", false, event).empty(), "non-battle jump event escaped gates");
+        }
+        require(router.find("Value=\"MoveDir\"") == std::string::npos,
+                "key events must not compete with the native locomotion animation writer");
         require(inputActions(router, 4, true, true, "Space", false).empty(), "jump release replayed animation");
         require(inputActions(router, 4, true, true, "Space", true, {}, false) == std::vector<std::string>{gbk(L"跳跃")},
                 "jump animation ran after the original jump action failed");
@@ -154,8 +163,11 @@ bool verifyMovementResources() {
         require(inputActions(router, 4, true, true, "Ctrl", false) == std::vector<std::string>{"animation:EndCrouch"},
                 "combat standing input was lost");
         require(inputActions(router, 4, true, true, "", false, "JUMP_LAND")
-                    == std::vector<std::string>{"animation:EndJump", "fixture-land"},
-                "landing must end the jump override and preserve the original landing actions");
+                    == std::vector<std::string>{"fixture-land"},
+                "landing sound must remain without replaying the native jump observer's animation");
+        for (const auto& event : {"Jump", "EndJump"})
+            require(router.find(std::string("Value=\"") + event + "\"") == std::string::npos,
+                    "jump animation still has a competing behavior-tree writer");
         require(router.find("Value=\"JumpLand\"") == std::string::npos,
                 "landing notification must not re-enter a persistent landing pose");
         require(inputActions(router, 2, true, true, "", false, "JUMP_LAND").empty(),
@@ -187,7 +199,7 @@ bool verifyMovementResources() {
         duplicateJump.replace(duplicateJump.find("fixture-move"), std::string("fixture-move").size(), gbk(L"跳跃"));
         rejected(Resource::Router, duplicateJump);
         auto exhaustedIds = movement;
-        exhaustedIds.replace(exhaustedIds.find("ID=\"24\""), std::string("ID=\"24\"").size(), "ID=\"2147483639\"");
+        exhaustedIds.replace(exhaustedIds.find("ID=\"24\""), std::string("ID=\"24\"").size(), "ID=\"2147483640\"");
         rejected(Resource::Router, exhaustedIds);
         require(t7::movementResourceForPath("..\\DATA\\BTREE\\T7_RUNTIME_MOVEMENT.BTREE") == Resource::Router,
                 "resource path normalization failed");

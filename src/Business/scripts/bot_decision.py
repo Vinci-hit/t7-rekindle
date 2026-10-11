@@ -4,7 +4,7 @@ import math
 
 import py_trees
 
-from . import battle, contracts as wire
+from . import actors, battle, bot_profiles, contracts as wire
 
 OBSERVATION_MS = 150
 COUNTER_MIN_REMAINING_MS = 100
@@ -34,6 +34,8 @@ class ChoiceNode(py_trees.behaviour.Behaviour):
 
 
 def validState(value):
+    if not bot_profiles.validState(value):
+        return False
     if "decisionSeed" in value and (type(value["decisionSeed"]) is not int
                                      or not 0 <= value["decisionSeed"] <= 0xFFFFFFFF):
         return False
@@ -49,9 +51,9 @@ def validState(value):
         and observed["seenAt"] <= observed["phaseSeenAt"])
 
 
-def observe(flow):
-    value = flow.session["bot"]
-    action = flow.session.get("action", {})
+def observe(flow, actorId=wire.BOT_ID):
+    value = actors.data(flow, actorId)
+    action = actors.data(flow, actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)).get("action", {})
     current = {key: action.get(key, default) for key, default in
                (("intent", 0), ("index", -1), ("seq", 0), ("reaction", ""))}
     previous = value.get("observedPlayer")
@@ -64,13 +66,13 @@ def observe(flow):
                                "seenAt": previous["seenAt"] if continues else flow.now}
 
 
-def phaseRemaining(flow):
-    due = flow.session.get("pending", {}).get(battle.ACTION_TIMER)
+def phaseRemaining(flow, actorId=wire.BOT_ID):
+    due = flow.session.get("pending", {}).get(battle.actionTimer(actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)))
     return max(0, due - flow.now) if type(due) is int else None
 
 
-def observedFor(flow, *, phase=False):
-    observed = flow.session["bot"].get("observedPlayer", {})
+def observedFor(flow, actorId=wire.BOT_ID, *, phase=False):
+    observed = actors.data(flow, actorId).get("observedPlayer", {})
     return flow.now - observed.get("phaseSeenAt" if phase else "seenAt", flow.now)
 
 
@@ -82,12 +84,12 @@ def clearContact(flow, snapshot, actorId):
     return contact is not None and not contact["hit"]
 
 
-def attackChoice(flow, snapshot, reason):
+def attackChoice(flow, snapshot, reason, actorId=wire.BOT_ID):
     from . import combat
-    value = flow.session["bot"]
-    player = flow.session.get("action", {})
+    value = actors.data(flow, actorId)
+    player = actors.data(flow, actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)).get("action", {})
     blocked = set()
-    if (observedFor(flow) >= OBSERVATION_MS and player.get("index", -1) in (0, 1)
+    if (observedFor(flow, actorId) >= bot_profiles.get(value).observationMs and player.get("index", -1) in (0, 1)
             and player.get("intent") in battle.BLOCK_CHAINS and not player.get("released", False)
             and combat.facing(snapshot["player"], snapshot["bot"], snapshot["playerHeading"])):
         blocked = ({300540, 300550} if player["intent"] in (300590, 300610)
@@ -95,7 +97,7 @@ def attackChoice(flow, snapshot, reason):
     dx, dy = (snapshot["player"][i] - snapshot["bot"][i] for i in (0, 1))
     angle = (math.degrees(math.atan2(-dy, dx)) - snapshot["botHeading"] + 180) % 360 - 180
     height = snapshot["player"][2] - snapshot["bot"][2]
-    seed = value.get("decisionSeed", (flow.session["instanceStartedAt"] ^ value["camp"]) & 0xFFFFFFFF)
+    seed = value.get("decisionSeed", (flow.session["instanceStartedAt"] ^ value["camp"] ^ actorId) & 0xFFFFFFFF)
     scores = []
     for intent in ATTACK_ORDER:
         seed = (1664525 * seed + 1013904223) & 0xFFFFFFFF
@@ -113,54 +115,70 @@ def attackChoice(flow, snapshot, reason):
     return Decision("attack", reason, intent, seed)
 
 
-def defend(flow, snapshot):
+def defend(flow, snapshot, actorId=wire.BOT_ID):
     from . import combat
-    player = flow.session.get("action", {})
+    settings = bot_profiles.get(actors.data(flow, actorId))
+    if not settings.canDefend:
+        return None
+    player = actors.data(flow, actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)).get("action", {})
     intent, index = player.get("intent"), player.get("index", -1)
     if (intent not in PARRY_FOR_ATTACK or not 0 <= index <= battle.strikeIndex(intent)
-            or player.get("reaction") or not clearContact(flow, snapshot, wire.ACTOR_ID)
+            or player.get("reaction") or not clearContact(flow, snapshot, snapshot.get("targetId", wire.ACTOR_ID))
             or not combat.facing(snapshot["bot"], snapshot["player"], snapshot["botHeading"])):
         return None
-    if observedFor(flow) < OBSERVATION_MS:
+    if observedFor(flow, actorId) < settings.observationMs:
         return Decision("wait", "observe-threat")
-    remaining = phaseRemaining(flow)
+    remaining = phaseRemaining(flow, actorId)
     if index == battle.strikeIndex(intent) and (
             remaining is None or remaining <= battle.BLOCK_PHASE_MS + combat.CONTACT_END_MARGIN_MS):
         return Decision("wait", "late-threat")
     return Decision("parry", "parry", PARRY_FOR_ATTACK[intent])
 
 
-def counter(flow, snapshot):
-    player = flow.session.get("action", {})
+def counter(flow, snapshot, actorId=wire.BOT_ID):
+    player = actors.data(flow, actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)).get("action", {})
     chain = battle.attackChain(player.get("intent"))
     recovering = ((chain is not None and player.get("index") == len(chain) - 1)
                   or player.get("reaction") in ("parried", "terrain-rebound"))
-    remaining = phaseRemaining(flow)
-    if (recovering and observedFor(flow, phase=True) >= OBSERVATION_MS
+    remaining = phaseRemaining(flow, actorId)
+    if (recovering and observedFor(flow, actorId, phase=True) >= bot_profiles.get(actors.data(flow, actorId)).counterMs
             and remaining is not None and remaining >= COUNTER_MIN_REMAINING_MS
-            and clearContact(flow, snapshot, wire.BOT_ID)):
-        return attackChoice(flow, snapshot, "counterattack")
+            and clearContact(flow, snapshot, actorId)):
+        return attackChoice(flow, snapshot, "counterattack", actorId)
     return None
 
 
-def normalAttack(flow, snapshot):
-    readyAt = flow.session["bot"].get("reactAt")
+def pressure(flow, snapshot, actorId):
+    value = actors.data(flow, actorId)
+    if value.get('profile') != 'aggressive' or value.get('reactAt') is None or flow.now < value['reactAt']:
+        return None
+    target = actors.data(flow, value.get('opponentId', wire.ACTOR_ID)).get('action', {})
+    if (target.get('intent') not in ATTACK_ORDER or target.get('index') != 1 or target.get('reaction')
+            or observedFor(flow, actorId) < bot_profiles.get(value).observationMs
+            or not clearContact(flow, snapshot, actorId)):
+        return None
+    return attackChoice(flow, snapshot, 'pressure', actorId)
+
+
+def normalAttack(flow, snapshot, actorId=wire.BOT_ID):
+    readyAt = actors.data(flow, actorId).get("reactAt")
     if readyAt is None or flow.now < readyAt:
         return Decision("wait", "ready")
-    if not clearContact(flow, snapshot, wire.BOT_ID):
+    if not clearContact(flow, snapshot, actorId):
         return Decision("wait", "contact-unavailable")
-    return attackChoice(flow, snapshot, "attack")
+    return attackChoice(flow, snapshot, "attack", actorId)
 
 
-def choose(flow, snapshot):
-    value = flow.session["bot"]
+def choose(flow, snapshot, actorId=wire.BOT_ID):
+    value = actors.data(flow, actorId)
     action = value.get("action", {})
     locked = "hurtUntil" in value or action.get("reaction") or action.get("index", -1) >= 0
     nodes = [
         ChoiceNode("finish-current-action", lambda: Decision("wait", "action-locked") if locked else None),
-        ChoiceNode("defend-threat", lambda: defend(flow, snapshot)),
-        ChoiceNode("counter-recovery", lambda: counter(flow, snapshot)),
-        ChoiceNode("choose-attack", lambda: normalAttack(flow, snapshot)),
+        ChoiceNode("pressure-held-attack", lambda: pressure(flow, snapshot, actorId)),
+        ChoiceNode("defend-threat", lambda: defend(flow, snapshot, actorId)),
+        ChoiceNode("counter-recovery", lambda: counter(flow, snapshot, actorId)),
+        ChoiceNode("choose-attack", lambda: normalAttack(flow, snapshot, actorId)),
     ]
     # Rebuild transient nodes per tick; only JSON-compatible observations and seeds persist.
     tree = py_trees.composites.Selector("melee-decision", memory=False, children=nodes)

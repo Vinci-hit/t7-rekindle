@@ -1,13 +1,14 @@
 """Request-driven fixed instance assembly; native timers survive script reload."""
 import struct
 
-from . import contracts as wire, controls, battle, bot, combat
+from . import actors, roster, contracts as wire, controls, battle, bot, combat, player_life
 from .codec import battle_flow, leave_flow, login_flow, room_flow, vision_flow
 
 
 def begin(flow):
-    bot.stop(flow, publish=False)
+    bot.stopAll(flow, publish=False)
     battle.resetAction(flow)
+    player_life.reset(flow)
     flow.send(0x2C, flow.syncBody(), "instance-sync-login-rsp-after-auth")
     flow.send(0xA, wire.instanceInfo(flow.now), "instance-minimal-update-after-auth")
     flow.session["instanceStartedAt"] = flow.now
@@ -17,8 +18,7 @@ def begin(flow):
     flow.session["controlBaseline"] = wire.BASELINE_ID
     flow.session["groundEnabled"] = False
     if controls.runtimeMovement(flow):
-        flow.session["bot"] = bot.createBot(flow.session.get("camp", 1))
-        combat.initialize(flow)
+        roster.assemble(flow)
     flow.phase("instance-data-sent")
     flow.later("instance-game-info", 200)
     flow.later("time-sync", 2000)
@@ -42,8 +42,7 @@ def battleEntry(flow):
     # IN_SCENE closes hero selection before returning to the preparation input lock.
     flow.send(0x36, wire.actorState(flow.now, 6), "actor-in-scene-after-battle-confirm")
     flow.send(0xE, vision_flow.encode_vision_del_event(), "actor-vision-del-after-battle-confirm")
-    flow.send(0xE, wire.actorVision(flow.session["camp"], flow.session["heroId"], flow.playerName,
-                                    runtimeMovement=controls.runtimeMovement(flow)),
+    flow.send(0xE, roster.playerVision(flow),
               "actor-vision-add-after-battle-confirm")
     if not controls.groundEnabled(flow):
         flow.send(0x36, wire.actorState(flow.now, 8), "actor-ready-play-after-battle-confirm")
@@ -53,8 +52,23 @@ def battleEntry(flow):
             controls.broadcast(flow, wire.POSITION, ground["heading"], 1, 0, 0,
                                "instance-ground-initial-stop")
         initializeBattleState(flow)
-    bot.enterScene(flow)
+    for key in actors.bots(flow.session):
+        bot.enterScene(flow, int(key))
     flow.phase("battle-entry-sent")
+
+
+def startRound(flow):
+    pending = flow.session.get("pending", {})
+    # Bots are preselected; only confirmed battle entry completes the human's selection.
+    if (not flow.session.get("battleEntered") or flow.session.get("roundEnded")
+            or controls.groundEnabled(flow) or "round-game" in pending or "round-end" in pending):
+        return
+    flow.cancel("actor-select")
+    flow.cancel("round-start")
+    flow.session.pop("prepareExpired", None)
+    flow.send(0xA, wire.roundState(flow.now, 3, wire.START_MS), "instance-round-state-start")
+    flow.later("round-game", wire.START_MS)
+    flow.phase("start-sent")
 
 
 def timer(flow, name):
@@ -79,19 +93,20 @@ def timer(flow, name):
         flow.send(0x36, wire.actorState(flow.now, 5), "instance-actor-state-after-load-ok")
         flow.phase("hero-selection-sent")
     elif name == "round-start":
-        if not flow.session.get("heroChosen"):
+        if not flow.session.get("battleEntered"):
             flow.session["prepareExpired"] = True
-            flow.result["logs"].append("PREPARE elapsed without hero selection; no fabricated GAME")
+            flow.result["logs"].append("PREPARE elapsed without battle confirmation; waiting for PLAY_REQ")
             return True
-        battleEntry(flow)
-        flow.send(0xA, wire.roundState(flow.now, 3, wire.START_MS), "instance-round-state-start")
-        flow.later("round-game", wire.START_MS)
+        startRound(flow)
     elif name == "round-game":
         flow.send(0xA, wire.roundState(flow.now, 4, wire.GAME_MS), "instance-round-state-game")
         flow.send(0x36, wire.actorState(flow.now, 6), "actor-in-scene-after-round-game")
         controls.enableGround(flow)
         flow.phase("game-sent")
         bot.start(flow)
+        flow.later("round-end", wire.GAME_MS)
+    elif name == "round-end":
+        finishRound(flow)
     elif name == "time-sync":
         flow.send(8, struct.pack(">HQQB", 11, flow.now, 0, 1), "instance-periodic-time-sync")
         flow.later("time-sync", 2000)
@@ -104,20 +119,30 @@ def timer(flow, name):
     return True
 
 
-def leave(flow, body):
-    backData = leave_flow.decode_sync_logout_request(body)
-    bot.stop(flow)
+def finishRound(flow):
+    bot.stopAll(flow)
     flow.cancelTimers()
     battle.resetAction(flow)
+    flow.session["groundEnabled"] = False
+    if flow.session["role"] != "instance" or flow.session.get("roundEnded"):
+        return
+    flow.session["roundEnded"] = True
+    if flow.session.get("battleEntered"):
+        controls.activate(flow)
+    flow.send(0xA, wire.roundState(flow.now, 5, 0), "instance-round-state-end")
+    flow.send(0xA, leave_flow.encode_si_finish_game(
+        server_time_ms=flow.now, local_user_id=wire.USER_ID), "instance-finish-game")
+    flow.phase("game-ended")
+
+
+def leave(flow, body):
+    backData = leave_flow.decode_sync_logout_request(body)
+    finishRound(flow)
     if flow.session["role"] == "instance":
-        flow.send(0xA, wire.roundState(flow.now, 5, 0), "instance-round-state-end")
-        flow.send(0xA, leave_flow.encode_si_finish_game(
-            server_time_ms=flow.now, local_user_id=wire.USER_ID), "instance-finish-game")
         flow.send(0xA, leave_flow.encode_instance_leave_instance(
             server_time_ms=flow.now), "instance-leave-instance")
     flow.session["logoutData"] = backData & 0xFF
     flow.session["leaving"] = True
-    flow.session["groundEnabled"] = False
     flow.phase("leaving")
     flow.later("logout", 250)
 
@@ -134,12 +159,17 @@ def message(flow, command, selector, body):
         return True
     if flow.session["role"] != "instance" or flow.session.get("leaving"):
         return False
+    if flow.session.get("roundEnded"):
+        return True
     flow.session.setdefault("camp", 1)
     if command == 0xA and selector == 0x6A:
         flow.send(0xA, wire.instanceInfo(flow.now, flow.session.get("instanceStartedAt")),
                   "instance-update-request")
+        combat.publishCampScore(flow)
     elif command == 0xA and selector == 0xB:
         placeholder = room_flow.decode_instance_choose_hero_request(body)
+        if flow.session.get('battleEntered') and not player_life.canChoose(flow):
+            return True
         flow.send(0xA, room_flow.encode_instance_choose_hero_message(
             placeholder=placeholder), "instance-enter-choose-hero")
     elif command == 0x23 and selector == 1:
@@ -147,42 +177,45 @@ def message(flow, command, selector, body):
         camp = struct.unpack_from(">i", body, 2)[0]
         if camp not in (1, 2):
             raise ValueError("camp-choice requires camp 1 or 2")
+        if flow.session.get("battleEntered") and camp != flow.session.get("camp"):
+            raise ValueError("camp-choice is closed after battle entry")
         flow.session["camp"] = camp
-        if "bot" in flow.session:
+        if "bots" in flow.session and not flow.session.get("battleEntered"):
+            roster.assemble(flow)
+        elif "bot" in flow.session:
             flow.session["bot"]["camp"] = 3 - camp
         flow.send(0x23, struct.pack(">Hiiii", 2, 0, camp, 0, 0), "instance-camp-choose-result-zero")
     elif command == 0x23 and selector == 3:
         wire.exact(body, 3, "camp-choice-ok")
         camp = flow.session["camp"]
         flow.send(0x23, struct.pack(">Hi", 4, 0), "instance-camp-choose-ok-result-zero")
-        flow.send(0xE, wire.actorVision(camp, actorName=flow.playerName,
-                                        runtimeMovement=controls.runtimeMovement(flow)), "instance-fixed-local-actor-vision-add-before-basic-info")
+        flow.send(0xE, roster.playerVision(flow), "instance-fixed-local-actor-vision-add-before-basic-info")
         flow.send(0xA, wire.actorInfo(flow.now, camp, flow.playerName), "instance-fixed-local-actor-after-camp-choice")
         flow.send(0x23, wire.campExchange(flow.now, camp), "instance-camp-exchange-notify")
-        bot.importMember(flow)
+        combat.publishScore(flow, wire.ACTOR_ID)
+        for key in actors.bots(flow.session):
+            bot.importMember(flow, int(key))
+        combat.publishCampScore(flow)
         flow.session["actorImported"] = True
         flow.phase("actor-data-sent")
     elif command == 0xE and selector == 5:
         sequence = vision_flow.decode_vision_list_request(body)
         flow.send(0xE, vision_flow.encode_vision_list_response(
-            sequence=sequence, object_mids=(1, 2)), "instance-fixed-local-actor-vision-list")
+            sequence=sequence, object_mids=actors.ids(flow.session) if actors.bots(flow.session) else (1, 2)), "instance-fixed-local-actor-vision-list")
     elif command == 0xE and selector == 7:
         request = vision_flow.decode_vision_get_objects_request(body)
-        if any(mid not in (wire.ACTOR_ID, 2) for mid in request.object_mids):
+        if any(mid not in (actors.ids(flow.session) if actors.bots(flow.session) else (1, 2)) for mid in request.object_mids):
             raise ValueError("VISION requested an object outside the fixed scene")
         for mid in request.object_mids:
-            position = (flow.session.get("ground", {}).get("position")
-                        if controls.runtimeMovement(flow) else None)
-            vision = (wire.actorVision(flow.session["camp"], flow.session.get("heroId", wire.HERO_ID), flow.playerName,
-                                       runtimeMovement=controls.runtimeMovement(flow),
-                                       currentHp=flow.session.get("health", 100),
-                                       position=tuple(position) if position is not None else wire.POSITION)
-                      if mid == wire.ACTOR_ID else bot.vision(flow.session["bot"])
-                      if "bot" in flow.session else wire.enemyVision())
+            # Keep the native corpse/camera timeline intact during VISION refresh.
+            if mid == wire.ACTOR_ID and player_life.dead(flow):
+                continue
+            vision = (roster.playerVision(flow) if mid == wire.ACTOR_ID
+                      else bot.vision(actors.data(flow, mid), mid) if actors.bots(flow.session) else wire.enemyVision())
             flow.send(0xE, vision, "instance-fixed-local-actor-vision-add-event" if mid == wire.ACTOR_ID
                       else "instance-fixed-enemy-actor-vision-add-event")
-            if mid == wire.BOT_ID and "bot" in flow.session:
-                bot.refresh(flow)
+            if mid != wire.ACTOR_ID and actors.bots(flow.session):
+                bot.refresh(flow, mid)
         if request.object_mids:
             controls.activate(flow)
     elif command == 0x29 and selector == 0x65:
@@ -201,7 +234,7 @@ def message(flow, command, selector, body):
             flow.session["loaded"] = True
             flow.send(0xA, wire.roundState(flow.now, 2, wire.PREPARE_MS), "instance-round-state-prepare")
             flow.later("actor-select", 1000)
-            flow.later("round-start", wire.PREPARE_MS - wire.START_MS)
+            flow.later("round-start", wire.PREPARE_MS)
             flow.phase("prepare-sent")
     elif command == 0x36 and selector == 0x32:
         position = room_flow.decode_actor_choose_hero_request(body)
@@ -209,20 +242,25 @@ def message(flow, command, selector, body):
             raise ValueError("fixed scene exposes the available hero slots")
         if not flow.session.get("loaded"):
             raise ValueError("choose-hero precedes actor-load-ok")
+        if flow.session.get('battleEntered') and not player_life.canChoose(flow):
+            flow.send(0x36, room_flow.encode_actor_choose_hero_response(result=1), 'player-choose-not-ready')
+            return True
         flow.session["heroChosen"] = True
-        flow.session["heroId"] = wire.HERO_IDS[position - 1]
+        flow.session["heroId"] = wire.heroIds(controls.runtimeMovement(flow))[position - 1]
         flow.send(0x36, room_flow.encode_actor_choose_hero_response(), "actor-choose-hero-result-zero")
         flow.send(0x36, room_flow.encode_actor_choose_hero_message(
             server_time_ms=flow.now, actor_mid=1, hero_resource_id=flow.session["heroId"],
             hero_badge=0), "actor-choose-hero-message")
-        if flow.session.pop("prepareExpired", False):
-            flow.later("round-start", 0)
     elif command == 0x36 and selector == 0x64:
         room_flow.decode_actor_play_request(body)
+        if 'life' in flow.session:
+            player_life.requestSpawn(flow)
+            return True
         if not flow.session.get("heroChosen"):
             raise ValueError("actor-play precedes hero selection")
         flow.send(0x36, room_flow.encode_actor_play_response(), "actor-play-result-zero")
         battleEntry(flow)
+        startRound(flow)
     else:
         return False
     return True

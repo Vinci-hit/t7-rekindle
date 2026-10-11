@@ -22,9 +22,11 @@ def walking(monkeypatch):
     return flow
 
 
-def step(flow, elapsed=50):
+def step(flow, elapsed=50, *, position=None):
     flow.now += elapsed
     snapshot(flow, (40., 0., .2))
+    if position is not None:
+        flow.context['botWorld']['bot'] = list(position)
     tick(flow, bot.MOVE_TIMER)
 
 
@@ -36,7 +38,7 @@ def lastMove(flow):
 
 def run(flow):
     for _ in range(42):
-        step(flow)
+        step(flow, position=(flow.session['bot']['position'][0] + .1, 0, .2))
     assert lastMove(flow).state == 10
 
 
@@ -48,32 +50,34 @@ def test_bot_pace_matches_player_runtime_parameters():
         assert match and float(match[1]) == value
 
 
-def test_displacement_velocity_and_animation_change_together_after_two_seconds(walking):
+def test_native_position_is_preserved_when_velocity_and_animation_change(walking):
     flow = walking
     for i in range(40):
-        step(flow)
+        actual = (.1 * (i + 1), 0, .2)
+        step(flow, position=actual)
         move = lastMove(flow)
         assert move.target_instance_id == 2
-        assert move.position == pytest.approx((3 * (i + 1) * .05, 0, .2))
+        assert move.position == pytest.approx(actual)
+        assert flow.session['bot']['position'] == list(actual)
         assert move.current_velocity == (3000 if i < 39 else 5000)
         assert move.state == (2 if i < 39 else 10)
         assert (move.forward_back, move.left_right) == (-1000, 0)
     step(flow)
-    assert lastMove(flow).position == pytest.approx((6.25, 0, .2))
+    assert lastMove(flow).position == pytest.approx((4., 0, .2))
     assert app.validateState(flow.state)
 
 
-def test_frame_crossing_run_threshold_integrates_both_speeds(walking):
-    for _ in range(39):
-        step(walking)
-    step(walking, 75)
-    assert lastMove(walking).position == pytest.approx((6.125, 0, .2))
+def test_frame_crossing_run_threshold_does_not_integrate_position(walking):
+    for i in range(39):
+        step(walking, position=(.05 * (i + 1), 0, .2))
+    step(walking, 75, position=(2.3, 0, .2))
+    assert lastMove(walking).position == pytest.approx((2.3, 0, .2))
     assert lastMove(walking).state == 10
 
 
 def test_repath_preserves_continuous_forward_warmup(walking):
-    for _ in range(38):
-        step(walking)
+    for i in range(38):
+        step(walking, position=(.1 * (i + 1), 0, .2))
     snapshot(walking, (40., 0., .2))
     tick(walking)
     step(walking, 100)
@@ -94,7 +98,7 @@ def test_stop_and_restart_begin_at_jog_pace(walking):
 
 
 @pytest.mark.parametrize("reason", ["attack", "parry", "hurt", "reaction", "prepare", "stale", "epoch"])
-def test_interruption_stops_motion_and_discards_run_warmup(walking, reason):
+def test_combat_slows_movement_while_invalid_world_and_prepare_stop_it(walking, reason):
     run(walking)
     value = walking.session["bot"]
     position = list(value["position"])
@@ -110,6 +114,10 @@ def test_interruption_stops_motion_and_discards_run_warmup(walking, reason):
     tick(walking, bot.MOVE_TIMER)
     assert value["position"] == position
     assert value.get("forwardMs", 0) == 0
+    if reason in ('attack', 'parry', 'hurt', 'reaction'):
+        assert value['moving'] and bot.MOVE_TIMER in walking.session['pending']
+        assert lastMove(walking).current_velocity == 3000
+        return
     assert not value["moving"]
     assert bot.MOVE_TIMER not in walking.session["pending"]
     if reason == "epoch":
@@ -134,7 +142,7 @@ def test_large_turn_rotates_before_moving_and_resets_run(walking):
     assert lastMove(walking).direction_yaw == -36
     step(walking)
     move = lastMove(walking)
-    assert move.position[1] > position[1]
+    assert move.position == pytest.approx(position)
     assert move.direction_yaw == -54
     assert move.state == 3 and move.current_velocity == 3000
     # Direction axes describe the path-relative movement, not a fictitious forward step.
@@ -158,7 +166,7 @@ def test_small_turn_keeps_pace_and_uses_matching_diagonal_state(walking, running
     move = lastMove(walking)
     assert move.state == (runState if running else jogState)
     assert move.current_velocity == (5000 if running else 3000)
-    assert math.dist(value["position"], origin) == pytest.approx(.25 if running else .15)
+    assert value["position"] == origin
     yaw = math.radians(move.direction_yaw)
     dx = -move.forward_back * math.cos(yaw) + move.left_right * math.sin(yaw)
     dy = move.forward_back * math.sin(yaw) + move.left_right * math.cos(yaw)
@@ -173,17 +181,20 @@ def test_turn_uses_shortest_arc_across_heading_wrap(walking, initial, target):
     value.update(path=[[10 * math.cos(yaw), -10 * math.sin(yaw), 0.]], step=0)
     step(walking)
     assert lastMove(walking).direction_yaw == target
-    assert math.dist(value["position"], (0, 0, .2)) == pytest.approx(.15)
+    assert value["position"] == [0, 0, .2]
 
 
 def test_corner_is_not_cut_during_turning(walking):
     value = walking.session["bot"]
-    value.update(path=[[.1, 0., 0.], [.1, 5., 0.]], step=0)
+    value.update(path=[[1., 0., 0.], [1., 5., 0.]], step=0)
     step(walking)
-    assert value["position"] == pytest.approx((.1, 0., .2))
-    step(walking)
-    assert value["position"] == pytest.approx((.1, 0., .2))
+    assert value['step'] == 0
+    assert value["position"] == [0, 0, .2]
+    step(walking, position=(1., 0., .2))
+    assert value['step'] == 1
+    assert value["position"] == [1., 0., .2]
     assert lastMove(walking).direction_yaw == -18
+    assert lastMove(walking).state == 1
 
 
 def test_stalled_timer_does_not_jump_or_instantly_enable_running(walking):
@@ -240,8 +251,8 @@ def test_close_target_waits_for_turn_before_reaction_delay(walking):
     snapshot(walking, (1.5, 0., .2))
     tick(walking)
     assert value["heading"] == 0
-    assert value["reactAt"] == walking.now + bot.REACTION_MS
-    walking.now += bot.REACTION_MS
+    assert round(bot.REACTION_MS * .65) <= value["reactAt"] - walking.now <= round(bot.REACTION_MS * 1.2)
+    walking.now = value["reactAt"]
     snapshot(walking, (1.5, 0., .2))
     tick(walking)
     assert value["action"]["index"] == 0

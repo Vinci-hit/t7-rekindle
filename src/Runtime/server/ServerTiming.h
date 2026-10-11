@@ -6,6 +6,22 @@
 namespace t7::detail {
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
+inline bool animationTimer(const std::string& id) {
+    const auto colon = id.find(':');
+    const auto name = id.substr(colon == std::string::npos ? 0 : colon + 1);
+    for (const auto* prefix : {"battle-action-phase", "bot-action-phase", "bot-release", "combat-hurt-"})
+        if (name.rfind(prefix, 0) == 0) return true;
+    return false;
+}
+inline bool decisionTimer(const std::string& id) {
+    const auto colon = id.find(':');
+    const auto name = id.substr(colon == std::string::npos ? 0 : colon + 1);
+    return name == "actors-pulse" || name == "actors-decision"
+        || name == "bot-think" || name.rfind("bot-think-", 0) == 0;
+}
+inline TimePoint timerDeadline(const std::string& id, TimePoint dispatched, TimePoint committed, int64_t delay) {
+    return (animationTimer(id) ? committed : dispatched) + std::chrono::milliseconds(delay);
+}
 
 class ServerClock {
 public:

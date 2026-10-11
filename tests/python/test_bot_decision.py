@@ -85,20 +85,24 @@ def test_observation_survives_phase_progression_but_not_new_swings(duel):
     assert choose(duel).reason == "observe-threat"
 
 
-def test_late_strike_is_not_mistaken_for_a_new_guard_opportunity(duel):
+@pytest.mark.parametrize("remaining,reason", [(99, "late-threat"), (100, "late-threat"),
+                                             (101, "parry"), (150, "parry")])
+def test_zero_prepare_guard_uses_only_the_contact_end_margin(duel, remaining, reason):
     battle.startAction(duel, 300560, released=True)
     observe(duel)
     duel.now = duel.session["pending"][battle.ACTION_TIMER]
     app.handleTimer(duel, battle.ACTION_TIMER)
-    duel.now = duel.session["pending"][battle.ACTION_TIMER] - 150
+    duel.now = duel.session["pending"][battle.ACTION_TIMER] - remaining
     observe(duel)
-    assert choose(duel).reason == "late-threat"
+    assert choose(duel).reason == reason
 
 
-@pytest.mark.parametrize("intent", [300550, battle.DASH_ATTACK])
-def test_recovery_opportunity_precedes_normal_attack_cooldown(duel, intent):
+@pytest.mark.parametrize("intent,kind,reason", [
+    (300550, "attack", "counterattack"), (battle.DASH_ATTACK, "wait", "ready"),
+])
+def test_only_an_active_recovery_phase_precedes_normal_attack_cooldown(duel, intent, kind, reason):
     battle.startAction(duel, intent, released=True)
-    for _ in range(2):
+    for _ in range(1 if intent == battle.DASH_ATTACK else 2):
         duel.now = duel.session["pending"][battle.ACTION_TIMER]
         app.handleTimer(duel, battle.ACTION_TIMER)
     observe(duel)
@@ -106,7 +110,8 @@ def test_recovery_opportunity_precedes_normal_attack_cooldown(duel, intent):
     assert choose(duel).kind == "wait"
     observe(duel, decision.OBSERVATION_MS)
     choice = choose(duel)
-    assert choice.kind == "attack" and choice.reason == "counterattack"
+    # Dash returns to idle without an artificial recovery phase to counter.
+    assert (choice.kind, choice.reason) == (kind, reason)
     assert duel.now < duel.session["bot"]["reactAt"]
 
 
@@ -145,7 +150,7 @@ def test_direction_selection_avoids_observed_guard_including_both_lateral_attack
     observe(duel)
     duel.now = duel.session["pending"][battle.ACTION_TIMER]
     app.handleTimer(duel, battle.ACTION_TIMER)
-    observe(duel)
+    observe(duel, decision.OBSERVATION_MS)
     for seed in range(20):
         duel.session["bot"]["decisionSeed"] = seed
         assert choose(duel).intent not in blocked

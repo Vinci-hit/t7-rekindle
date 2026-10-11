@@ -209,8 +209,10 @@ def test_bot_loads_navigation_from_executable_directory_and_starts_moving(client
     flow.session["bot"]["position"] = [1., 1., 0.]
     snapshot(flow, player=(7., 1., 0.))
     tick(flow)
-    assert flow.session["bot"]["status"] == "approach"
+    assert flow.session['bot']['status'] == 'press'
+    assert flow.session['bot']['routeGoal'][0] < 7
     flow.now += bot.MOVE_MS
     tick(flow, bot.MOVE_TIMER)
-    assert flow.session["bot"]["position"][0] > 1
+    assert flow.session["bot"]["position"] == [1., 1., 0.]
+    assert flow.session["bot"]["moving"]
     assert flow.result["send"][-1]["reason"] == "bot-move"

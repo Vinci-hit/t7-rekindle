@@ -81,14 +81,16 @@ def test_runtime_entry_initializes_idle_once_without_position_stop(playing):
     assert flow.result["send"] == sends
 
 
-def test_runtime_battle_confirmation_closes_selection_before_countdown():
+def test_runtime_battle_confirmation_closes_selection_and_starts_full_countdown_immediately():
     flow = make_runtime_flow(playing=False)
     flow.session.update(battleEntered=False, loaded=True)
-    flow.later("round-start", wire.PREPARE_MS - wire.START_MS)
+    flow.later("round-start", wire.PREPARE_MS)
     pending = dict(flow.session["pending"])
 
     assert scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    assert flow.session["pending"] == pending
     flow.result["send"].clear()
+    flow.result["timers"].clear()
     assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
 
     sends = flow.result["send"]
@@ -96,15 +98,146 @@ def test_runtime_battle_confirmation_closes_selection_before_countdown():
     states = [item["body"] for item in sends
               if item["command"] == 0x36 and item["body"][:2] == b"\0\1"]
     assert states == [wire.actorState(flow.now, 6), wire.actorState(flow.now, 8)]
-    assert [item["command"] for item in sends] == [0x36, 0x36, 0xE, 0xE, 0x36, 4]
+    assert [item["command"] for item in sends] == [0x36, 0x36, 0xE, 0xE, 0x36, 4, 0xA]
+    assert sends[-1]["body"] == wire.roundState(flow.now, 3, wire.START_MS)
     assert not controls.groundEnabled(flow)
-    assert flow.session["pending"] == pending
+    assert flow.session["phase"] == "start-sent"
+    assert flow.session["pending"] == {"round-game": flow.now + wire.START_MS}
+    assert [(item["id"], item["delayMs"]) for item in flow.result["timers"]] == [
+        ("1:round-start", -1), ("1:round-game", wire.START_MS)]
+    deadline = flow.now + wire.START_MS
+
+    for elapsedMs in (0, 500, 5500):
+        flow.result["send"].clear()
+        flow.result["timers"].clear()
+        flow.now = deadline - wire.START_MS + elapsedMs
+        assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+        assert len(flow.result["send"]) == 1
+        assert flow.result["send"][0]["reason"] == "actor-play-result-zero"
+        assert flow.session["pending"] == {"round-game": deadline}
+        assert flow.result["timers"] == []
+        assert not controls.groundEnabled(flow)
 
     flow.result["send"].clear()
+    flow.result["timers"].clear()
+    flow.now = pending["round-start"]
+    app.handleTimer(flow, "round-start")
+    assert flow.result["send"] == flow.result["timers"] == []
+    assert flow.session["pending"] == {"round-game": deadline}
+
+
+@pytest.mark.parametrize("remainingMs", [30000, 6001, 6000, 5999, 5500, 5000, 1000, 1, 0, -1000])
+def test_runtime_battle_confirmation_gets_full_window_regardless_of_prepare_deadline(remainingMs):
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, loaded=True)
+    flow.later("round-start", wire.PREPARE_MS)
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    originalDeadline = flow.session["pending"]["round-start"]
+    flow.now = originalDeadline - remainingMs
+    flow.result["send"].clear()
+    flow.result["timers"].clear()
+
     assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
-    assert len(flow.result["send"]) == 1
-    assert flow.result["send"][0]["reason"] == "actor-play-result-zero"
+
+    deadline = flow.now + wire.START_MS
+    assert flow.session["pending"] == {"round-game": deadline}
+    updates = [item["body"] for item in flow.result["send"] if item["command"] == 0xA]
+    timers = [(item["id"], item["delayMs"]) for item in flow.result["timers"]]
+    assert updates == [wire.roundState(flow.now, 3, wire.START_MS)]
+    assert timers == [("1:round-start", -1), ("1:round-game", wire.START_MS)]
     assert not controls.groundEnabled(flow)
+
+
+@pytest.mark.parametrize("remainingMs", [5999, 5998, 5000, 1, 0])
+def test_runtime_battle_confirmation_preserves_started_countdown(remainingMs):
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, loaded=True)
+    flow.later("round-start", wire.PREPARE_MS)
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+    deadline = flow.session["pending"]["round-game"]
+    flow.now = deadline - remainingMs
+    if remainingMs == 0:
+        app.handleTimer(flow, "round-game")
+    pending = dict(flow.session["pending"])
+    flow.result["send"].clear()
+    flow.result["timers"].clear()
+
+    assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+
+    assert [item["reason"] for item in flow.result["send"]] == ["actor-play-result-zero"]
+    assert flow.result["timers"] == []
+    assert flow.session["pending"] == pending
+    assert controls.groundEnabled(flow) == (remainingMs == 0)
+
+
+@pytest.mark.parametrize("chooseBeforeExpiry", [False, True])
+def test_runtime_preparation_expiry_waits_for_confirmation_even_with_a_selected_hero(chooseBeforeExpiry):
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, loaded=True)
+    flow.later("round-start", wire.PREPARE_MS)
+    if chooseBeforeExpiry:
+        scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    flow.result["send"].clear()
+    flow.now = flow.session["pending"]["round-start"]
+    app.handleTimer(flow, "round-start")
+    assert flow.session["prepareExpired"]
+    assert "round-game" not in flow.session["pending"]
+    assert not flow.session["battleEntered"]
+    assert flow.result["send"] == []
+
+    flow.now += 1000
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    assert flow.session["pending"] == {}
+    app.handleTimer(flow, "round-start")
+    assert not flow.session["battleEntered"]
+    assert not any(item["command"] == 0xA for item in flow.result["send"])
+    assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+    app.handleTimer(flow, "round-start")
+
+    starts = [item for item in flow.result["send"] if item["reason"] == "instance-round-state-start"]
+    assert len(starts) == 1
+    assert starts[0]["body"] == wire.roundState(flow.now, 3, wire.START_MS)
+    assert flow.session["pending"] == {"round-game": flow.now + wire.START_MS}
+    assert not flow.session.get("prepareExpired")
+
+
+@pytest.mark.parametrize("receiveDelayMs", [0, 1, 16, 100, 250])
+def test_runtime_start_window_covers_native_first_tick_and_five_digits(receiveDelayMs):
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, loaded=True)
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+    packet = next(item["body"] for item in flow.result["send"]
+                  if item["reason"] == "instance-round-state-start")
+    _, serverNow, _, state, start, duration, _ = struct.unpack(">HQQiQQi", packet)
+    assert state == 3 and start == serverNow == flow.now
+    assert duration == 5999
+    clientNow = serverNow + receiveDelayMs
+    # The native HUD truncates once, then ticks locally at one-second intervals.
+    totalTicks = max(int((start + duration - clientNow) / 1000), 0) + 1
+    assert [totalTicks - tick for tick in range(1, totalTicks)] == [5, 4, 3, 2, 1]
+    lastDigitAt = clientNow + (totalTicks - 1) * 1000
+    assert lastDigitAt < flow.session["pending"]["round-game"] == start + duration
+
+
+def test_runtime_confirmation_cancels_pending_selection_and_prepare_timers():
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, actorImported=True)
+    scene.message(flow, 0x36, 0x14, b"\0\x14\0")
+    assert flow.session["pending"]["round-start"] == flow.now + wire.PREPARE_MS
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+    deadline = flow.now + wire.START_MS
+    assert flow.session["pending"] == {"round-game": deadline}
+    assert {(item["id"], item["delayMs"]) for item in flow.result["timers"]
+            if item["delayMs"] == -1} == {("1:actor-select", -1), ("1:round-start", -1)}
+    flow.result["send"].clear()
+    flow.now += 1000
+    app.handleTimer(flow, "actor-select")
+    app.handleTimer(flow, "round-start")
+    assert flow.result["send"] == []
+    assert flow.session["pending"] == {"round-game": deadline}
 
 
 def test_runtime_object_refresh_preserves_position_and_gravity():
@@ -174,9 +307,14 @@ def test_runtime_object_refresh_obeys_movement_phase(playing):
 
 def test_runtime_controls_unlock_only_after_start_countdown_and_without_respawn():
     flow = make_runtime_flow(playing=False)
-    flow.session.update(heroChosen=True, heroId=wire.HERO_ID)
-    scene.timer(flow, "round-start")
+    flow.session.update(battleEntered=False, loaded=True)
+    flow.later("round-start", wire.PREPARE_MS)
+    scene.message(flow, 0x36, 0x32, struct.pack(">Hi", 0x32, 1))
+    scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
+    startAt = flow.now
+    assert not controls.groundEnabled(flow)
     deadline = flow.session["pending"]["round-game"]
+    assert deadline == startAt + wire.START_MS
     assert not controls.groundEnabled(flow)
     flow.result["send"].clear()
     flow.now = deadline - 1

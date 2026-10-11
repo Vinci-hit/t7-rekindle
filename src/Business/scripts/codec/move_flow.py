@@ -20,6 +20,7 @@ MOVE_NOTIFY_ACTIVE = 0x001F
 MOVE_BC_WITH_SYSTEM_AND_ACTIVE = 0x0026
 MOVE_BC_WITH_SYSTEM_AND_ACTIVE_BODY_LENGTH = 40
 MOVE_IN_AIR_STATE_BC = 0x0036
+MOVE_IN_AIR_DIRECT_BC = 0x0038
 # Semantic candidates from sh_proto_cs; selector 38's plain fields do not carry
 # explicit TDR enum bindings, so the generic codec does not enforce them.
 MOVE_GROUND_STATE_STOP = 1
@@ -49,6 +50,18 @@ class GroundMoveProjection:
     step_distance: float
     delta: tuple[float, float, float]
     moving: bool
+
+
+def encode_move_in_air_direct_bc(*, server_tick, target_instance_id, direction_yaw, left_right, forward_back):
+    """Direction/axis-only command: leaves native position and gravity untouched."""
+    if (any(type(value) is not int for value in (server_tick, target_instance_id, direction_yaw, left_right, forward_back))
+            or not -180 <= direction_yaw <= 180 or not -1000 <= left_right <= 1000 or not -1000 <= forward_back <= 1000):
+        raise ValueError('invalid move direction or axes')
+    try:
+        return struct.pack('>HIBHhhh', MOVE_IN_AIR_DIRECT_BC, server_tick, 1, target_instance_id,
+                           direction_yaw, left_right, forward_back)
+    except struct.error as error:
+        raise ValueError('move direction field is outside its TDR wire range') from error
 
 
 def project_standard_ground_step(

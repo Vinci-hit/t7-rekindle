@@ -7,6 +7,7 @@ namespace {
 constexpr uint32_t CHAT_INPUT_DATA_OFFSET = 0x400;
 constexpr uint32_t WINDOW_RVA = 0x243B70C, WINDOW_VTABLE_RVA = 0x172D034;
 constexpr uint32_t IME_RVA = 0x2E249EC, IME_VTABLE_RVA = 0x177AE48;
+constexpr uint32_t UI_RVA = 0x24396D0, UI_VTABLE_RVA = 0x177A9F4, RESET_FOCUS_RVA = 0x3FF3D0;
 constexpr uint32_t ASSOCIATE_CONTEXT_RVA = 0x16F611C, SEND_MESSAGE_RVA = 0x16F69E8;
 constexpr uint32_t CURSOR_MODE_MESSAGE = 0x41E;
 }
@@ -15,6 +16,8 @@ void verifyChatInputFunctions(HANDLE process, uint32_t imageBase) {
     for (const auto& entry : std::vector<std::pair<uint32_t, Bytes>>{
         {0x12670, {0x8B,0x81,0x38,1,0,0,0xC3}}, // Window service HWND getter.
         {0x400D30, {0x8A,0x41,8,0xC2,4,0}}, // IME interface text-focus flag.
+        {RESET_FOCUS_RVA, {0x55,0x8B,0xEC,0x6A,0xFF}},
+        {0x3FF3FB, {0x80,0x7E,0x7D,0}}, // UIResetFocus checks the UI interface's text-focus flag.
         {0x7D33B, {0x0F,0x94,0xC0,0x80,0xB9,0x11,1,0,0,0,0x88,0x81,0x10,1,0,0}}
     }) {
         if (readClientMemory(process, imageBase + entry.first, entry.second.size()) != entry.second)
@@ -25,7 +28,7 @@ void verifyChatInputFunctions(HANDLE process, uint32_t imageBase) {
 Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     const auto data = address + CHAT_INPUT_DATA_OFFSET;
     const auto window = data, ime = data + 4, detached = data + 8, context = data + 12;
-    const auto chatting = data + 16, previousCursor = data + 20;
+    const auto chatting = data + 16, previousCursor = data + 20, inBattle = data + 24;
     WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
@@ -47,7 +50,7 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x3B,0x35}); c.word(ime); const auto sameServices = c.branch(0x84);
     c.bind(newWindow);
     c.emit({0x89,0x3D}); c.word(window); c.emit({0x89,0x35}); c.word(ime);
-    c.store(detached, 0); c.store(context, 0); c.store(chatting, 0);
+    c.store(detached, 0); c.store(context, 0); c.store(chatting, 0); c.store(inBattle, 0);
     c.bind(sameServices);
 
     auto restoreIme = [&]() {
@@ -64,6 +67,14 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     c.emit({0xA1}); c.word(imageBase + 0x2E405F8);
     c.emit({0x85,0xC0}); const auto noActor = c.branch(0x84);
     c.emit({0x83,0x78,0x38,4}); const auto outsideBattle = c.branch(0x85);
+    c.emit({0x83,0x3D}); c.word(inBattle); c.emit({0}); const auto alreadyInBattle = c.branch(0x85);
+    c.emit({0x8B,0x0D}); c.word(imageBase + UI_RVA); nonzero(0xC9);
+    c.emit({0x81,0x39}); c.word(imageBase + UI_VTABLE_RVA); done.push_back(c.branch(0x85));
+    // Complete the preparation-to-GAME handoff through the original UI focus event, not just the IME flag.
+    c.call(imageBase + RESET_FOCUS_RVA);
+    c.store(inBattle, 1); c.store(detached, 0); c.store(chatting, 0);
+    c.emit({0x33,0xC0}); cursorMode(); // Reconcile camera subscribers even if the cursor flag is already zero.
+    c.bind(alreadyInBattle);
     // TextInputFocusChange already gates the original keyboard dispatcher, including Shift and Enter.
     c.emit({0x80,0x7E,8,0}); const auto noFocus = c.branch(0x84);
     // Native focus gain already restored its HIMC; re-associating here could disturb the first composition.
@@ -71,8 +82,8 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x83,0x3D}); c.word(chatting); c.emit({0}); const auto alreadyChatting = c.branch(0x85);
     c.emit({0x0F,0xB6,0x83}); c.word(0x114); c.emit({0xA3}); c.word(previousCursor);
     c.store(chatting, 1); c.bind(alreadyChatting);
-    c.emit({0x80,0xBB}); c.word(0x114); c.emit({1}); done.push_back(c.branch(0x84));
-    c.emit({0xB8}); c.word(1); cursorMode(); done.push_back(c.jump());
+    c.emit({0x80,0xBB}); c.word(0x114); c.emit({0}); done.push_back(c.branch(0x84));
+    c.emit({0x33,0xC0}); cursorMode(); done.push_back(c.jump());
 
     c.bind(noFocus);
     c.emit({0x83,0x3D}); c.word(detached); c.emit({0}); const auto alreadyDetached = c.branch(0x85);
@@ -87,7 +98,7 @@ Bytes buildChatInputHook(uint32_t address, uint32_t imageBase) {
 
     c.bind(noActor); c.bind(outsideBattle);
     restoreIme();
-    c.store(chatting, 0); // Lobby/menu transitions own the cursor after leaving GAME.
+    c.store(chatting, 0); c.store(inBattle, 0); // Lobby/menu transitions own the cursor after leaving GAME.
     for (auto branch : done) c.bind(branch);
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D,0xC3});
     if (c.bytes.size() > 0x1000) throw std::runtime_error("chat input hook overflow");

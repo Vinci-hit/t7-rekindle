@@ -19,6 +19,7 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         const GUID outputDevice{0x12345678, 0x1234, 0x5678, {1,2,3,4,5,6,7,8}};
         auto deviceSeen = std::make_shared<std::atomic<bool>>(false);
         auto worldReads = std::make_shared<std::atomic<unsigned>>(0);
+        auto graphicsReads = std::make_shared<std::atomic<unsigned>>(0);
         t7::Bootstrap::TestAdapter adapter;
         adapter.check = [](const auto&, const auto&, const auto&) {};
         adapter.launch = [=](const auto& directory, const t7::Config& config, const auto&, const auto&, const auto&) {
@@ -26,6 +27,7 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
             require(config.clientDirectory == directory, "selected resource directory was not passed to business");
         };
         adapter.pollGraphics = [=](t7::GraphicsValues& value, uint32_t& result, bool& completed) {
+            ++*graphicsReads;
             std::lock_guard<std::mutex> guard(*lock);
             value = *game; result = 1; completed = *applied; *applied = false; return true;
         };
@@ -46,6 +48,10 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         waitFor([&] { session->graphics(graphics); return graphics.state == T7NB_GRAPHICS_READY; });
         require(deviceSeen->load(), "output device was lost between the command and the client launch");
         waitFor([&] { return worldReads->load() > 1; });
+        const auto worldStart = worldReads->load(), graphicsStart = graphicsReads->load();
+        waitFor([&] { return graphicsReads->load() >= graphicsStart + 4; });
+        require(worldReads->load() - worldStart >= 2 * (graphicsReads->load() - graphicsStart),
+            "world readback is still gated by the slow settings monitor");
         const auto revision = graphics.revision;
         auto change = graphics.values; change.quality = 1;
         require(session->applyGraphics(revision - 1, change) == T7NB_NOT_READY, "stale graphics revision accepted");

@@ -32,7 +32,7 @@ Bytes buildTerrainHook(uint32_t address, uint32_t imageBase) {
     const auto one = code + CONSTANTS, reach = one + 4;
     WorldHookCode c;
     c.emit({0x60});
-    for (uint32_t i = 0; i < 4; ++i) c.store(address + 48 + i * 48, 0);
+    for (uint32_t i = 0; i < 2; ++i) c.store(address + 48 + i * 48, 0);
     std::vector<size_t> unavailable;
     auto nonzero = [&](unsigned char modrm) {
         c.emit({0x85,modrm}); unavailable.push_back(c.branch(0x84));
@@ -68,7 +68,13 @@ Bytes buildTerrainHook(uint32_t address, uint32_t imageBase) {
         c.emit({0xD9,0x05}); c.word(from); c.emit({0xD8,0x05}); c.word(one);
         c.emit({0xD9,0x1D}); c.word(to);
     };
-    for (uint32_t i = 0; i < 4; ++i) {
+    for (uint32_t i = 0; i < 2; ++i) {
+        size_t skip = 0, coincident = 0;
+        if (i == 1) {
+            c.emit({0x83,0x3D}); c.word(address + 240); c.emit({1}); skip = c.branch(0x85);
+        } else {
+            c.emit({0x83,0x3D}); c.word(address + TERRAIN_TARGET_ONLY_OFFSET); c.emit({0}); skip = c.branch(0x85);
+        }
         const auto result = address + 48 + i * 48;
         const auto actor = i / 2, position = address + 16 + actor * 12;
         copy(position, result + 8); copy(position + 4, result + 12);
@@ -84,6 +90,16 @@ Bytes buildTerrainHook(uint32_t address, uint32_t imageBase) {
             const auto target = address + 16 + (1 - actor) * 12;
             copy(target, result + 20); copy(target + 4, result + 24);
             height(target + 8, result + 28);
+            // Overlapping actors have no intervening terrain segment; do not submit a zero-length ray.
+            c.emit({0x0F,0x57,0xC0});
+            for (uint32_t axis = 0; axis < 3; ++axis) {
+                c.emit({0xF3,0x0F,0x10,0x0D}); c.word(result + 8 + axis * 4);
+                c.emit({0xF3,0x0F,0x5C,0x0D}); c.word(result + 20 + axis * 4);
+                c.emit({0xF3,0x0F,0x59,0xC9,0xF3,0x0F,0x58,0xC1});
+            }
+            c.emit({0x0F,0x57,0xC9,0x0F,0x2F,0xC1}); const auto distinct = c.branch(0x85);
+            c.store(result, 1); c.store(result + 4, UINT32_MAX); coincident = c.jump();
+            c.bind(distinct);
         }
         for (uint32_t j = 0; j < 3; ++j) {
             copy(result + 8 + j * 4, input + j * 4);
@@ -115,6 +131,8 @@ Bytes buildTerrainHook(uint32_t address, uint32_t imageBase) {
         c.emit({0x83,0xF8,7}); const auto unknownMaterial = c.branch(0x87);
         c.emit({0xA3}); c.word(result + 4);
         c.bind(unknownMaterial); c.bind(noKey); c.bind(unterminated); c.bind(clear);
+        if (coincident) c.bind(coincident);
+        if (skip) c.bind(skip);
     }
     for (auto branch : unavailable) c.bind(branch);
     c.emit({0x61,0xC3});

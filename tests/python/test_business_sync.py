@@ -216,12 +216,46 @@ try:
     timer = result['timers'][0]
     result = app.handleEvent(timer['event'], result['state'], {'nowMs': timer['delayMs']})
     assert protocol.decode_minimal_login_success(result['send'][0]['body']).level == 100
-    assert (wire.PREPARE_MS, wire.START_MS, wire.GAME_MS) == (30000, 5000, 1200000)
+    assert (wire.PREPARE_MS, wire.START_MS, wire.GAME_MS) == (30000, 5999, 1200000)
     state = app.createState({})
     state['sessions']['1'] = {'role': 'instance'}
     flow = app.Flow({'connection': 1}, state, {'nowMs': 1000})
     scene.timer(flow, 'instance-round-state')
     assert struct.unpack('>HQQiQQi', flow.result['send'][0]['body'])[5] == 30000
+    flow.session['hydration'] = []
+    scene.begin(flow)
+    flow.session['actorImported'] = True
+    scene.message(flow, 0x36, 0x14, b'\0\x14\0')
+    scene.message(flow, 0x36, 0x32, struct.pack('>Hi', 0x32, 1))
+    flow.result['send'].clear()
+    scene.message(flow, 0x36, 0x64, struct.pack('>HHb', 0x64, 1, 0))
+    assert flow.result['send'][-1]['body'] == wire.roundState(flow.now, 3, 5999)
+    gameAt = flow.now + 5999
+    assert flow.session['pending']['round-game'] == gameAt
+    assert 'round-start' not in flow.session['pending']
+    runtime.prepare()
+    state = runtime.switch(host_runtime.encode(flow.state))
+    context = host_runtime.encode({'nowMs': flow.now + 100, 'connections': [1]})
+    confirm = host_runtime.encode({'type': 'message', 'connection': 1, 'command': 0x36,
+                                   'body': struct.pack('>HHb', 0x64, 1, 0)})
+    state, sends, timers, logs = runtime.dispatch(confirm, state, context)
+    assert [packet['reason'] for packet in sends] == ['actor-play-result-zero'] and timers == []
+    assert host_runtime.decode(state)['sessions']['1']['pending']['round-game'] == gameAt
+    context = host_runtime.encode({'nowMs': gameAt, 'connections': [1]})
+    event = host_runtime.encode({'type': 'timer', 'connection': 1, 'name': 'round-game'})
+    state, sends, timers, logs = runtime.dispatch(event, state, context)
+    assert sends[0]['body'] == wire.roundState(gameAt, 4, wire.GAME_MS)
+    timer = next(item for item in timers if item[0] == '1:round-end')
+    deadline = gameAt + wire.GAME_MS
+    assert timer[1] == wire.GAME_MS
+    assert host_runtime.decode(state)['sessions']['1']['pending']['round-end'] == deadline
+    context = host_runtime.encode({'nowMs': deadline, 'connections': [1]})
+    event = timer[2]
+    state, sends, timers, logs = runtime.dispatch(event, state, context)
+    assert [packet['reason'] for packet in sends][-2:] == ['instance-round-state-end', 'instance-finish-game']
+    session = host_runtime.decode(state)['sessions']['1']
+    assert session['roundEnded'] and not session['groundEnabled'] and not session['pending']
+    assert runtime.dispatch(event, state, context)[1:3] == ([], [])
     print(json.dumps({'level': wire.USER_LEVEL, 'version': runtime.version()}))
 finally:
     runtime.close()

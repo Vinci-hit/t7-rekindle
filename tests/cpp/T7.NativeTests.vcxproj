@@ -25,6 +25,10 @@
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/TerrainHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/BladePoseHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/BladeSweepHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/ContactFrameHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/WeaponTrailHookCode.cpp" />
     <ClCompile Include="ModuleLookupTests.cpp" />
     <ClCompile Include="Ap32Tests.cpp" />
     <ClCompile Include="..\..\src\Runtime\launcher\Ap32.cpp" />

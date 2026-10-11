@@ -6,12 +6,13 @@ import pytest
 from Business.scripts import app, battle, bot, combat
 from Business.scripts.codec import battle_flow
 from test_melee_combat import arena, advance, hp, states, swing
+from blade_fixture import contact as nativeContact, publish
 
 
 def obstacle(flow, actor=1, *, probe="target", material=4):
-    contact = dict(ready=True, hit=True, material=material,
-                   position=[.7, 0., 1.2], normal=[-1., 0., 0.], direction=[1., 0., 0.])
-    flow.context["botWorld"]["terrain"][actor - 1][probe] = contact
+    contact = nativeContact(0, material=material, position=(.7, 0., 1.2), along=.2)
+    flow.context["botWorld"]["terrain"][actor - 1][probe] = dict(contact)
+    publish(flow, actor, [contact, nativeContact(3 - actor, along=.8)])
     return contact
 
 
@@ -65,12 +66,12 @@ def test_free_swing_hits_forward_terrain_without_a_nearby_enemy(arena):
     assert hp(arena, 2) == combat.MAX_HEALTH
 
 
-def test_terrain_behind_target_does_not_override_first_enemy_contact(arena):
-    obstacle(arena, probe="forward")
+def test_terrain_after_target_keeps_earlier_damage_and_then_interrupts(arena):
+    obstacle(arena, probe="forward")["along"] = .9
     swing(arena)
     advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
-    assert not any(p["reason"] == "combat-terrain-hit" for p in arena.result["send"])
+    assert any(p["reason"] == "combat-terrain-hit" for p in arena.result["send"])
 
 
 @pytest.mark.parametrize("attacker", [1, 2])
@@ -95,7 +96,7 @@ def test_wall_takes_priority_over_enemy_parry(arena, attacker, attack, defence, 
 def test_unknown_or_stale_terrain_never_becomes_a_clear_hit(arena, failure):
     contact = obstacle(arena)
     swing(arena)
-    if failure == "missing": arena.context["botWorld"].pop("terrain")
+    if failure == "missing": arena.context["botWorld"].pop("blades")
     if failure == "unready": contact["ready"] = False
     if failure == "nan": contact["normal"][0] = float("nan")
     if failure == "stale": arena.context["botWorld"]["sampledAt"] -= 1000
@@ -106,14 +107,15 @@ def test_unknown_or_stale_terrain_never_becomes_a_clear_hit(arena, failure):
     assert battle.actionState(arena).get("reaction") is None
 
 
-def test_bot_rebound_stops_movement_and_scheduled_release(arena):
+def test_bot_rebound_keeps_movement_but_cancels_scheduled_release(arena):
     swing(arena, 2)
     obstacle(arena, 2)
     arena.session["bot"]["moving"] = True
     arena.later(bot.MOVE_TIMER, 10)
     arena.later(bot.RELEASE_TIMER, 10)
     advance(arena, combat.hitTimer(2))
-    assert bot.MOVE_TIMER not in arena.session["pending"]
+    assert bot.MOVE_TIMER in arena.session['pending']
+    assert arena.session['bot']['moving']
     assert bot.RELEASE_TIMER not in arena.session["pending"]
     bot.think(arena)
     assert arena.session["bot"]["status"] == "terrain-rebound"

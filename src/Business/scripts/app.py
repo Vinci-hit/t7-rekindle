@@ -2,12 +2,12 @@
 from copy import deepcopy
 import struct
 
-from . import contracts as wire, scene, controls, battle, bot, combat
+from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
 from .codec import login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 5
+STATE_VERSION = 12
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -36,16 +36,31 @@ def validateState(state):
                and type(session.get("hydration")) is list
                and type(session.get("pending", {})) is dict
                and ("bot" not in session or bot.validState(session["bot"]))
+               and roster.validState(session)
                and combat.validState(session)
+               and player_life.validState(session)
                and ("bot" not in session or combat.validState(session["bot"]))
                and (not session.get("initialized") or controls.validMoveClock(session))
                for key, session in state["sessions"].items())
 
 
 def migrateState(fromVersion, state):
-    if fromVersion not in (1, 2, 3, 4, STATE_VERSION) or not validateState(state):
+    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, STATE_VERSION) or not validateState(state):
         raise ValueError("no migration for this state version")
-    return deepcopy(state)
+    result = deepcopy(state)
+    if fromVersion < 12:
+        for session in result['sessions'].values():
+            if any(name.startswith(('battle-action-phase', 'bot-action-phase', 'bot-release', 'combat-hurt-'))
+                   for name in session.get('pending', {})):
+                session['rearmActionTimers'] = True
+            for data in (session, *actors.bots(session).values()):
+                action, swing = data.get('action', {}), data.get('swing')
+                intent = action.get('intent')
+                chain = battle.attackChain(intent)
+                if swing is not None and chain is not None:
+                    swing.update(intent=intent, state=chain[battle.strikeIndex(intent)],
+                                 beganAt=swing['until'] - combat.contactEndMs(intent))
+    return result
 
 
 def selfTest():
@@ -63,6 +78,15 @@ class Flow:
         self.now = context["nowMs"]
         self.session = state["sessions"].get(str(self.connection))
         self.result = {"state": state, "send": [], "timers": [], "logs": []}
+        self.rearmActionTimers()
+
+    def rearmActionTimers(self):
+        if self.session is None or not self.session.pop('rearmActionTimers', False):
+            return
+        for name, due in self.session.get('pending', {}).items():
+            if name.startswith(('battle-action-phase', 'bot-action-phase', 'bot-release', 'combat-hurt-')):
+                self.result['timers'].append({'id': f'{self.connection}:{name}', 'delayMs': max(0, due - self.now),
+                    'event': {'type': 'timer', 'connection': self.connection, 'name': name}})
 
     def phase(self, name):
         self.session["phase"] = name
@@ -77,11 +101,15 @@ class Flow:
 
     def later(self, name, delay):
         self.session.setdefault("pending", {})[name] = self.now + delay
+        if actors.localTimer(self.session, name):
+            return
         self.result["timers"].append({"id": f"{self.connection}:{name}", "delayMs": delay,
             "event": {"type": "timer", "connection": self.connection, "name": name}})
 
     def cancelTimers(self):
         for name in self.session.get("pending", {}):
+            if actors.localTimer(self.session, name):
+                continue
             self.result["timers"].append({"id": f"{self.connection}:{name}", "delayMs": -1,
                 "event": {"type": "timer", "connection": self.connection, "name": name}})
         self.session["pending"] = {}
@@ -89,6 +117,8 @@ class Flow:
     def cancel(self, name):
         if name in self.session.get("pending", {}):
             del self.session["pending"][name]
+            if actors.localTimer(self.session, name):
+                return
             self.result["timers"].append({"id": f"{self.connection}:{name}", "delayMs": -1,
                 "event": {"type": "timer", "connection": self.connection, "name": name}})
 
@@ -124,7 +154,8 @@ def handleTimer(flow, name):
         flow.send(0x1E, room_flow.encode_room_enter_instance_notify(
             room_id=1, user_camp=1, notify_type=0), "match-enter-instance-notify")
         flow.phase("instance-notified")
-    elif not battle.timer(flow, name) and not bot.timer(flow, name) and not combat.timer(flow, name) and not controls.timer(flow, name) and not scene.timer(flow, name):
+    elif not any(handler(flow, name) for handler in (battle.timer, bot.timer, bot_life.timer, player_life.timer,
+                                                    combat.timer, controls.timer, scene.timer)):
         raise ValueError(f"unknown business timer: {name}")
 
 
@@ -218,6 +249,14 @@ def handleEvent(event, state, context):
                 f"connection={connection} role={session['role']} phase={session.get('phase', 'waiting')} "
                 f"actorImported={session.get('actorImported', False)} heroChosen={session.get('heroChosen', False)} "
                 f"battleEntered={session.get('battleEntered', False)} pending={list(session.get('pending', {}))}")
+    elif eventType == "world":
+        for connection in context.get("connections", []):
+            session = state["sessions"].get(str(connection))
+            if session is not None and session["role"] == "instance":
+                flow.connection, flow.session = connection, session
+                flow.rearmActionTimers()
+                combat.worldUpdated(flow)
+                bot.worldUpdated(flow)
     elif eventType == "connected":
         if event["role"] not in ("login", "logic", "instance") or key in state["sessions"]:
             raise ValueError("invalid or duplicate business connection")

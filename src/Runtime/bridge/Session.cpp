@@ -251,16 +251,23 @@ int32_t Session::readLogs(uint64_t& cursor, uint8_t* buffer, uint32_t capacity,
 
 void Session::workerLoop() {
     try {
+        auto nextMonitor = std::chrono::steady_clock::now();
         while (true) {
             Command command{};
             bool hasCommand = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                hasCommand = changed_.wait_for(lock, std::chrono::milliseconds(50),
+                const auto interval = snapshot_.state == T7NB_STATE_RUNNING ? 5 : 50;
+                hasCommand = changed_.wait_for(lock, std::chrono::milliseconds(interval),
                     [this] { return closing_ || !commands_.empty(); });
                 if (!hasCommand && snapshot_.state == T7NB_STATE_RUNNING && !closing_) {
                     lock.unlock();
-                    monitorClient();
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= nextMonitor) {
+                        monitorClient();
+                        nextMonitor = now + std::chrono::milliseconds(50);
+                    }
+                    monitorWorld();
                     continue;
                 }
                 // wait_for returns false on a timeout.  There is no command
@@ -364,12 +371,6 @@ void Session::monitorClient() {
     }
     if (alive && !windowClosed) {
         monitorGraphics(); monitorAudio();
-        try {
-            WorldSnapshot world;
-            if (server_ && bootstrap_.pollWorld(world)) server_->updateWorld(world);
-        } catch (const std::exception& error) {
-            setFailure(0, T7NB_ERROR_OPERATION, std::string("world snapshot failed: ") + error.what());
-        }
         return;
     }
     DWORD exitCode = 0;
@@ -404,6 +405,22 @@ void Session::monitorClient() {
                                     : "owned client exited; exitCode=" + std::to_string(exitCode);
     log(reason + (cleanupError.empty() ? "; runtime stopped" : "; cleanup=" + cleanupError),
         cleanupError.empty() && normalExit ? "INFO" : "ERROR");
+}
+
+void Session::monitorWorld() {
+    if (!server_ || !server_->needsWorld()) return;
+    try {
+        WorldSnapshot world;
+        if (bootstrap_.pollWorld(world)) server_->updateWorld(world);
+    } catch (const std::exception& error) {
+        try {
+            if (!bootstrap_.running()) { monitorClient(); return; }
+        } catch (const std::exception& statusError) {
+            setFailure(0, T7NB_ERROR_OPERATION, std::string("owned client status failed: ") + statusError.what());
+            return;
+        }
+        setFailure(0, T7NB_ERROR_OPERATION, std::string("world snapshot failed: ") + error.what());
+    }
 }
 
 void Session::execute(const Command& command) {

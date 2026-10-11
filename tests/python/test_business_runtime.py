@@ -16,7 +16,7 @@ import host_runtime  # noqa: E402
 
 def test_round_timing_configuration():
     assert wire.PREPARE_MS == 30000
-    assert wire.START_MS == 5000
+    assert wire.START_MS == 5999
     assert wire.GAME_MS == 1200000
 
 

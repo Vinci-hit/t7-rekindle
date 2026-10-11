@@ -26,7 +26,11 @@ inline void prepare(HANDLE process) {
     }) writeWord(process, p.first, p.second);
     t7::WorldHookCode c;
     c.emit({0x55,0x8B,0xEC,0x83,0xE4,0xF0,0x83,0xEC,0x58,0x56,0x57});
-    c.emit({0x8B,0x75,0x0C,0x8B,0x7D,8,0xFF,0x05}); c.word(CALLS);
+    c.emit({0x8B,0x75,0x0C,0x8B,0x7D,8});
+    c.emit({0x83,0x7F,36,0}); const auto terrain = c.branch(0x85);
+    c.call(BASE + 0x80000); // Blade fixture query, with EDI input and ESI collector.
+    const auto bladeDone = c.jump(); c.bind(terrain);
+    c.emit({0xFF,0x05}); c.word(CALLS);
     // A nearer actor must not truncate the subsequent scene query.
     c.store(HIT + 0x10, 0x3DCCCCCD);
     auto hit = [&](uint32_t body) {
@@ -42,7 +46,7 @@ inline void prepare(HANDLE process) {
     c.emit({0xF3,0x0F,0x58,0x47,8,0x0F,0x2F,0x05}); c.word(HEIGHT); const auto above = c.branch(0x87);
     c.emit({0xA1}); c.word(FRACTION); c.emit({0xA3}); c.word(HIT + 0x10);
     hit(CHILD);
-    c.bind(above); c.bind(clear); c.emit({0x5F,0x5E,0x8B,0xE5,0x5D,0xC2,8,0});
+    c.bind(above); c.bind(clear); c.bind(bladeDone); c.emit({0x5F,0x5E,0x8B,0xE5,0x5D,0xC2,8,0});
     t7::writeClientMemory(process, BASE + 0x10FA3B0, c.bytes);
 
     c.bytes.clear();
@@ -63,6 +67,69 @@ inline void prepare(HANDLE process) {
     t7::writeClientMemory(process, BASE + 0x29D4B0, c.bytes);
 }
 
+inline void verifyMultiTarget(HANDLE process, t7::ClientWorld& reader) {
+    // A pose change needs a full sampling/selection/query cycle, including the queued request.
+    auto sample = [&] { worldFixture::read(reader); worldFixture::read(reader); return worldFixture::read(reader); };
+    auto position = [&](uint32_t index, std::array<float, 3> value) {
+        t7::Bytes bytes(sizeof(value)); std::memcpy(bytes.data(), value.data(), bytes.size());
+        t7::writeClientMemory(process, worldFixture::CONTROLLER + index * 0x100 + 0x10, bytes);
+    };
+    const std::array<uint32_t, 5> changed{0, 1, 2, 3, 11};
+    std::array<t7::Bytes, 5> original, headings;
+    for (size_t i = 0; i < changed.size(); ++i) {
+        const auto controller = worldFixture::CONTROLLER + changed[i] * 0x100;
+        original[i] = t7::readClientMemory(process, controller + 0x10, 12);
+        headings[i] = t7::readClientMemory(process, controller + 0xAC, 4);
+    }
+    writeWord(process, worldFixture::CONTROLLER + 0xAC, 0);
+    writeWord(process, worldFixture::CONTROLLER + 0xBAC, 0);
+    position(1, {271,150,-.25f}); position(2, {271.5f,150.5f,.25f});
+    position(3, {272,150,.25f}); position(11, {270.5f,150,.25f});
+    auto value = sample();
+    const std::array<std::array<float, 3>, 3> points{{{270.5f,150,1}, {270.75f,150.25f,1.25f}, {271,150,1.25f}}};
+    for (size_t i = 0; i < points.size(); ++i) {
+        const auto& target = value.actors[0].targetTerrain[i + 1];
+        if (!target.ready || !target.hit || target.material != 4 || target.position != points[i]
+            || target.normal != std::array<float, 3>{-1,0,0})
+            throw std::runtime_error("multi-target terrain reused or lost a target segment");
+    }
+    if (value.actors[0].targetTerrain[0].ready || value.actors[0].targetTerrain[11].ready
+        || value.actors[0].targetId != 2 || value.actors[0].terrain[1].position != points[0]
+        || !value.actors[11].targetTerrain[1].ready || !value.actors[1].targetTerrain[0].ready
+        || !value.actors[1].targetTerrain[11].ready || value.actors[1].targetTerrain[2].ready)
+        throw std::runtime_error("multi-target terrain camp or nearest-target compatibility mismatch");
+    writeWord(process, HEIGHT, 0x3F900000); value = sample(); // Only the lower target segment hits this step.
+    if (!value.actors[0].targetTerrain[1].hit || !value.actors[0].targetTerrain[2].ready
+        || value.actors[0].targetTerrain[2].hit || !value.actors[0].targetTerrain[3].ready
+        || value.actors[0].targetTerrain[3].hit || value.actors[0].terrain[0].hit)
+        throw std::runtime_error("multi-target terrain shared an obstruction between targets");
+    writeWord(process, HEIGHT, 0x40000000);
+    for (const auto& excluded : std::array<std::array<float, 3>, 3>{{
+        {273,150,.25f}, {271.5f,150.5f,1.5f}, {269,150,.25f}
+    }}) {
+        position(2, excluded); value = sample();
+        if (value.actors[0].targetTerrain[2].ready || !value.actors[0].targetTerrain[1].ready
+            || !value.actors[0].targetTerrain[3].ready)
+            throw std::runtime_error("multi-target terrain retained an out-of-envelope target");
+        position(2, {271.5f,150.5f,.25f}); sample();
+    }
+    writeWord(process, worldFixture::PLAYER + 0x234, 0); value = sample();
+    if (value.actors[0].targetTerrain[2].ready || !value.actors[0].targetTerrain[3].ready)
+        throw std::runtime_error("multi-target terrain retained a corpse");
+    writeWord(process, worldFixture::PLAYER + 0x234, 1);
+    writeWord(process, MAP + 0x1C, 0); value = sample();
+    for (size_t i = 1; i <= 3; ++i)
+        if (value.actors[0].targetTerrain[i].ready)
+            throw std::runtime_error("multi-target terrain accepted missing geometry as clear");
+    writeWord(process, MAP + 0x1C, COLLISION);
+    for (size_t i = 0; i < changed.size(); ++i) {
+        const auto controller = worldFixture::CONTROLLER + changed[i] * 0x100;
+        t7::writeClientMemory(process, controller + 0x10, original[i]);
+        t7::writeClientMemory(process, controller + 0xAC, headings[i]);
+    }
+    sample();
+}
+
 inline void verify(HANDLE process, t7::ClientWorld& reader) {
     auto sample = [&] { worldFixture::read(reader); return worldFixture::read(reader); };
     auto value = sample();
@@ -73,8 +140,8 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
         || std::abs(target.position[0] - 270.5f) > .0001f
         || std::abs(target.position[1] - 150.5f) > .0001f || target.position[2] != 1.25f
         || target.normal != std::array<float, 3>{-1,0,0}
-        || std::abs(forward.direction[0] - std::cos(.5f)) > .0001f
-        || std::abs(forward.direction[1] + std::sin(.5f)) > .0001f)
+        || std::abs(forward.direction[0] - std::cos(-.5f)) > .0001f
+        || std::abs(forward.direction[1] + std::sin(-.5f)) > .0001f)
         throw std::runtime_error("terrain point/normal/material/heading contract mismatch");
     const auto& reversed = value.terrain[1][1];
     if (!reversed.hit || reversed.direction[0] >= 0 || reversed.direction[1] >= 0
@@ -103,6 +170,15 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     if (!value.terrain[0][0].ready || value.terrain[0][0].hit)
         throw std::runtime_error("native clear query lost or actor mistaken for terrain");
     writeWord(process, MODE, 1);
+    // An exact overlap still has a clear target segment and never enters Havok as a degenerate ray.
+    const auto original = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x110, 12);
+    t7::writeClientMemory(process, worldFixture::CONTROLLER + 0x110,
+                         t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12));
+    value = sample();
+    if (!value.actors[0].terrain[1].ready || value.actors[0].terrain[1].hit || value.actors[0].targetId != 2
+        || !value.actors[0].targetTerrain[1].ready || value.actors[0].targetTerrain[1].hit)
+        throw std::runtime_error("coincident actor terrain segment mismatch");
+    t7::writeClientMemory(process, worldFixture::CONTROLLER + 0x110, original); sample();
     for (const auto& p : std::vector<std::pair<uint32_t, uint32_t>>{
         {HIT,0xBF800000}, {FRACTION,0x3F000000}
     }) {
@@ -111,6 +187,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
             throw std::runtime_error("terrain accepted non-finite native hit data");
         writeWord(process, p.first, p.second);
     }
+    verifyMultiTarget(process, reader);
     const auto errors = t7::readClientMemory(process, ERRORS, 4);
     if (errors != t7::Bytes(4, 0)) throw std::runtime_error("terrain collector admitted an actor or used the wrong shape key");
 }

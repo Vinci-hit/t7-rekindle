@@ -98,6 +98,7 @@ private:
     void executeStart(const Command& command);
     void executeStop(const Command& command);
     void monitorClient();
+    void monitorWorld();
     void monitorGraphics();
     void monitorAudio();
     void setFailure(uint64_t operationId, uint32_t code, const std::string& message);

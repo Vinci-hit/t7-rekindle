@@ -29,6 +29,7 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
         std::lock_guard<std::mutex> lock(mutex_);
         lastLines_.clear();
         world_ = {};
+        worldPending_ = false;
     }
     validateConfig(config); config_ = config; boundConfig_ = config; root_ = root;
     // The package root may be installed read-only.  Keep generated revisions
@@ -306,12 +307,18 @@ bool Server::nextEvent(Timers& timers, QueuedEvent& event, std::vector<uint64_t>
             for (auto it = timers.begin(); it != timers.end();) {
                 if (it->second.due <= now && events_.size() < 1024 && eventBytes_ < 8 * 1024 * 1024) {
                     Event due; due.type = "timer"; due.connection = it->second.connection; due.serialized = it->second.event;
-                    queue(std::move(due), it->second.due); it = timers.erase(it);
+                    queue(std::move(due), it->second.due); events_.back().timerId = it->first;
+                    it = timers.erase(it);
                 } else { deadline = (std::min)(deadline, it->second.due); ++it; }
             }
             if (!events_.empty()) {
                 bool pressured = events_.size() >= 1024 || eventBytes_ >= 8 * 1024 * 1024;
-                event = std::move(events_.front()); events_.pop_front();
+                // Only cross consecutive decisions; earlier input and world events are causal barriers.
+                auto next = std::find_if_not(events_.begin(), events_.end(), [](const auto& queued) {
+                    return queued.type == "timer" && detail::decisionTimer(queued.timerId);
+                });
+                if (next == events_.end() || !detail::animationTimer(next->timerId)) next = events_.begin();
+                event = std::move(*next); events_.erase(next);
                 eventBytes_ -= event.body.size() + event.serialized.size() + 256;
                 for (const auto& pair : sessions_) live.push_back(pair.first);
                 if (pressured) signals_->io();
@@ -351,11 +358,12 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
             throw std::runtime_error("transition rejected: dead target or send backpressure");
     }
     auto nextTimers = timers;
+    const auto committedAt = detail::Clock::now();
     for (const auto& change : result.timers) {
         if (change.delay < 0) nextTimers.erase(change.id);
         else {
             if (sessions_.find(change.connection) == sessions_.end()) throw std::runtime_error("timer target disconnected before commit");
-            nextTimers[change.id] = {now + std::chrono::milliseconds(change.delay), change.connection, change.event};
+            nextTimers[change.id] = {detail::timerDeadline(change.id, now, committedAt, change.delay), change.connection, change.event};
         }
     }
     if (event.type == "closed") {
@@ -373,6 +381,13 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         session.send.swap(replacement.second); session.queued += totals.at(replacement.first);
     }
     state.swap(result.state); timers.swap(nextTimers); snapshot_.phase.swap(phase); snapshot_.timers = timers.size();
+    for (const auto& change : result.timers) {
+        for (auto it = events_.begin(); it != events_.end();) {
+            if (it->timerId != change.id) { ++it; continue; }
+            eventBytes_ -= it->body.size() + it->serialized.size() + 256;
+            it = events_.erase(it);
+        }
+    }
     committed = true;
     auto late = event.due == TimePoint::max() ? 0.0 : elapsedMs(event.due, event.queuedAt);
     journal_->add("COMMIT", event.connection, version, label + event.type + " command=" + std::to_string(event.command)
@@ -386,10 +401,12 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
     bool committed = false;
     try {
         if (event.type == "control") { processControl(python, event, state); return; }
-        if (event.type != "closed" && std::find(live.begin(), live.end(), event.connection) == live.end()) return;
+        if (event.type != "closed" && event.type != "world"
+            && std::find(live.begin(), live.end(), event.connection) == live.end()) return;
         auto now = detail::Clock::now();
         WorldSnapshot world;
         { std::lock_guard<std::mutex> lock(mutex_); world = world_; }
+        if (event.type != "world") world.contacts.clear();
         auto result = python.dispatch(event, state, python.context(boundConfig_, clock_.millis(now), live, world));
         auto callbackMs = elapsedMs(now, detail::Clock::now());
         commit(result, event, python.version(), python.phase(result.state), now, callbackMs, state, timers, committed);
@@ -403,14 +420,33 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         journal_->add("ERROR", event.connection, python.version(), "event=" + std::to_string(event.id) + " " + e.what());
     }
 }
+bool Server::needsWorld() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !stopping_ && !worldPending_;
+}
 void Server::updateWorld(const WorldSnapshot& world) {
     const auto uptime = GetTickCount64(), now = clock_.millis();
     auto value = world;
     const auto age = uptime >= world.sampledAt ? uptime - world.sampledAt : UINT64_MAX;
     value.ready = value.ready && age <= 250 && age <= now;
     value.sampledAt = age <= now ? now - age : 0;
+    auto translated = [&](uint64_t at) { return at <= uptime && uptime - at <= now ? now - (uptime - at) : 0; };
+    for (auto& actor : value.actors) actor.phaseAt = translated(actor.phaseAt);
+    for (auto& contact : value.contacts) {
+        contact.phaseAt = translated(contact.phaseAt); contact.targetPhaseAt = translated(contact.targetPhaseAt);
+        contact.occurredAt += static_cast<double>(now) - static_cast<double>(uptime);
+    }
     std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) return;
+    if (worldPending_) throw std::runtime_error("world snapshot is still awaiting consumption");
     world_ = value;
+    if ((value.ready || !value.contacts.empty() || value.droppedContacts) && std::any_of(sessions_.begin(), sessions_.end(), [](const auto& item) {
+            return item.second.authenticated && item.second.role == "instance";
+        })) {
+        Event event; event.type = "world";
+        queue(std::move(event));
+        worldPending_ = true;
+    }
 }
 void Server::businessLoop() {
     try {
@@ -429,6 +465,10 @@ void Server::businessLoop() {
             QueuedEvent event; std::vector<uint64_t> live;
             if (!nextEvent(timers, event, live)) break;
             dispatch(python, event, live, state, timers);
+            if (event.type == "world") {
+                std::lock_guard<std::mutex> lock(mutex_);
+                worldPending_ = false;
+            }
         }
     } catch (const std::exception& e) { fail(e); }
 }

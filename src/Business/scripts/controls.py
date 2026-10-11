@@ -2,7 +2,7 @@
 import math
 import struct
 
-from . import contracts as wire
+from . import actors, contracts as wire
 from .codec import move_flow
 
 GROUND_RUN_DELAY_MS = 2000
@@ -22,7 +22,7 @@ GROUND_RUN_STATES = {(-1, 0): 10, (-1, 1): 11, (-1, -1): 12}
 def activate(flow):
     tick = nextGroundTick(flow)
     flow.send(2, move_flow.encode_move_notify_active(
-        server_tick=tick, target_instance_id=1, active=int(groundEnabled(flow))),
+        server_tick=tick, target_instance_id=1, active=int(playerEnabled(flow))),
         "instance-move-notify-active-after-in-scene")
     ground = groundState(flow)
     ground["tick"] = ground["timingTick"] = tick
@@ -65,14 +65,14 @@ def localReport(flow, selector, body):
             raise ValueError("runtime local key state must be 0 or 1")
         if category != KEY_CATEGORY_MOVEMENT:
             # Special-key reports carry no authoritative position or WASD update.
-            if groundEnabled(flow):
+            if playerEnabled(flow):
                 field, index = ("crouched", 4) if category == KEY_CATEGORY_CROUCH else ("jumpPressed", 5)
                 groundState(flow)[field] = bool(keys[index])
             return True
         position = list(struct.unpack_from(">fff", body, 12))
     if not all(math.isfinite(value) for value in position):
         raise ValueError("non-finite runtime local position")
-    if not groundEnabled(flow):
+    if not playerEnabled(flow):
         return True
     cancelMotionTimers(flow)
     ground = groundState(flow)
@@ -94,6 +94,10 @@ def groundEnabled(flow) -> bool:
     if "groundEnabled" in flow.session:
         return flow.session["groundEnabled"] is True
     return flow.session.get("phase") == "game-sent"
+
+
+def playerEnabled(flow) -> bool:
+    return groundEnabled(flow) and actors.active(flow, wire.ACTOR_ID)
 
 
 def enableGround(flow) -> None:
@@ -234,7 +238,7 @@ def timer(flow, name):
         cancelMotionTimers(flow)
         return True
     if (flow.session.get("leaving") or not flow.session.get("battleEntered")
-            or not groundEnabled(flow)):
+            or not playerEnabled(flow)):
         return True
     if name == "direction-prime-start":
         return True
@@ -276,7 +280,7 @@ def message(flow, command, selector, body):
         heading = struct.unpack_from(">h", body, 7)[0]
         if not -180 <= heading <= 180:
             raise ValueError("ground heading must be in -180..180")
-        if not groundEnabled(flow):
+        if not playerEnabled(flow):
             return True
         advanceGround(flow)
         groundState(flow)["heading"] = heading
@@ -294,7 +298,7 @@ def message(flow, command, selector, body):
         initialPosition = list(struct.unpack_from(">fff", body, 12))
         if not all(math.isfinite(value) for value in initialPosition):
             raise ValueError("non-finite initial ground position")
-    if not groundEnabled(flow):
+    if not playerEnabled(flow):
         return True
     ground = groundState(flow)
     mask = sum(keys[index] << index for index in range(4))

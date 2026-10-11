@@ -31,6 +31,8 @@ def test_success_interrupts_both_phases_with_direction_specific_reactions(
     assert states(arena) == [(attacker, blocked), (defender, success)]
     assert hp(arena, 1) == hp(arena, 2) == 100
     assert combat.hitTimer(attacker) not in arena.session["pending"]
+    assert arena.session["pending"][battle.actionTimer(defender)] == arena.now
+    assert arena.session["pending"][battle.actionTimer(attacker)] == arena.now + battle.phaseMs(attack, -1)
     for actorId in (attacker, defender):
         action = battle.actionState(arena, actorId)
         assert action["index"] == -1 and "buffered" not in action
@@ -68,6 +70,7 @@ def test_lateral_parry_requires_an_unreleased_hold(arena, attacker, attack, defe
 def test_defender_keeps_hold_or_finishes_after_success_without_cutting_feedback(arena, released):
     block(arena, attacker=2)
     deadline = arena.session["pending"][battle.ACTION_TIMER]
+    assert deadline == arena.now
     before = list(arena.result["send"])
     if released:
         battle.releaseAction(arena, battle.BLOCK_RELEASE)
@@ -106,9 +109,9 @@ def test_bot_think_and_key_spam_do_not_overwrite_block_reactions(arena):
     assert arena.session["bot"]["status"] == "parry-success"
 
 
-def test_bot_auto_release_during_success_waits_for_success_animation(arena):
+def test_bot_auto_release_before_success_timer_preserves_feedback_state(arena):
     block(arena)
-    arena.later(bot.RELEASE_TIMER, 10)
+    arena.later(bot.RELEASE_TIMER, 0)
     advance(arena, bot.RELEASE_TIMER)
     assert battle.actionState(arena, 2)["released"] is True
     assert states(arena)[-1] == (2, 231)
@@ -139,15 +142,15 @@ def test_contact_uses_current_snapshot_facing_not_old_heading_report(arena, degr
     assert hp(arena, 2) == 80
 
 
-def test_stale_facing_cannot_create_a_backwards_hit(arena):
+def test_clear_native_blade_does_not_hit_even_when_actor_is_close(arena):
     arena.context["botWorld"]["playerHeading"] = 180.
+    arena.context["botWorld"]["blades"]["1"]["contacts"] = []
     swing(arena)
     while combat.hitTimer(1) in arena.session["pending"]:
         advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
     misses = [log for log in arena.result["logs"] if log.startswith("combat-miss")]
-    assert len(misses) == 1 and "reason=facing" in misses[0]
-    assert "angle=180.0" in misses[0]
+    assert len(misses) == 1 and "reason=blade-clear" in misses[0]
 
 
 @pytest.mark.parametrize("value", [None, math.nan, math.inf, 181.])
@@ -157,4 +160,4 @@ def test_missing_or_invalid_facing_is_not_replaced_with_zero(arena, value):
     while combat.hitTimer(1) in arena.session["pending"]:
         advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
-    assert any("reason=heading-unavailable" in log for log in arena.result["logs"])
+    assert any("reason=blade-unavailable" in log for log in arena.result["logs"])

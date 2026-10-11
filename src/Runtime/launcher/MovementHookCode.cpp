@@ -61,6 +61,22 @@ std::vector<size_t> matchPaths(Code& code, const std::vector<Path>& paths, std::
 void bindAll(Code& code, const std::vector<size_t>& fields) {
     for (auto field : fields) code.bind(field, code.bytes.size());
 }
+void botPositionCommand(Code& code, uint32_t imageBase, const MovementHookSite& site) {
+    // Only selector 38 for local AI actors: retain native Move/Dir/Active/Group,
+    // but do not enqueue its sampled position over the controller's newer pose.
+    code.emit({0x9C,0x60,0x81,0x7D,0x04}); code.word(imageBase + 0x6B65F2);
+    const auto otherReceiver = code.branch(0x85);
+    code.emit({0x0F,0xB7,0x43,0x10,0x83,0xE8,2,0x83,0xF8,18});
+    const auto otherActor = code.branch(0x87);
+    // The composite has not taken ownership yet; its native deleting destructor
+    // releases this command through the original allocator, exactly once.
+    code.emit({0x8B,0xCE,0x8B,0x01,0x6A,1,0xFF,0x10,0x61,0x9D});
+    code.jump(imageBase + site.rva + 8);
+    code.bind(otherReceiver, code.bytes.size()); code.bind(otherActor, code.bytes.size());
+    code.emit({0x61,0x9D});
+    code.bytes.insert(code.bytes.end(), site.original.begin(), site.original.end());
+    code.jump(imageBase + site.rva + 5);
+}
 }
 Bytes movementJump(uint32_t source, uint32_t destination) {
     // x86 EIP arithmetic wraps at 32 bits, including remote pages above 2 GiB.
@@ -68,7 +84,7 @@ Bytes movementJump(uint32_t source, uint32_t destination) {
 }
 MovementHookPage buildMovementHooks(uint32_t remoteBase, uint32_t imageBase, bool skipStartupAnimation) {
     if (!remoteBase || remoteBase > UINT32_MAX - MOVEMENT_HOOK_PAGE_SIZE
-        || !imageBase || imageBase > UINT32_MAX - MOVEMENT_HOOK_SITES.back().rva - 5)
+        || !imageBase || imageBase > UINT32_MAX - MOVEMENT_HOOK_SITES.back().rva - 8)
         throw std::runtime_error("movement hook address outside x86 range");
     MovementHookPage page; page.bytes.resize(MOVEMENT_HOOK_PAGE_SIZE, 0);
     size_t data = 0;
@@ -91,30 +107,34 @@ MovementHookPage buildMovementHooks(uint32_t remoteBase, uint32_t imageBase, boo
     for (size_t i = 0; i < MOVEMENT_HOOK_SITES.size(); ++i) {
         Code code(remoteBase + static_cast<uint32_t>(offset)); page.entries[i] = code.base;
         const auto& site = MOVEMENT_HOOK_SITES[i];
-        if (i == 1) code.bytes.insert(code.bytes.end(), site.original.begin(), site.original.end());
-        if (i == 2) code.emit({0xC6, 0x04, 0x3E, 0x00}); // original NUL terminator
-        code.emit({0x9C, 0x60}); // pushfd; pushad
-        std::vector<size_t> misses;
-        if (i == 0) {
-            code.emit({0x83, 0x7C, 0x24, 0x2C, 0x00}); // open flags must be read-only
-            misses.push_back(code.branch(0x85));
-            code.emit({0x8B, 0x54, 0x24, 0x28}); // original first argument
-        } else code.emit({0x8B, 0x55, 0x08}); // XML loader's unchanged filename
-        const auto matches = matchPaths(code, i == 0 ? std::vector<Path>{router} : xmlPaths, misses);
-        bindAll(code, matches);
-        if (i == 0) { code.emit({0xC7, 0x44, 0x24, 0x28}); code.word(replacementObject); }
-        if (i == 1) { code.emit({0x81, 0x44, 0x24, 0x18}); code.word(static_cast<uint32_t>(MOVEMENT_XML_RESERVE)); }
-        if (i == 2) {
-            code.emit({0x61, 0x9D}); // expose original frame to the owned debugger
-            page.breakpoint = code.base + static_cast<uint32_t>(code.bytes.size());
-            code.emit({0xCC, 0x56}); // transform, then original push esi
+        if (i == 3) {
+            botPositionCommand(code, imageBase, site);
+        } else {
+            if (i == 1) code.bytes.insert(code.bytes.end(), site.original.begin(), site.original.end());
+            if (i == 2) code.emit({0xC6, 0x04, 0x3E, 0x00}); // original NUL terminator
+            code.emit({0x9C, 0x60}); // pushfd; pushad
+            std::vector<size_t> misses;
+            if (i == 0) {
+                code.emit({0x83, 0x7C, 0x24, 0x2C, 0x00}); // open flags must be read-only
+                misses.push_back(code.branch(0x85));
+                code.emit({0x8B, 0x54, 0x24, 0x28}); // original first argument
+            } else code.emit({0x8B, 0x55, 0x08}); // XML loader's unchanged filename
+            const auto matches = matchPaths(code, i == 0 ? std::vector<Path>{router} : xmlPaths, misses);
+            bindAll(code, matches);
+            if (i == 0) { code.emit({0xC7, 0x44, 0x24, 0x28}); code.word(replacementObject); }
+            if (i == 1) { code.emit({0x81, 0x44, 0x24, 0x18}); code.word(static_cast<uint32_t>(MOVEMENT_XML_RESERVE)); }
+            if (i == 2) {
+                code.emit({0x61, 0x9D}); // expose original frame to the owned debugger
+                page.breakpoint = code.base + static_cast<uint32_t>(code.bytes.size());
+                code.emit({0xCC, 0x56}); // transform, then original push esi
+                code.jump(imageBase + site.rva + 5);
+            }
+            bindAll(code, misses);
+            code.emit({0x61, 0x9D});
+            if (i == 0) code.bytes.insert(code.bytes.end(), site.original.begin(), site.original.end());
+            if (i == 2) code.emit({0x56});
             code.jump(imageBase + site.rva + 5);
         }
-        bindAll(code, misses);
-        code.emit({0x61, 0x9D});
-        if (i == 0) code.bytes.insert(code.bytes.end(), site.original.begin(), site.original.end());
-        if (i == 2) code.emit({0x56});
-        code.jump(imageBase + site.rva + 5);
         if (offset + code.bytes.size() > page.bytes.size()) throw std::runtime_error("movement hook page overflow");
         std::memcpy(page.bytes.data() + offset, code.bytes.data(), code.bytes.size());
         offset = (offset + code.bytes.size() + 15) & ~size_t(15);

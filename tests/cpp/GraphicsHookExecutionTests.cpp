@@ -3,9 +3,12 @@
 #include "../../src/Runtime/launcher/OutputDevice.h"
 #include "WorldHookFixture.h"
 #include "TerrainHookFixture.h"
+#include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
+#include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
 #include "../../src/Runtime/launcher/ChatInputHookCode.h"
+#include "../../src/Runtime/launcher/WeaponTrailHookCode.h"
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -51,12 +54,22 @@ void fixture(const t7::fs::path& path) {
     nt.OptionalHeader.SizeOfStackReserve = 0x100000; nt.OptionalHeader.SizeOfStackCommit = 0x1000;
     nt.OptionalHeader.SizeOfHeapReserve = 0x100000; nt.OptionalHeader.SizeOfHeapCommit = 0x1000;
     nt.OptionalHeader.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+    nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT] = {0x1800, 40};
     std::memcpy(image.data() + dos.e_lfanew, &nt, sizeof(nt));
     IMAGE_SECTION_HEADER section{}; std::memcpy(section.Name, ".fixture", 8);
     section.VirtualAddress = 0x1000; section.Misc.VirtualSize = nt.OptionalHeader.SizeOfImage - 0x1000;
     section.PointerToRawData = 0x200; section.SizeOfRawData = 0x1000;
     section.Characteristics = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_EXECUTE;
     std::memcpy(image.data() + dos.e_lfanew + sizeof(nt), &section, sizeof(section));
+    IMAGE_IMPORT_DESCRIPTOR imports{};
+    imports.OriginalFirstThunk = 0x1830; imports.Name = 0x1840; imports.FirstThunk = 0x1900;
+    std::memcpy(image.data() + 0xA00, &imports, sizeof(imports));
+    const uint32_t importNames[]{0x1860, 0x1870, 0};
+    std::memcpy(image.data() + 0xA30, importNames, sizeof(importNames));
+    std::memcpy(image.data() + 0xB00, importNames, sizeof(importNames));
+    std::memcpy(image.data() + 0xA40, "KERNEL32.dll", 13);
+    std::memcpy(image.data() + 0xA62, "GetTickCount", 13);
+    std::memcpy(image.data() + 0xA72, "Sleep", 6);
     t7::Bytes code;
     auto imm = [&](unsigned char opcode, uint32_t value) { code.push_back(opcode); word(code, value); };
     code.insert(code.end(), {0x89,0x25}); word(code, STATS + 68);
@@ -70,6 +83,9 @@ void fixture(const t7::fs::path& path) {
     imm(0xBB, 0x11223344); imm(0xBE, 0x22334455); imm(0xBF, 0x33445566); imm(0xBD, 0x44556677);
     code.insert(code.end(), {0x89, 0x25}); word(code, STATS); // original ESP
     const auto loop = static_cast<uint32_t>(code.size());
+    code.insert(code.end(), {0x6A,10,0xFF,0x15}); word(code, BASE + 0x1904);
+    code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(1);
+    const auto paused = branch(code, 0x84);
     code.insert(code.end(), {0xD9, 0xE8}); // FLD1
     imm(0xB8, 0x3F800000); code.insert(code.end(), {0x66, 0x0F, 0x6E, 0xC0}); // XMM0 = 1.0
     imm(0xB9, FRAME); code.push_back(0xE8); word(code, t7::GRAPHICS_TICK_RVA - (0x1000 + static_cast<uint32_t>(code.size()) + 4));
@@ -78,6 +94,10 @@ void fixture(const t7::fs::path& path) {
     }
     code.insert(code.end(), {0xD9, 0x1D}); word(code, STATS + 24);
     code.insert(code.end(), {0x66, 0x0F, 0x7E, 0x05}); word(code, STATS + 28);
+    code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(2);
+    const auto running = branch(code, 0x85);
+    code.insert(code.end(), {0xC7,0x05}); word(code, worldFixture::FRAME_GATE); word(code, 1);
+    bind(code, running); bind(code, paused);
     code.push_back(0xE9); word(code, loop - (static_cast<uint32_t>(code.size()) + 4));
     std::memcpy(image.data() + 0x200, code.data(), code.size());
     std::ofstream output(path, std::ios::binary); output.write(reinterpret_cast<const char*>(image.data()), image.size());
@@ -181,18 +201,44 @@ bool verifyGraphicsHookExecution() {
         const auto path = directory / L"GraphicsFixture.exe"; fixture(path);
         const t7::OutputDevice selected{ADAPTER_ORDINAL, ADAPTER_ID, "fixture adapter", true};
         client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE thread) {
-            prepare(process); t7::installOutputDevice(process, BASE, selected);
+            prepare(process); bladeFixture::prepare(process); weaponTrailFixture::prepare(process);
+            t7::installOutputDevice(process, BASE, selected);
+            const auto page = t7::buildWorldHook(0x10000000, BASE, GetThreadId(thread));
+            const auto sweep = t7::buildBladeSweepHook(0x10000000, BASE);
+            require(std::equal(sweep.begin(), sweep.end(), page.begin() + t7::BLADE_SWEEP_CODE_OFFSET),
+                "weapon trail overwrote blade sweep code or constants");
             t7::writeClientMemory(process, BASE + 0x3D1200, {0xCC});
             bool rejected = false;
             try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
             require(rejected, "world accepted an unknown position getter");
             t7::writeClientMemory(process, BASE + 0x3D1200, {0x55});
-            t7::writeClientMemory(process, BASE + 0x400D30, {0xCC});
+            t7::writeClientMemory(process, BASE + 0x64C9D0, {0xCC});
             rejected = false;
-            try { t7::verifyChatInputFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
-            require(rejected, "chat input accepted an unknown text-focus getter");
-            t7::writeClientMemory(process, BASE + 0x400D30, {0x8A});
+            try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "world accepted an unknown life-state getter");
+            t7::writeClientMemory(process, BASE + 0x64C9D0, {0x83});
+            for (const auto& anchor : std::vector<std::pair<uint32_t, uint32_t>>{
+                {0x400D30,0x8A}, {0x3FF3D0,0x55}, {0x3FF3FB,0x80}
+            }) {
+                t7::writeClientMemory(process, BASE + anchor.first, {0xCC});
+                rejected = false;
+                try { t7::verifyChatInputFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+                require(rejected, "chat input accepted an unknown focus function");
+                t7::writeClientMemory(process, BASE + anchor.first, {static_cast<unsigned char>(anchor.second)});
+            }
+            for (const auto& anchor : std::array<std::pair<uint32_t, uint32_t>, 4>{{
+                {0x6EC2D0,0x55}, {0x3735A0,0x56}, {0x373630,0x56}, {0x373A60,0x55}
+            }}) {
+                t7::writeClientMemory(process, BASE + anchor.first, {0xCC});
+                rejected = false;
+                try { t7::verifyWeaponTrailFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+                require(rejected, "weapon trail accepted an unknown native function");
+                t7::writeClientMemory(process, BASE + anchor.first, {static_cast<unsigned char>(anchor.second)});
+            }
             graphics.install(process, BASE, GetThreadId(thread));
+        }, [](const std::string& line) {
+            if (line.find("exception") != std::string::npos || line.find("fault") != std::string::npos
+                || line.find("violation") != std::string::npos) std::cerr << line << '\n';
         });
         t7::GraphicsValues values;
         require(readCompleted(graphics, values, false) == 1 && values.viewDistance == 159 && values.swoosh == 0, "graphics initial snapshot/default");
@@ -239,8 +285,13 @@ bool verifyGraphicsHookExecution() {
         audio.apply(sound);
         require(readAudio(audio, actual, true) == 2 && actual.effectsVolume == 1
             && readWord(client.process(), STATS + 32) == 2, "stale audio write overwrote game changes");
-        worldFixture::verify(client.process(), graphics.world());
+        const auto graphicsEntry = BASE + t7::GRAPHICS_TICK_RVA + 5
+            + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
+        const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;
+        worldFixture::verify(client.process(), graphics.world(), worldMailbox);
         terrainFixture::verify(client.process(), graphics.world());
+        bladeFixture::verify(client.process(), graphics.world(), worldMailbox);
+        weaponTrailFixture::verify(client.process());
         try { sprintFixture::verify(client.process()); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("sprint: ") + error.what()); }
         try { chatInputFixture::verify(client.process(), graphics.world()); }
@@ -268,7 +319,7 @@ bool verifyGraphicsHookExecution() {
         client.check(); client.stop(); graphics.clear();
         require(t7::fs::canonical(directory).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "graphics cleanup boundary");
         t7::fs::remove_all(directory);
-        std::cout << "x86 output device, graphics/audio/world, sprint/chat input, and FPU/SSE preservation passed\n";
+        std::cout << "x86 output device, graphics/audio/world, weapon trail, sprint/chat input, and FPU/SSE preservation passed\n";
         return true;
     } catch (const std::exception& e) {
         try { client.stop(); graphics.clear(); } catch (const std::exception& cleanup) { std::cerr << cleanup.what() << '\n'; }

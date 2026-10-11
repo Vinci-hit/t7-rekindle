@@ -48,6 +48,10 @@
     <ClCompile Include="launcher\SprintHookCode.cpp" />
     <ClCompile Include="launcher\ChatInputHookCode.cpp" />
     <ClCompile Include="launcher\TerrainHookCode.cpp" />
+    <ClCompile Include="launcher\BladePoseHookCode.cpp" />
+    <ClCompile Include="launcher\BladeSweepHookCode.cpp" />
+    <ClCompile Include="launcher\ContactFrameHookCode.cpp" />
+    <ClCompile Include="launcher\WeaponTrailHookCode.cpp" />
     <ClCompile Include="bridge\SessionGraphics.cpp" />
     <ClCompile Include="bridge\SessionAudio.cpp" />
     <ClCompile Include="launcher\StartupGate.cpp" />

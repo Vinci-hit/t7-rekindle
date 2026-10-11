@@ -11,6 +11,7 @@
 #include <utility>
 
 bool verifyJournalContracts(const t7::fs::path& fixtureRoot);
+bool verifyServerEventOrder(const t7::fs::path& fixtureRoot);
 bool verifyDiagnosticLogs(const t7::fs::path& fixtureRoot);
 bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel);
 bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, bool normalExit);
@@ -149,6 +150,7 @@ bool verifySyntheticAuth(const t7::fs::path& packageRoot) {
     std::error_code cleanup;
     t7::fs::remove_all(writableRoot, cleanup);
     t7::Config config;
+    config.runtimeMovement = false; // Transport/world delivery does not require client VFS assets.
     t7::Server server;
     server.start(config, packageRoot, writableRoot);
     std::vector<SOCKET> clients;
@@ -188,9 +190,24 @@ bool verifySyntheticAuth(const t7::fs::path& packageRoot) {
     size_t authenticated = 0;
     for (const auto& client : snapshot.clients) if (client.authenticated) ++authenticated;
     valid = valid && authenticated == clients.size() && clients.size() == 3;
+    for (unsigned frame = 0; frame < 3; ++frame) {
+        t7::WorldSnapshot world;
+        world.ready = true; world.instanceStartedAt = 100; world.sampledAt = GetTickCount64();
+        if (!server.needsWorld()) { valid = false; break; }
+        server.updateWorld(world);
+        const auto deadline = GetTickCount64() + 2000;
+        while (!server.needsWorld() && GetTickCount64() < deadline) Sleep(1);
+        const auto error = server.snapshot().error;
+        if (!error.empty()) std::cerr << "world delivery error: " << error << '\n';
+        valid = valid && server.needsWorld() && error.empty();
+    }
     for (auto client : clients) closesocket(client);
     server.stop();
     auto index = journalIndex(writableRoot);
+    size_t worldEvents = 0, worldAt = 0;
+    while ((worldAt = index.find(" world command=0", worldAt)) != std::string::npos) { ++worldEvents; ++worldAt; }
+    valid = valid && worldEvents == 3 && !server.needsWorld();
+    if (worldEvents != 3) std::cerr << "world event count: " << worldEvents << '\n';
     auto outbound = index.find("\"direction\":\"S2C\"");
     if (outbound == std::string::npos) valid = false;
     else {
@@ -291,6 +308,31 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    const auto dispatched = t7::detail::TimePoint{};
+    const auto committed = dispatched + std::chrono::milliseconds(231);
+    for (const auto* id : {"1:battle-action-phase", "1:bot-action-phase-20", "1:bot-release", "1:combat-hurt-2"}) {
+        if (!t7::detail::animationTimer(id)
+            || t7::detail::timerDeadline(id, dispatched, committed, 640) != committed + std::chrono::milliseconds(640)) {
+            std::cerr << "AI callback time shortened a native animation deadline\n";
+            return 1;
+        }
+    }
+    for (const auto* id : {"", "1:actors-pulse", "1:actors-decision", "1:bot-think-20", "1:bot-move"}) {
+        if (t7::detail::animationTimer(id)
+            || t7::detail::timerDeadline(id, dispatched, committed, 50) != dispatched + std::chrono::milliseconds(50)) {
+            std::cerr << "decision/movement timer was promoted to an animation deadline\n";
+            return 1;
+        }
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"--world") {
+        WSADATA winsock{};
+        if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return 3;
+        int result = 0;
+        try { if (!verifySyntheticAuth(argv[2])) result = 20; }
+        catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 5; }
+        WSACleanup();
+        return result;
+    }
     if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
         return verifyGraphicsHookExecution() ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")
@@ -303,6 +345,7 @@ int wmain(int argc, wchar_t** argv) {
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return 3;
     int result = 0;
     try {
+        if (!verifyServerEventOrder(t7::fs::path(argv[1]))) result = 42;
         if (!verifyFakeBootstrapAdapter()) result = 21;
         if (!verifyJobAssignmentOrder()) result = 15;
         // The embedded interpreter has one process-wide owner.  A second
@@ -330,17 +373,52 @@ int wmain(int argc, wchar_t** argv) {
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
               world.playerHeading = 90.f; world.botHeading = -90.f;
-            world.terrain[0][0].ready = world.terrain[0][0].hit = true;
-            world.terrain[0][0].material = 4;
-            world.terrain[0][0].normal = {-1,0,0};
+            world.actors[0].terrain[0].ready = world.actors[0].terrain[0].hit = true;
+            world.actors[0].terrain[0].material = 4;
+            world.actors[0].terrain[0].normal = {-1,0,0};
+            world.actors[19].ready = true; world.actors[19].position = {12.25f, 8.f, .5f};
+            world.actors[19].targetId = 11;
+            auto& targetTerrain = world.actors[19].targetTerrain;
+            targetTerrain[1].ready = targetTerrain[1].hit = true;
+            targetTerrain[1].material = 3; targetTerrain[1].position = {13.25f, 8.f, 1.5f};
+            targetTerrain[2].ready = true; // A separate clear segment must not inherit the first hit.
+            auto& blade = world.actors[19].blade;
+            blade.ready = true; blade.spanMs = 50; blade.length = 1.03f;
+            blade.base = {12,8,1}; blade.tip = {13.03f,8,1};
+            blade.contacts[2].contact = targetTerrain[1];
+            blade.contacts[2].targetId = 2; blade.contacts[2].time = .25f; blade.contacts[2].along = .75f;
+            world.contactsReady = true; world.contactBatchId = 7; world.contactFrames = 17;
+            t7::BladeContactEvent contactEvent;
+            contactEvent.actorId = 20; contactEvent.entity = 123; contactEvent.sequence = 31;
+            contactEvent.state = 238; contactEvent.hit = blade.contacts[2]; contactEvent.phaseAt = 900;
+            contactEvent.occurredAt = 1187.5; contactEvent.targetState = 223; contactEvent.targetEntity = 456;
+            world.contacts.push_back(contactEvent);
             const auto context = first.context(worldConfig, 1250, {1}, world);
+            for (const char* field : {"\"contactJournal\":[\"dict\",", "\"batchId\":[\"int\",7]",
+                "\"frames\":[\"int\",17]", "\"occurredAt\":[\"float\",1187.5]", "\"phaseAt\":[\"int\",900]",
+                "\"entity\":[\"int\",123]", "\"targetEntity\":[\"int\",456]", "\"targetState\":[\"int\",223]"})
+                if (context.find(field) == std::string::npos) throw std::runtime_error("world context lost contact journal identity/time");
             for (const char* field : {"\"ready\":[\"bool\",true]", "\"sampledAt\":[\"int\",1200]",
                 "\"instanceStartedAt\":[\"int\",1000]", "[\"float\",1.25]", "[\"float\",6.75]",
                   "\"playerHeading\":[\"float\",90.0]", "\"botHeading\":[\"float\",-90.0]",
-                  "\"clientDirectory\":[\"str\",", "synthetic-client", "\"terrain\":[\"list\",",
-                  "\"material\":[\"int\",4]", "\"hit\":[\"bool\",true]", "\"normal\":[\"list\","}) {
+                  "\"clientDirectory\":[\"str\",", "synthetic-client", "\"terrain\":[\"dict\",",
+                    "\"material\":[\"int\",4]", "\"hit\":[\"bool\",true]", "\"normal\":[\"list\",",
+                    "\"blades\":[\"dict\",", "\"spanMs\":[\"int\",50]", "\"contacts\":[\"list\",",
+                    "\"base\":[\"list\",", "\"tip\":[\"list\",", "\"time\":[\"float\",0.25]",
+                    "\"along\":[\"float\",0.75]"}) {
                 if (context.find(field) == std::string::npos) throw std::runtime_error("world Python context lost a field");
             }
+            for (const char* field : {"\"actors\":[\"dict\",", "\"20\":[\"dict\",", "[\"float\",12.25]",
+                                     "\"targetId\":[\"int\",11]"})
+                if (context.find(field) == std::string::npos) throw std::runtime_error("world context lost multi-actor identity");
+            const auto prefix = "\"targetTerrain\":[\"dict\",{\"2\":[\"dict\",";
+            const auto targetsAt = context.find(prefix);
+            if (targetsAt == std::string::npos
+                || context.find("\"material\":[\"int\",3]", targetsAt) == std::string::npos
+                || context.find("[\"float\",13.25]", targetsAt) == std::string::npos
+                || context.find("\"3\":[\"dict\",{\"ready\":[\"bool\",true],\"hit\":[\"bool\",false]", targetsAt) == std::string::npos
+                || context.find("\"targetTerrain\":[\"dict\",{}]") == std::string::npos)
+                throw std::runtime_error("world context lost per-target terrain results");
             bool rejected = false;
             try { t7::PythonHost second(argv[1], ownerRoot); }
             catch (const std::exception&) { rejected = true; }

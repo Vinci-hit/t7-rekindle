@@ -78,7 +78,8 @@ def test_moves_only_bot_and_stops_for_stale_or_wrong_instance(nav):
     moves = [move_flow.decode_move_bc_with_system_and_active(x["body"])
              for x in flow.result["send"] if x["command"] == 2 and x["body"][:2] == b"\0\x26"]
     assert moves and all(x.target_instance_id == 2 for x in moves)
-    assert 0 < math.dist(origin, flow.session["bot"]["position"]) <= 0.251
+    assert tuple(flow.session["bot"]["position"]) == origin
+    assert moves[-1].current_velocity == 3000
     for epoch, age in [(99, 0), (100, 1000)]:
         snapshot(flow, epoch=epoch, age=age)
         tick(flow)
@@ -239,7 +240,7 @@ def test_snapshot_validation_and_state_migration(nav):
         assert bot.world(flow) is None
 
 
-def test_outside_mesh_stops_at_observed_pose_without_pulling_back(nav):
+def test_outside_mesh_turns_toward_nearest_entry_without_pulling_back(nav):
     flow = flowAt()
     snapshot(flow)
     tick(flow)
@@ -251,13 +252,15 @@ def test_outside_mesh_stops_at_observed_pose_without_pulling_back(nav):
     assert packet["reason"] == "bot-stop"
     stopped = move_flow.decode_move_bc_with_system_and_active(packet["body"])
     assert stopped.position == pytest.approx((295., 170., 0.2))
-    assert flow.session["bot"]["status"] == "outside-mesh"
+    assert flow.session["bot"]["status"] == "mesh-return-wait"
+    assert flow.session["bot"]['meshRecovery']['goal'] == pytest.approx((289.649, 170., 0.))
+    assert bot.MOVE_TIMER in flow.session['pending']
 
 
-def test_new_instance_creates_bot_but_disconnect_discards_it():
+def test_new_instance_creates_bot_but_disconnect_discards_it(spawnPoints):
     flow = flowAt(playing=False)
     scene.begin(flow)
-    assert flow.session["bot"]["camp"] == 2 and bot.THINK_TIMER not in flow.session["pending"]
+    assert len(flow.session["bots"]) == 19 and flow.session["bots"]["2"]["camp"] == 2 and bot.THINK_TIMER not in flow.session["pending"]
     state = app.handleEvent({"type": "closed", "connection": 1}, flow.state, flow.context)["state"]
     assert not state["sessions"]
 
@@ -266,11 +269,14 @@ def test_arrival_leaves_serializable_valid_state(nav):
     flow = flowAt()
     snapshot(flow)
     tick(flow)
-    for _ in range(100):
+    origin = list(flow.session['bot']['position'])
+    for index in range(1, 101):
         if bot.MOVE_TIMER not in flow.session["pending"]:
             break
         flow.now += 50
         snapshot(flow)
+        fraction = min(1., index / 40)
+        flow.context['botWorld']['bot'] = [a + (b - a) * fraction for a, b in zip(origin, (280., 157., .2))]
         tick(flow, bot.MOVE_TIMER)
         assert app.validateState(flow.state)
     assert not flow.session["bot"]["path"]

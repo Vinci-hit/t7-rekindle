@@ -6,6 +6,9 @@ from Business.scripts import app, bot, contracts as wire, controls, scene
 from Business.scripts.codec import room_flow
 
 
+pytestmark = pytest.mark.usefixtures("spawnPoints")
+
+
 def instanceFlow():
     state = app.createState({"runtimeMovement": True})
     state["sessions"]["1"] = {"role": "instance", "hydration": [], "pending": {}}
@@ -57,12 +60,14 @@ def test_camp_confirmation_imports_both_members_before_loading(camp):
     flow = instanceFlow()
     packets = selectCamp(flow, camp)
     roster = members(packets)
-    assert set(roster) == {wire.ACTOR_ID, wire.BOT_ID}
+    assert set(roster) == set(range(1, 21))
     assert roster[wire.ACTOR_ID] == (wire.USER_ID, "新玩家", wire.USER_LEVEL, 4, wire.HERO_ID, camp)
-    assert roster[wire.BOT_ID] == (10001, "电脑玩家", 1, 8, wire.HERO_ID, 3 - camp)
+    name = flow.session['bots'][str(wire.BOT_ID)]['name']
+    assert name.startswith('[进攻]测试电脑')
+    assert roster[wire.BOT_ID] == (10001, name, 1, 8, wire.HERO_ID, 3 - camp)
     exchanges = [struct.unpack(">HQiQi", item["body"])[3:]
                  for item in packets if item["command"] == 0x23 and item["body"][:2] == b"\0\6"]
-    assert exchanges == [(wire.ACTOR_ID, camp), (wire.BOT_ID, 3 - camp)]
+    assert exchanges == [(1, camp)] + [(rid, 3 - camp if rid <= 11 else camp) for rid in range(2, 21)]
     # The local actor's established VISION-before-basic-info order stays intact.
     localVision = next(i for i, item in enumerate(packets) if item["command"] == 0xE)
     localMember = next(i for i, item in enumerate(packets) if members([item]).get(wire.ACTOR_ID))
@@ -71,8 +76,8 @@ def test_camp_confirmation_imports_both_members_before_loading(camp):
 
 
 @pytest.mark.parametrize("camp", [1, 2])
-@pytest.mark.parametrize("confirmBeforeCountdown", [False, True])
-def test_loading_vision_is_rebuilt_once_at_battle_entry(camp, confirmBeforeCountdown):
+@pytest.mark.parametrize("confirmBeforeExpiry", [False, True])
+def test_loading_vision_is_rebuilt_once_at_battle_confirmation(camp, confirmBeforeExpiry):
     flow = instanceFlow()
     selectCamp(flow, camp)
     # GET_OBJECTS during loading must not be the bot's only spawn opportunity.
@@ -82,15 +87,22 @@ def test_loading_vision_is_rebuilt_once_at_battle_entry(camp, confirmBeforeCount
     flow.now += 1000
     app.handleTimer(flow, "actor-select")
     message(flow, 0x36, struct.pack(">Hi", 0x32, 1))
-    if confirmBeforeCountdown:
-        entered = message(flow, 0x36, struct.pack(">HHb", 0x64, 1, 0))
-    else:
+    if not confirmBeforeExpiry:
         flow.result["send"].clear()
         flow.now = flow.session["pending"]["round-start"]
         app.handleTimer(flow, "round-start")
-        entered = list(flow.result["send"])
+        assert flow.result["send"] == []
+        assert not flow.session.get("battleEntered")
+        assert "round-game" not in flow.session["pending"]
+    entered = message(flow, 0x36, struct.pack(">HHb", 0x64, 1, 0))
 
-    assert visionEvents(entered) == [(2, 1), (1, 1), (2, 2), (1, 2)]
+    duration = wire.START_MS
+    deadline = flow.now + duration
+    assert "round-start" not in flow.session["pending"]
+    assert flow.session["pending"]["round-game"] == deadline
+    updates = [item["body"] for item in entered if item["command"] == 0xA]
+    assert updates == [wire.roundState(flow.now, 3, duration)]
+    assert visionEvents(entered) == [(event, rid) for rid in range(1, 21) for event in (2, 1)]
     botStates = [struct.unpack(">HIQiQ", item["body"])[1:4] for item in entered
                  if item["command"] == 0x36 and item["body"][:2] == b"\0\1"
                  and struct.unpack_from(">Q", item["body"], 6)[0] == wire.BOT_ID]
@@ -100,14 +112,15 @@ def test_loading_vision_is_rebuilt_once_at_battle_entry(camp, confirmBeforeCount
 
     repeated = message(flow, 0x36, struct.pack(">HHb", 0x64, 1, 0))
     assert visionEvents(repeated) == []
-    if confirmBeforeCountdown:
-        flow.now = flow.session["pending"]["round-start"]
-        app.handleTimer(flow, "round-start")
+    flow.result["send"].clear()
+    app.handleTimer(flow, "round-start")
+    assert flow.result["send"] == []
+    assert flow.session["pending"]["round-game"] == deadline
     flow.result["send"].clear()
     flow.now = flow.session["pending"]["round-game"]
     app.handleTimer(flow, "round-game")
     assert visionEvents(flow.result["send"]) == []
-    assert flow.session["pending"][bot.THINK_TIMER] == flow.now + bot.THINK_MS
+    assert bot.THINK_MS <= flow.session["pending"][bot.THINK_TIMER] - flow.now <= bot.THINK_MS + 350
     assert app.validateState(flow.state)
 
 

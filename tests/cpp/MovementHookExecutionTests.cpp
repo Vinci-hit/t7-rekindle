@@ -11,7 +11,9 @@
 #include <iostream>
 
 namespace {
-constexpr uint32_t BASE = 0x400000, IMAGE_SIZE = 0xA6000, HEADER_SIZE = 0x200;
+constexpr uint32_t BASE = 0x400000, IMAGE_SIZE = 0x6B8000, HEADER_SIZE = 0x200;
+struct CollisionCase { unsigned short actorId; bool selector38; };
+constexpr CollisionCase COLLISION_CASES[]{{0, true}, {1, true}, {2, true}, {12, true}, {20, true}, {21, true}, {65535, true}, {2, false}};
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -41,6 +43,7 @@ struct Fixture {
     uint32_t completed = 0;
 
     void write(const t7::fs::path& path, bool malformed, bool malformedLogin) {
+        require(t7::MOVEMENT_HOOK_SITES.size() == 4, "missing native bot movement adapter");
         using Resource = t7::MovementResource;
         inputs = {
             {"..\\DATA\\BTREE\\T7_RUNTIME_MOVEMENT.BTREE", gbk(movementTreeFixture())},
@@ -91,6 +94,7 @@ struct Fixture {
             t7::Bytes body(site.original.begin(), site.original.end());
             if (i == 0) body.insert(body.end(), {0x8B,0x45,0x08,0x8B,0xE5,0x5D,0xC2,0x08,0});
             if (i == 2) body.push_back(0x58); // consume the original push esi
+            if (i == 3) body.insert(body.end(), {0xFF,0x50,0x08,0x8B,0x03,0x57,0x8B,0xCB,0xFF,0x50,0x08}); // Pos, then Move
             if (i != 0) body.push_back(0xC3);
             put(site.rva, body);
         }
@@ -124,6 +128,30 @@ struct Fixture {
                 call(t7::MOVEMENT_HOOK_SITES[0].rva); store(0x05, input.result + 16 + flag * 4);
             }
         }
+        t7::Bytes compositeTable(12, 0), positionTable;
+        const uint32_t enqueue = BASE + 0x2400;
+        std::memcpy(compositeTable.data() + 8, &enqueue, 4);
+        word(positionTable, BASE + 0x2440);
+        put(0x2300, compositeTable); put(0x2310, positionTable);
+        put(0x2400, {0xFF,0x41,0x14,0x8B,0x44,0x24,0x04,0x89,0x41,0x18,0xC2,0x04,0}); // count and remember queued command
+        put(0x2440, {0xFF,0x41,0x04,0x8B,0x44,0x24,0x04,0x89,0x41,0x08,0xC2,0x04,0}); // deleting destructor
+        for (size_t i = 0; i < std::size(COLLISION_CASES); ++i) {
+            const auto& item = COLLISION_CASES[i];
+            const auto composite = BASE + 0x2600 + static_cast<uint32_t>(i) * 32;
+            const auto position = BASE + 0x2800 + static_cast<uint32_t>(i) * 32;
+            const auto result = BASE + 0x2A00 + static_cast<uint32_t>(i) * 32;
+            t7::Bytes object; word(object, BASE + 0x2300); object.resize(32, 0);
+            std::memcpy(object.data() + 0x10, &item.actorId, 2); put(composite - BASE, object);
+            object.clear(); word(object, BASE + 0x2310); object.resize(32, 0); put(position - BASE, object);
+            code.insert(code.end(), {0xC7,0x45,0x04}); word(code, BASE + (item.selector38 ? 0x6B65F2 : 0x6B6000));
+            code.push_back(0xBB); word(code, composite);
+            code.push_back(0xBE); word(code, position);
+            code.push_back(0xBF); word(code, 0x12345678);
+            store(0x25, result); // ESP before/after must agree on both branches.
+            call(t7::MOVEMENT_HOOK_SITES.back().rva);
+            store(0x25, result + 4); store(0x1D, result + 8);
+            store(0x35, result + 12); store(0x3D, result + 16);
+        }
         completed = BASE + 0x1000 + static_cast<uint32_t>(code.size());
         code.insert(code.end(), {0xCC,0xEB,0xFE}); put(0x1000, code);
         std::ofstream output(path, std::ios::binary);
@@ -132,6 +160,20 @@ struct Fixture {
     }
 
     void verify(HANDLE process, bool skipStartupAnimation) const {
+        for (size_t i = 0; i < std::size(COLLISION_CASES); ++i) {
+            const auto& item = COLLISION_CASES[i];
+            const auto composite = BASE + 0x2600 + static_cast<uint32_t>(i) * 32;
+            const auto position = BASE + 0x2800 + static_cast<uint32_t>(i) * 32;
+            const auto result = BASE + 0x2A00 + static_cast<uint32_t>(i) * 32;
+            const auto omitted = item.selector38 && item.actorId >= 2 && item.actorId <= 20;
+            require(readWord(process, composite + 0x14) == (omitted ? 1u : 2u), "wrong native position command ownership");
+            require(readWord(process, composite + 0x18) == 0x12345678, "native MoveCommand was not retained");
+            require(readWord(process, position + 4) == (omitted ? 1u : 0u), "omitted position command was not released exactly once");
+            require(readWord(process, position + 8) == (omitted ? 1u : 0u), "position destructor must release native pool storage");
+            require(readWord(process, result) == readWord(process, result + 4), "collision adapter changed stack balance");
+            require(readWord(process, result + 8) == composite && readWord(process, result + 12) == position
+                && readWord(process, result + 16) == 0x12345678, "collision adapter changed nonvolatile registers");
+        }
         for (const auto& input : inputs) {
             const auto resource = t7::movementResourceForPath(input.path);
             const auto startupAnimation = skipStartupAnimation && t7::isStartupAnimationResourcePath(input.path);
