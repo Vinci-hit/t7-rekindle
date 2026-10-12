@@ -334,6 +334,8 @@ int wmain(int argc, wchar_t** argv) {
         WSACleanup();
         return result;
     }
+    if (argc == 3 && std::wstring(argv[1]) == L"--audio-session")
+        return verifyAudioSession(t7::fs::path(argv[2])) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
         return verifyGraphicsHookExecution() ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")

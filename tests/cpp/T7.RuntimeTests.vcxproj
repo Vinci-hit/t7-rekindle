@@ -12,7 +12,7 @@
   <PropertyGroup><TargetName>T7.RuntimeTests</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><PreprocessorDefinitions>T7_NATIVE_BRIDGE_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
-    <Link><SubSystem>Console</SubSystem><AdditionalDependencies>python314.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+    <Link><SubSystem>Console</SubSystem><AdditionalDependencies>python314.lib;ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ServerLifecycleSmoke.cpp" />
@@ -37,6 +37,7 @@
     <ClCompile Include="../../src/Runtime/launcher/GraphicsValues.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />

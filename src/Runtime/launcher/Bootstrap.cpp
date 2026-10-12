@@ -4,6 +4,7 @@
 #include "EndpointStorage.h"
 #include "ClientPath.h"
 #include "MovementOverlay.h"
+#include "AudioDiagnostics.h"
 #include <sstream>
 #include <utility>
 
@@ -208,6 +209,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
     if (process_ || debugClient_) stop();
     if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
     check(directory, config, log);
+    if (log) logAudioEnvironment([&](std::string message) { log(DiagnosticLogLevel::Debug, std::move(message)); });
     outputDevice_ = resolveOutputDevice(config.outputDevice);
     outputDeviceVerified_ = !outputDevice_.selected;
     if (adapting) adapting();

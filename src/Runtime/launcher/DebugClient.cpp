@@ -1,4 +1,5 @@
 #include "DebugClient.h"
+#include "AudioDiagnostics.h"
 #include <algorithm>
 #include <cwctype>
 #include <cstring>
@@ -302,6 +303,13 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                     const auto name = fs::path(path).filename().wstring();
                     if (log) log(DiagnosticLogLevel::Debug, "Client module load: " + utf8(name) + "; PID=" + std::to_string(event.dwProcessId)
                                  + "; role=" + roleName(state.role));
+                    if (log && isAudioDiagnosticModule(name)) {
+                        std::string version;
+                        try { version = describeAudioModuleVersion(eventFile); }
+                        catch (const std::exception&) { version = "version=unknown; reason=probe-exception"; }
+                        log(DiagnosticLogLevel::Debug, "Audio module observed; name=" + utf8(name) + "; " + version
+                            + "; PID=" + std::to_string(event.dwProcessId) + "; role=" + roleName(state.role));
+                    }
                     if (forbidden(name)) throw std::runtime_error("TP module reached loader; stopped before initialization: " + utf8(name));
                     const auto registration = registeredModules.find(path);
                     if (!inputMethodCompatible && registration != registeredModules.end()

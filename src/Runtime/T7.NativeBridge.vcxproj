@@ -27,7 +27,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>bridge\T7NativeBridge.def</ModuleDefinitionFile>
-      <AdditionalDependencies>python314.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>python314.lib;ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -42,6 +42,7 @@
     <ClCompile Include="launcher\GraphicsValues.cpp" />
     <ClCompile Include="launcher\GraphicsHookCode.cpp" />
     <ClCompile Include="launcher\AudioSettings.cpp" />
+    <ClCompile Include="launcher\AudioDiagnostics.cpp" />
     <ClCompile Include="launcher\AudioHookCode.cpp" />
     <ClCompile Include="launcher\ClientWorld.cpp" />
     <ClCompile Include="launcher\WorldHookCode.cpp" />
@@ -82,6 +83,7 @@
     <ClInclude Include="core\PlayerName.h" />
     <ClInclude Include="core\Protocol.h" />
     <ClInclude Include="launcher\Bootstrap.h" />
+    <ClInclude Include="launcher\AudioDiagnostics.h" />
     <ClInclude Include="launcher\ClientWindowMonitor.h" />
     <ClInclude Include="launcher\OutputDevice.h" />
     <ClInclude Include="launcher\StartupGate.h" />
