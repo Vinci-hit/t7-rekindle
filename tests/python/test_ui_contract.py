@@ -186,7 +186,8 @@ def test_about_page_has_real_metadata_and_project_entry_points():
     assert repository_button.attrib["AutomationProperties.Name"] == "项目源代码仓库"
     assert _find(repository_button, "TextBlock")[0].attrib["Text"] == "项目源代码仓库"
     texts = {block.attrib.get("Text") for block in _find(about, "TextBlock")}
-    assert {"关于", "{Binding ProjectName}", "{Binding ProjectDescription}", "{Binding ShortHash}"} <= texts
+    assert {"关于", "{Binding ProjectName}", "{Binding ProjectDescription}", "{Binding ShortHash}", "{Binding DisplayVersion}"} <= texts
+    assert "{Binding Version}" not in texts
     assert "常用入口" not in texts
     assert named["AboutContent"].attrib["SizeChanged"] == "OnContentSizeChanged"
     assert named["AboutScroll"].attrib["HorizontalScrollBarVisibility"] == "Disabled"

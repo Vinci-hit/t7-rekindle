@@ -20,7 +20,7 @@ namespace T7.Rekindle.Desktop.Services
         {
             var report = new StringBuilder();
             report.AppendLine("T7-Rekindle 环境信息 · " + DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture))
-                .AppendLine("启动器：" + LauncherInformation.Version + " · 进程 " + (Environment.Is64BitProcess ? "x64" : "x86")
+                .AppendLine("启动器：" + LauncherInformation.DisplayVersion + " · 进程 " + (Environment.Is64BitProcess ? "x64" : "x86")
                     + " · " + LauncherInformation.ShortHash);
             AppendSection(report, "系统", ReadOperatingSystem);
             AppendSection(report, "CPU", ReadCpu);

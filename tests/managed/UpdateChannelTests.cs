@@ -55,6 +55,9 @@ namespace T7.ManagedHarness
                     }
                 }
             foreach (var current in new[] { Preview(11), Preview(), Preview(12, 2), Preview(13),
+                new LauncherBuild(UpdateChannel.Preview, "v9.0.0", 111, 11, 1, new string('a', 40)),
+                new LauncherBuild(UpdateChannel.Preview, "v9.0.0", 112, 12, 1, new string('a', 40)),
+                new LauncherBuild(UpdateChannel.Preview, "v0.0.1", 113, 13, 1, new string('a', 40)),
                 new LauncherBuild(UpdateChannel.Stable, "v9.0.0"), new LauncherBuild(UpdateChannel.Preview, "v9.0.0") })
             {
                 using (var handler = new UpdateResponseHandler((request, token) =>
@@ -68,8 +71,11 @@ namespace T7.ManagedHarness
                     var info = await new ReleaseUpdateService(client, UpdateFixtures.Repository, UpdateFixtures.Mirror)
                         .CheckAsync(current, UpdateChannel.Preview);
                     var expected = current.Channel == UpdateChannel.Stable || current.RunNumber == 0 || current.RunNumber < 12;
+                    var ahead = current.Channel == UpdateChannel.Preview
+                        && (current.RunNumber > 12 || (current.RunNumber == 12 && current.RunAttempt > 1));
                     Assert(info.IsNewVersion == expected && info.Channel == UpdateChannel.Preview
-                        && info.Installer.FallbackAddress == null && info.TargetDisplayVersion == "v0.1.0p12.1"
+                        && info.IsCurrentVersionAhead == ahead && info.CurrentVersion == current.Version && info.TargetVersion == "v0.1.0"
+                        && info.Installer.FallbackAddress == null && info.TargetDisplayVersion == "p12.1"
                         && info.UpdateIdentity == "preview:112:1", "preview identity/comparison failed");
                 }
             }
@@ -116,11 +122,14 @@ namespace T7.ManagedHarness
         private static void TestDisplayVersion()
         {
             var preview = Preview(128, 2);
-            Assert(preview.DisplayVersion == "v0.1.0p128.2" && Preview(128).DisplayVersion == "v0.1.0p128.1",
-                "preview display version did not use the compact format without a hyphen or hash");
+            Assert(preview.DisplayVersion == "p128.2" && Preview(128).DisplayVersion == "p128.1",
+                "preview display version did not use only the build number and attempt");
+            Assert(new LauncherBuild(UpdateChannel.Preview, "v0.4.0", preview.RunId, preview.RunNumber,
+                preview.RunAttempt, preview.CommitHash).DisplayVersion == preview.DisplayVersion,
+                "numeric base version changed the preview display version");
             Assert(preview.Version == "v0.1.0" && preview.Identity == "preview:228:2" && preview.CommitHash == new string('a', 40),
                 "compact display changed the numeric version, build identity or stored commit hash");
-            Assert(new LauncherBuild(UpdateChannel.Stable, "v0.1.0").DisplayVersion == "v0.1.0",
+            Assert(new LauncherBuild(UpdateChannel.Stable, "v0.4.0").DisplayVersion == "v0.4.0",
                 "compact preview format changed the stable version");
             Assert(new LauncherBuild(UpdateChannel.Preview, "v0.1.0").DisplayVersion == "v0.1.0 · 开发构建",
                 "preview without CI identity fabricated a build number");
