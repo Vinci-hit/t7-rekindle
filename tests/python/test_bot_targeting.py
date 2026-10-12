@@ -54,7 +54,7 @@ def test_repeated_damage_switches_to_the_visible_attacker_and_releases_old_plans
     assert value['targetSince'] == engaged.now
     assert 'routeGoal' not in value and 'pressAt' not in value and not value['path']
     assert value['action'] == action and engaged.session['pending'][combat.hurtTimer(2)] == hurtDeadline
-    assert any('bot-target actor=2 from=1 to=12' in line for line in engaged.result['logs'])
+    assert any('bot-target actor=2 from=1 to=12' in line["message"] for line in engaged.result['logs'])
 
 
 def test_switch_cooldown_prevents_immediate_bounce_but_not_a_later_reassessment(engaged):

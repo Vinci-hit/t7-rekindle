@@ -174,13 +174,13 @@ namespace T7.Rekindle.Desktop.Views
             try { _openAddress(RuntimeDownloadAddress); }
             catch (Exception error)
             {
-                new LogService().Info("打开 WebView2 下载页面失败（" + error.GetType().Name + "）");
+                new LogService().Error("打开 WebView2 下载页面失败（" + error.GetType().Name + "）", null);
                 RuntimeHelp.Text = "下载页未打开。请在系统浏览器中访问：" + RuntimeDownloadAddress;
             }
         }
         private void Report(Exception error)
         {
-            new LogService().Info("QQ 登录窗口加载失败（" + error.GetType().Name + "）");
+            new LogService().Error("QQ 登录窗口加载失败（" + error.GetType().Name + "）", null);
             ShowLoadError("QQ 登录页面暂未就绪", "请重新加载登录页；若仍有问题，请关闭窗口后重试。");
         }
         private void OnKeyDown(object sender, KeyEventArgs e)

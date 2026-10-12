@@ -226,7 +226,9 @@ namespace T7.ManagedHarness
                     && !previous.PrimaryCommand.CanExecute(null), "channel switch reused old result or installer");
                 pending.SetResult(PreviewInfo());
                 RunTask(model.About.CheckUpdateCommand.ExecutionTask);
-                Assert(model.About.UpdateChannelText == "预览渠道" && model.About.UpdateReminderVersion == "v0.1.0p12.1",
+                Assert(model.About.UpdateChannelText == "预览渠道" && model.About.UpdateReminderVersion == "p12.1"
+                    && model.About.UpdateVersion == "p12.1" && model.About.UpdateDescription == "可用版本 p12.1"
+                    && model.About.VersionCapsuleHint.Contains("p12.1"),
                     "preview UI identity was lost");
                 pending = new TaskCompletionSource<LauncherUpdateInfo>();
                 model.IsSettingsSelected = true;

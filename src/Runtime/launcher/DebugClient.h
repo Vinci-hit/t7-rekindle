@@ -1,4 +1,5 @@
 #pragma once
+#include "../core/DiagnosticLog.h"
 #include "RemoteImage.h"
 #include "InputMethodRegistry.h"
 #include <atomic>
@@ -28,7 +29,7 @@ public:
     void start(const fs::path& executable, const std::string& imageHash,
                const std::vector<DllEntryRule>& rules,
                const std::function<void(HANDLE, HANDLE)>& prepare,
-               const std::function<void(std::string)>& log = {},
+               const DiagnosticLogCallback& log = {},
                const std::function<bool()>& cancelled = {},
                const std::vector<ChildImageRule>& children = {},
                const std::function<bool(DWORD, uintptr_t)>& breakpoint = {},

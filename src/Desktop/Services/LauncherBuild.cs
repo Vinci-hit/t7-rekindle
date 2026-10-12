@@ -38,7 +38,7 @@ namespace T7.Rekindle.Desktop.Services
             : "preview:" + RunId.ToString(CultureInfo.InvariantCulture) + ":" + RunAttempt.ToString(CultureInfo.InvariantCulture);
         internal string DisplayVersion => Channel == UpdateChannel.Stable ? Version
             : !HasPreviewIdentity ? Version + " · 开发构建"
-            : Version + "p" + RunNumber.ToString(CultureInfo.InvariantCulture) + "." + RunAttempt.ToString(CultureInfo.InvariantCulture);
+            : "p" + RunNumber.ToString(CultureInfo.InvariantCulture) + "." + RunAttempt.ToString(CultureInfo.InvariantCulture);
 
         internal void ApplyTo(LauncherUpdateInfo info)
         {

@@ -55,7 +55,7 @@ def test_wall_and_enemy_are_resolved_in_sweep_contact_order(arena, first, second
     trace(arena, [contact(second, time=.8), contact(first, time=.2)])
     sample(arena)
     assert hp(arena, 2) == health
-    assert any("combat-terrain" in log for log in arena.result["logs"])
+    assert any("combat-terrain" in log["message"] for log in arena.result["logs"])
 
 
 def test_contact_feedback_uses_the_native_point_and_normal(arena):

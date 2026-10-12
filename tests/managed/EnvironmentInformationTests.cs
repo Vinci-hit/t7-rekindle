@@ -23,6 +23,10 @@ namespace T7.ManagedHarness
 
         private static void TestReport()
         {
+            var collected = RuntimeEnvironmentInformation.CollectAsync();
+            LauncherTests.RunTask(collected);
+            Assert(collected.Result.Contains("\r\n启动器：" + LauncherInformation.DisplayVersion + " · 进程 "),
+                "environment report omitted the installed display version");
             Assert(RuntimeEnvironmentInformation.DescribeFrameworkRelease(null).Contains("未检出"), "missing Framework release was accepted");
             Assert(RuntimeEnvironmentInformation.DescribeFrameworkRelease(528039).Contains("低于 4.8"), "old Framework was accepted");
             Assert(RuntimeEnvironmentInformation.DescribeFrameworkRelease(528040) == "4.8 · Release 528040", "Framework 4.8 lower bound was rejected");
@@ -162,7 +166,7 @@ namespace T7.ManagedHarness
             var root = (FrameworkElement)dialog.Content;
             var loading = model.RefreshCommand.ExecuteAsync(null);
             LauncherLayoutTests.Render(root, null, outputDirectory, "environment-loading", 684, 581);
-            var text = new StringBuilder("T7-Rekindle 环境信息 · 2026-10-05 22:40:27 +08:00\r\n启动器：v0.1.0 · 进程 x64 · 提交未记录\r\n");
+            var text = new StringBuilder("T7-Rekindle 环境信息 · 2026-10-05 22:40:27 +08:00\r\n启动器：p128.2 · 进程 x64 · 提交未记录\r\n");
             RuntimeEnvironmentInformation.AppendSection(text, "系统", () => "Windows 11 Pro 25H2 · 64 位 · Build 26200.8875");
             RuntimeEnvironmentInformation.AppendSection(text, "CPU", () => "Test processor · 16 逻辑处理器");
             RuntimeEnvironmentInformation.AppendSection(text, "内存", () => "32.0 GiB · 可用 16.0 GiB · 使用率 50%");

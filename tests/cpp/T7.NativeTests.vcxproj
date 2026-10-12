@@ -10,20 +10,23 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\..\Native.Common.props" />
   <PropertyGroup><TargetName>T7.NativeTests</TargetName></PropertyGroup>
-  <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
+  <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem><AdditionalDependencies>ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AbiLayoutTests.cpp" />
     <ClCompile Include="GraphicsSettingsTests.cpp" />
+    <ClCompile Include="AudioDiagnosticsTests.cpp" />
     <ClCompile Include="OutputDeviceTests.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/OutputDevice.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsValues.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/RoundEndHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/TerrainHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/BladePoseHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/BladeSweepHookCode.cpp" />

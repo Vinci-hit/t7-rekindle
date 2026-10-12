@@ -39,6 +39,10 @@ enum T7NativeErrorCode : uint32_t {
     T7NB_ERROR_CLIENT_EXIT = 1003
 };
 
+enum T7NativeLogLevel : uint32_t {
+    T7NB_LOG_DEBUG = 0, T7NB_LOG_INFO = 1, T7NB_LOG_WARN = 2, T7NB_LOG_ERROR = 3
+};
+
 enum T7NativeOperationKind : uint32_t {
     T7NB_OPERATION_NONE = 0,
     T7NB_OPERATION_CHECK = 1,
@@ -179,6 +183,8 @@ static_assert(sizeof(T7NativeGraphicsSnapshot) == 64, "T7NativeGraphicsSnapshot 
 static_assert(sizeof(T7NativeAudioSnapshot) == 40, "T7NativeAudioSnapshot ABI changed");
 
 extern "C" {
+// Applies immediately to subsequent diagnostics; journal data is not filtered.
+T7NB_EXPORT int32_t T7NB_CALL t7_native_set_log_level(T7NativeSessionHandle session, uint32_t level);
 // identifier is the 16-byte D3D9 DeviceIdentifier; all zero selects the system default.
 // Copied into subsequent Check/Start commands; does not change a running device.
 T7NB_EXPORT int32_t T7NB_CALL t7_native_set_output_device(T7NativeSessionHandle session, const uint8_t* identifier, uint32_t length);

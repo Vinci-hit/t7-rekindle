@@ -53,6 +53,8 @@ namespace T7.ManagedHarness
             merged.Remove("updateChannel");
             Assert((string)merged["outputDeviceId"] == "", "legacy settings did not default to the system output device");
             merged.Remove("outputDeviceId");
+            Assert((string)merged["logLevel"] == "INFO", "legacy settings did not default to INFO logs");
+            merged.Remove("logLevel");
             Assert(JToken.DeepEquals(merged, original) && loaded.PlayerName == "保留玩家" && loaded.SkipStartupAnimation,
                 "channel migration lost unrelated settings");
             Assert(JToken.DeepEquals(JObject.Parse(File.ReadAllText(Path.Combine(directory, "settings.json.bak"), Encoding.UTF8)), original),

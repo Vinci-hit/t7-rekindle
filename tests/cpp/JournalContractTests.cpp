@@ -5,10 +5,32 @@
 #include <thread>
 
 namespace {
+bool verifyLevels(const t7::fs::path& root) {
+    auto filter = std::make_shared<t7::DiagnosticLogFilter>();
+    t7::Journal journal(root, 64 * 1024 * 1024, 160, filter);
+    for (uint32_t minimum = 0; minimum <= 3; ++minimum) {
+        filter->minimum.store(static_cast<t7::DiagnosticLogLevel>(minimum));
+        for (uint32_t level = 0; level <= 3; ++level) {
+            const auto before = journal.lines().size();
+            journal.add(static_cast<t7::DiagnosticLogLevel>(level), "BUSINESS", 1, "fixture", "matrix");
+            if (journal.lines().size() != before + (level >= minimum ? 1u : 0u)) return false;
+        }
+    }
+    journal.stop();
+    std::ifstream index(root / "frames-1.jsonl");
+    std::string line;
+    unsigned count = 0;
+    while (std::getline(index, line)) {
+        if (line.find("\"reason\":\"matrix\"") == std::string::npos) return false;
+        ++count;
+    }
+    return count == 16 && journal.lines().size() == 10;
+}
+
 bool verifyFinalRecords(const t7::fs::path& root) {
     t7::Journal journal(root);
     t7::fs::create_directory(root / "frames-1.bin");
-    journal.add("ERROR", 42, "synthetic", "fixture business failure");
+    journal.add(t7::DiagnosticLogLevel::Error, "ERROR", 42, "synthetic", "fixture business failure");
     const auto original = journal.lines().front();
     journal.stop();
     journal.stop();
@@ -19,7 +41,7 @@ bool verifyFinalRecords(const t7::fs::path& root) {
             return line.find("  ERROR  [Journal] LOG FAILURE:") == 19;
         })
         && std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
-            return line.find("  WARNING  [Journal] WIRE COVERAGE INCOMPLETE:") == 19;
+            return line.find("  WARN  [Journal] WIRE COVERAGE INCOMPLETE:") == 19;
         });
 }
 
@@ -27,7 +49,7 @@ bool verifyWriteFailure(const t7::fs::path& root) {
     t7::Journal journal(root);
     t7::fs::create_directory(root / "frames-1.bin");
     for (unsigned i = 0; i < 20000; ++i) {
-        journal.add("TEST", i, "synthetic", "queued");
+        journal.add(t7::DiagnosticLogLevel::Info, "TEST", i, "synthetic", "queued");
         if (i % 100 == 0) {
             const auto lines = journal.lines();
             if (std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
@@ -83,7 +105,8 @@ bool verifyRetention(const t7::fs::path& data) {
 }
 
 bool verifyJournalContracts(const t7::fs::path& fixtureRoot) {
-    return verifyWriteFailure(fixtureRoot / "journal-failure")
+    return verifyLevels(fixtureRoot / "journal-levels")
+        && verifyWriteFailure(fixtureRoot / "journal-failure")
         && verifyFinalRecords(fixtureRoot / "journal-final-records")
         && verifyRetention(fixtureRoot / "history-retention");
 }

@@ -125,7 +125,7 @@ def sense(flow, nav, snapshot, actorId):
         else:
             value['targetSince'] = flow.now
         damage = bot_tactics.threatDamage(value, targetId, flow.now)
-        flow.result['logs'].append(f'bot-target actor={actorId} from={current} to={targetId} damage={damage:.1f}')
+        flow.log("DEBUG", f'bot-target actor={actorId} from={current} to={targetId} damage={damage:.1f}')
     value['opponentId'] = targetId
     if targetId is None:
         return None

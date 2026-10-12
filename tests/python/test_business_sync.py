@@ -252,7 +252,7 @@ try:
     context = host_runtime.encode({'nowMs': deadline, 'connections': [1]})
     event = timer[2]
     state, sends, timers, logs = runtime.dispatch(event, state, context)
-    assert [packet['reason'] for packet in sends][-2:] == ['instance-round-state-end', 'instance-finish-game']
+    assert [packet['reason'] for packet in sends][-3:] == ['instance-round-state-end', 'instance-settlement', 'instance-finish-game']
     session = host_runtime.decode(state)['sessions']['1']
     assert session['roundEnded'] and not session['groundEnabled'] and not session['pending']
     assert runtime.dispatch(event, state, context)[1:3] == ([], [])

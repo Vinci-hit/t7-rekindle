@@ -99,6 +99,15 @@ def prepare_runtime_fixture(python_home: Path) -> Path:
     try:
         shutil.copytree(ROOT / "src/Business", fixture / "Business",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('vfs_fixture', ROOT / 'tests/python/vfs_fixture.py')
+        resources = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(resources)
+        _, digest = resources.writeClient(fixture / 'synthetic-client')
+        # Only the generated test package accepts the synthetic navigation mesh.
+        navigation = fixture / 'Business/scripts/navmesh_resource.py'
+        with navigation.open('a', encoding='utf-8') as target:
+            target.write(f'\nNAV_HASH = {digest!r}\n')
         python_root = fixture / "python"
         python_root.mkdir()
         archive = python_home / "python314.zip"

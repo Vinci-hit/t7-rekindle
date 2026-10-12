@@ -5,6 +5,9 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "T7.Core", "src\Core\T7.Core.csproj", "{4F2D3D28-6D00-4F12-9F5B-0A7DE8C9F001}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "T7.Desktop", "src\Desktop\T7.Desktop.csproj", "{4F2D3D28-6D00-4F12-9F5B-0A7DE8C9F002}"
+	ProjectSection(ProjectDependencies) = postProject
+		{4F2D3D28-6D00-4F12-9F5B-0A7DE8C9F003} = {4F2D3D28-6D00-4F12-9F5B-0A7DE8C9F003}
+	EndProjectSection
 EndProject
 Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "T7.NativeBridge", "src\Runtime\T7.NativeBridge.vcxproj", "{4F2D3D28-6D00-4F12-9F5B-0A7DE8C9F003}"
 EndProject

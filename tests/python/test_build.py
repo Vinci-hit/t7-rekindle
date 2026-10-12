@@ -93,6 +93,11 @@ def test_runtime_fixture_includes_standard_library_extensions(tmp_path, embedded
     business = tmp_path / "src/Business"
     business.mkdir(parents=True)
     (business / "sample.py").write_text("", encoding="utf-8")
+    (business / "scripts").mkdir()
+    (business / "scripts/navmesh_resource.py").write_text('NAV_HASH = "production"\n', encoding="utf-8")
+    resource_fixture = tmp_path / "tests/python/vfs_fixture.py"
+    resource_fixture.parent.mkdir(parents=True)
+    resource_fixture.write_bytes((ROOT / "tests/python/vfs_fixture.py").read_bytes())
     python_home = tmp_path / "toolchain"
     python_home.mkdir()
     if embedded:
@@ -113,6 +118,8 @@ def test_runtime_fixture_includes_standard_library_extensions(tmp_path, embedded
         assert (fixture / "python" / name).read_bytes() == name.encode("ascii")
     assert (fixture / "python314.dll").read_bytes() == b"runtime"
     assert not (fixture / "python/python314.dll").exists()
+    assert (fixture / "synthetic-client/vfs/map.vfs").read_bytes()[:4] == bytes.fromhex("9010ba22")
+    assert (business / "scripts/navmesh_resource.py").read_text(encoding="utf-8") == 'NAV_HASH = "production"\n'
 
 
 def test_native_tests_support_matching_solution_configurations():
@@ -156,6 +163,19 @@ def test_desktop_declares_the_x64_solution_platform():
     platforms = project.findtext("PropertyGroup/Platforms", default="AnyCPU").split(";")
     assert "x64" in platforms
     assert project.findtext("PropertyGroup/PlatformTarget") == "x64"
+
+
+def test_solution_builds_native_bridge_before_desktop():
+    namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
+    native = ET.parse(ROOT / "src/Runtime/T7.NativeBridge.vcxproj").getroot()
+    guid = native.findtext(".//m:ProjectGuid", namespaces=namespace)
+    solution = (ROOT / "T7-Rekindle.sln").read_text(encoding="utf-8")
+    desktop = next(project for project in solution.split("\nEndProject\n")
+                   if ' = "T7.Desktop",' in project)
+    section = "ProjectSection(ProjectDependencies) = postProject"
+    assert section in desktop, "Desktop must wait for NativeBridge before copying its DLL"
+    dependencies = desktop.split(section, 1)[1].split("EndProjectSection", 1)[0]
+    assert f"{guid} = {guid}" in dependencies
 
 
 def test_each_managed_project_has_a_complete_nuget_lock_file():

@@ -25,10 +25,12 @@ namespace T7.ManagedHarness
             TestVersionCapsuleNavigation(directory);
             TestConstructionNavigation(directory, output);
             TestClientDownloadCard(directory, output);
+            TestLogDirectoryCard(directory, output);
             TestSettingsAccessibility(directory, output);
             TestGameSettingsPersistence(directory);
             TestDialogs(output);
             DiagnosticLogTests.Run(directory, output);
+            LogLevelTests.Run(directory, output);
         }
 
         private static void TestConstructionNavigation(string directory, string output)
@@ -137,6 +139,54 @@ namespace T7.ManagedHarness
                     interaction.CopyText(string.Empty);
                     copyAddress();
                     Assert(interaction.Text == address, "browser failure copied the wrong client download address");
+                }
+                finally
+                {
+                    window.DataContext = null;
+                    window.Close();
+                }
+            }
+        }
+
+        private static void TestLogDirectoryCard(string directory, string output)
+        {
+            var interaction = new FakeDesktopInteraction();
+            using (var model = CreateModel(Path.Combine(directory, "log-directory"), interaction: interaction))
+            {
+                RunTask(model.ValidationTask);
+                var window = new MainWindow { DataContext = model };
+                try
+                {
+                    model.IsAboutSelected = true;
+                    var page = (AboutPage)window.FindName("ProjectPage");
+                    var button = (Button)page.FindName("LogDirectoryButton");
+                    Assert(button != null, "log directory card is missing");
+                    var root = (FrameworkElement)window.Content;
+                    foreach (var size in new[] { new Size(1200, 900), new Size(960, 720) })
+                    {
+                        LauncherLayoutTests.Render(root, window, null, "log-directory", size.Width, size.Height);
+                        button.BringIntoView();
+                        Pump();
+                        LauncherLayoutTests.Render(root, window, output, "about-log-directory-" + size.Width, size.Width, size.Height);
+                        LauncherLayoutTests.AssertWithin(button, root, size.Width, size.Height);
+                    }
+                    Assert(button.IsTabStop && button.Focusable && button.Command == model.OpenLogsCommand
+                        && button.Command.CanExecute(null)
+                        && System.Windows.Automation.AutomationProperties.GetName(button) == "日志目录",
+                        "log directory card lost its existing command or accessibility");
+                    Assert(interaction.Text == null, "opening the about page unexpectedly opened the log directory");
+                    var invoke = (IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke);
+                    invoke.Invoke();
+                    Pump();
+                    Assert(interaction.Text == MainWindowViewModel.LogDirectory && model.IsAboutSelected,
+                        "log directory card did not open the local logs directory");
+                    interaction.LogDirectoryError = new IOException("fixture directory unavailable");
+                    invoke.Invoke();
+                    Pump();
+                    Assert(interaction.Text.Contains("打开日志目录失败")
+                        && interaction.Text.Contains(MainWindowViewModel.LogDirectory)
+                        && interaction.Text.Contains("fixture directory unavailable"),
+                        "log directory failure lost its explanation or manual-access path");
                 }
                 finally
                 {

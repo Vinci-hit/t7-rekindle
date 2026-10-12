@@ -2,6 +2,8 @@
 #include "../core/Common.h"
 #include "../core/DiagnosticLog.h"
 #include "../core/PlayerName.h"
+#include "../server/PythonHost.h"
+#include "../server/RunDirectory.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -91,6 +93,14 @@ void Session::requestClose() noexcept {
 void Session::startWorker() {
     auto self = shared_from_this();
     std::thread([self] { self->workerLoop(); }).detach();
+}
+
+int32_t Session::setLogLevel(uint32_t level) {
+    if (level > static_cast<uint32_t>(DiagnosticLogLevel::Error)) return T7NB_INVALID_ARGUMENT;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closing_) return T7NB_INVALID_HANDLE;
+    logFilter_->minimum.store(static_cast<DiagnosticLogLevel>(level));
+    return T7NB_OK;
 }
 
 int32_t Session::setOutputDevice(const GUID& identifier) {
@@ -404,7 +414,7 @@ void Session::monitorClient() {
     const auto reason = windowClosed ? std::string("owned game window closed")
                                     : "owned client exited; exitCode=" + std::to_string(exitCode);
     log(reason + (cleanupError.empty() ? "; runtime stopped" : "; cleanup=" + cleanupError),
-        cleanupError.empty() && normalExit ? "INFO" : "ERROR");
+        cleanupError.empty() && normalExit ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error);
 }
 
 void Session::monitorWorld() {
@@ -434,7 +444,29 @@ void Session::executeCheck(const Command& command) {
     Config config;
     config.outputDevice = command.outputDevice;
     config.ports[0] = 1; config.ports[1] = 2; config.ports[2] = 3;
-    bootstrap_.check(fs::path(wide(command.clientDirectory)), config, [this](std::string line) { log(line); });
+    bootstrap_.check(fs::path(wide(command.clientDirectory)), config, [this](DiagnosticLogLevel level, std::string line) { log(line, level); });
+    if (cancelled(command.id)) throw std::runtime_error("check cancelled");
+    RunDirectory run(localDataRoot() / "data");
+    std::exception_ptr failure;
+    try {
+        PythonHost python(fs::path(wide(packageRoot_)), run.path() / "revisions");
+        try {
+            if (cancelled(command.id)) throw std::runtime_error("check cancelled");
+            python.checkResources(fs::path(wide(command.clientDirectory)));
+        } catch (...) { failure = std::current_exception(); }
+        try {
+            for (const auto& line : python.closeRevision()) log(line, DiagnosticLogLevel::Warn);
+        } catch (const std::exception& error) {
+            log(std::string("resource check revision cleanup: ") + error.what(), DiagnosticLogLevel::Error);
+            if (!failure) failure = std::current_exception();
+        }
+    } catch (...) { if (!failure) failure = std::current_exception(); }
+    try { run.finish(); }
+    catch (const std::exception& error) {
+        log(std::string("resource check history retention: ") + error.what(), DiagnosticLogLevel::Warn);
+    }
+    if (failure) std::rethrow_exception(failure);
+    if (cancelled(command.id)) throw std::runtime_error("check cancelled");
     log("client preflight passed");
 }
 
@@ -468,7 +500,7 @@ void Session::executeStart(const Command& command) {
     server_ = std::make_unique<Server>();
     const auto packageRoot = fs::path(wide(packageRoot_));
     config.lobbyNewsPath = packageRoot / "Business/news/index.html";
-    server_->start(config, packageRoot, localDataRoot(), [this, id = command.id] { return cancelled(id); });
+    server_->start(config, packageRoot, localDataRoot(), [this, id = command.id] { return cancelled(id); }, logFilter_);
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     auto actual = server_->boundConfig();
     {
@@ -478,12 +510,12 @@ void Session::executeStart(const Command& command) {
         snapshot_.phase = "client-start";
     }
     bootstrap_.launch(fs::path(wide(command.clientDirectory)), actual,
-        [this](std::string line) { log(line); },
+        [this](DiagnosticLogLevel level, std::string line) { log(line, level); },
         [this, id = command.id] { return cancelled(id); },
         [this, id = command.id] {
             setState(T7NB_STATE_ADAPTING_CLIENT, T7NB_OPERATION_START, id, "client-adaptation");
         },
-        [this](std::string line) { log(line, "WARNING"); });
+        [this](std::string line) { log(line, DiagnosticLogLevel::Warn); });
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     if (!server_->running()) {
         auto runtime = server_->snapshot();
@@ -534,7 +566,7 @@ void Session::setFailure(uint64_t operationId, uint32_t code, const std::string&
         snapshot_.flags &= ~1u;
         snapshot_.phase = wasCancelled ? "cancelling" : "failed-cleaning";
     }
-    log(wasCancelled ? "operation cancelled: " + message : "operation failed: " + message, wasCancelled ? "INFO" : "ERROR");
+    log(wasCancelled ? "operation cancelled: " + message : "operation failed: " + message, wasCancelled ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error);
     auto cleanupError = cleanup();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -591,16 +623,18 @@ std::string Session::cleanup() noexcept {
     return errors;
 }
 
-void Session::log(const std::string& text, const char* level) {
+void Session::log(const std::string& text, DiagnosticLogLevel level) {
+    if (!logFilter_->allows(level)) return;
     logRecord(formatDiagnosticRecord(text, level, "NativeBridge"));
 }
 
 void Session::logRecord(const std::string& record) {
+    if (!logFilter_->allows(diagnosticRecordLevel(record))) return;
     std::string writeFailure;
     try {
         appendNativeLog(localDataRoot() / "logs", record);
     } catch (const std::exception& error) {
-        writeFailure = formatDiagnosticRecord(std::string("日志文件写入失败：") + error.what(), "WARNING", "NativeBridge");
+        writeFailure = formatDiagnosticRecord(std::string("日志文件写入失败：") + error.what(), DiagnosticLogLevel::Error, "NativeBridge");
     }
     std::lock_guard<std::mutex> lock(mutex_);
     logs_.push_back({nextLog_++, boundedDiagnosticRecord(record)});

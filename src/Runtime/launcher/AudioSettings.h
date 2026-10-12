@@ -11,6 +11,7 @@ struct AudioValues {
 static_assert(sizeof(AudioValues) == 16, "audio mailbox layout");
 bool validAudioValues(const AudioValues& values);
 bool sameAudioValues(const AudioValues& left, const AudioValues& right);
+std::string describeAudioValues(const AudioValues& values);
 constexpr uint32_t AUDIO_CODE_OFFSET = 0x1000, AUDIO_PAGE_SIZE = 0x2000;
 constexpr uint32_t AUDIO_MUSIC_RVA = 0x6ECB20, AUDIO_EFFECTS_RVA = 0x6ECAD0;
 Bytes buildAudioMap(uint32_t address, uint32_t imageBase);

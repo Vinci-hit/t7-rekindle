@@ -21,6 +21,7 @@ bool verifyMovementOverlay();
 bool verifyMovementHookExecution();
 bool verifyGraphicsHookExecution();
 bool verifyGraphicsSession(const t7::fs::path& packageRoot);
+bool verifyResourcePreflight(const t7::fs::path& packageRoot);
 bool verifyAudioSession(const t7::fs::path& packageRoot);
 
 bool verifyLobbyNews();
@@ -58,10 +59,10 @@ bool verifyJobAssignmentOrder() {
 bool verifyFakeBootstrapAdapter() {
     bool checked = false, launched = false, stopped = false, adapted = false;
     t7::Bootstrap::TestAdapter adapter;
-    adapter.check = [&checked](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>&) {
+    adapter.check = [&checked](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&) {
         checked = true;
     };
-    adapter.launch = [&launched](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>&,
+    adapter.launch = [&launched](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&,
                                  const std::function<bool()>&, const std::function<void()>& adapting) {
         launched = true;
         if (adapting) adapting();
@@ -249,7 +250,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
     t7::Bootstrap::TestAdapter adapter;
     adapter.launch = [state](
         const t7::fs::path&, const t7::Config& config,
-        const std::function<void(std::string)>& log,
+        const t7::DiagnosticLogCallback& log,
         const std::function<bool()>& cancelled,
         const std::function<void()>& adapting) {
         if (!config.ports[0] || !config.ports[1] || !config.ports[2])
@@ -258,7 +259,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
         state->launched = true;
         state->clientRunning = true;
         if (adapting) adapting();
-        if (log) log("synthetic client adapter launched");
+        if (log) log(t7::DiagnosticLogLevel::Info, "synthetic client adapter launched");
     };
     adapter.running = [state] { return state->clientRunning; };
     adapter.stop = [state] {
@@ -269,7 +270,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
     auto session = t7::bridge::Session::createForTest(
         t7::utf8(packageRoot.wstring()), std::move(adapter));
     const auto clientDirectory = t7::utf8(
-        (t7::fs::temp_directory_path() / L"T7-Rekindle-synthetic-client").wstring());
+        (packageRoot / "synthetic-client" / "Bin").wstring());
     uint64_t startId = 0;
     if (session->submit(T7NB_OPERATION_START, clientDirectory, startId) != T7NB_OK
         || !waitForOperation(session, startId, T7NB_OPERATION_SUCCEEDED)
@@ -335,6 +336,8 @@ int wmain(int argc, wchar_t** argv) {
         WSACleanup();
         return result;
     }
+    if (argc == 3 && std::wstring(argv[1]) == L"--audio-session")
+        return verifyAudioSession(t7::fs::path(argv[2])) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
         return verifyGraphicsHookExecution() ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")
@@ -371,7 +374,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::PythonHost first(argv[1], ownerRoot);
             t7::Config worldConfig;
-            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client";
+            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client" / "Bin";
             t7::WorldSnapshot world;
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
@@ -511,6 +514,7 @@ int wmain(int argc, wchar_t** argv) {
         // the fake client adapter confined to this native test host.
         if (!verifySessionAssembly(t7::fs::path(argv[1]))) result = 23;
         if (!verifyGraphicsSession(t7::fs::path(argv[1]))) result = 38;
+        if (!verifyResourcePreflight(t7::fs::path(argv[1]))) result = 43;
         if (!verifyAudioSession(t7::fs::path(argv[1]))) result = 39;
         if (!verifyJournalContracts(t7::fs::path(argv[1]))) result = 25;
         if (!verifyDiagnosticLogs(t7::fs::path(argv[1]))) result = 37;
@@ -538,7 +542,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::Journal journal(journalRoot);
             for (int i = 0; i != 1100; ++i)
-                journal.add("TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
+                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
             if (journal.lines().size() > 1000) result = 13;
         }
         std::ifstream index(journalRoot / "frames-1.jsonl");
@@ -552,7 +556,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::Journal journal(rotationRoot, 1024, 2);
             for (int i = 0; i != 5; ++i)
-                journal.add("TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7::Bytes(700, 7));
+                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7::Bytes(700, 7));
         }
         if (t7::fs::exists(rotationRoot / "frames-1.bin")
             || !t7::fs::exists(rotationRoot / "frames-4.bin")

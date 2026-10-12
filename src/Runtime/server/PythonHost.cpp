@@ -246,6 +246,14 @@ std::string PythonHost::context(const Config& config, uint64_t now, const std::v
 std::string PythonHost::create(const std::string& context) {
     auto value = checked(PyObject_CallMethod(runtime_, "create", "s", context.c_str())); return string(value.get());
 }
+void PythonHost::checkResources(const fs::path& directory, const std::string& playerName) {
+    auto path = checked(PyUnicode_FromWideChar(directory.c_str(), -1));
+    auto result = checked(PyObject_CallMethod(runtime_, "checkResources", "Os", path.get(), playerName.c_str()));
+}
+std::vector<std::string> PythonHost::closeRevision() {
+    auto result = checked(PyObject_CallMethod(runtime_, "close", nullptr));
+    return diagnostics();
+}
 std::string PythonHost::version() {
     auto value = checked(PyObject_CallMethod(runtime_, "version", nullptr)); return string(value.get());
 }
@@ -319,7 +327,11 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
     if (!PyList_Check(logs)) throw std::runtime_error("invalid transition log list");
     auto logCount = PyList_Size(logs);
     if (logCount < 0) throw std::runtime_error(error());
-    for (Py_ssize_t i = 0; i < logCount; ++i) result.logs.push_back(string(PyList_GetItem(logs, i)));
+    for (Py_ssize_t i = 0; i < logCount; ++i) {
+        auto item = PyList_GetItem(logs, i);
+        if (!item || !PyDict_Check(item)) throw std::runtime_error("invalid transition log item");
+        result.logs.push_back({parseDiagnosticLevel(string(field(item, "level"))), string(field(item, "message"))});
+    }
     if (PyErr_Occurred()) throw std::runtime_error(error());
     return result;
 }

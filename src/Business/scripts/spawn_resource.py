@@ -1,12 +1,11 @@
 """Infantry spawn and respawn placements from the selected client's map resource."""
 from functools import lru_cache
-from pathlib import Path
 import math
 import xml.etree.ElementTree as ET
 
-from .navmesh_resource import readCompressedEntry
+from .vfs_resource import readResource
 
-SPAWN_OFFSET, SPAWN_STORED_SIZE, SPAWN_SIZE = 204065419, 1630, 7939
+SPAWN_PATH = 'data/scene/map/lysd/dactorspawngroup.dat'
 
 
 def parsePoints(data, flagName, counts):
@@ -54,17 +53,10 @@ def parseRespawns(data):
 
 
 @lru_cache(maxsize=1)
-def loadResource(clientDirectory):
-    archive = Path(clientDirectory).parent / "vfs" / "map.vfs"
-    with archive.open("rb") as source:
-        return readCompressedEntry(source, SPAWN_OFFSET, SPAWN_STORED_SIZE, SPAWN_SIZE)
-
-
-@lru_cache(maxsize=1)
 def loadSpawns(clientDirectory):
-    return parseSpawns(loadResource(clientDirectory))
+    return readResource(clientDirectory, 'map.vfs', SPAWN_PATH, parseSpawns)
 
 
 @lru_cache(maxsize=1)
 def loadRespawns(clientDirectory):
-    return parseRespawns(loadResource(clientDirectory))
+    return readResource(clientDirectory, 'map.vfs', SPAWN_PATH, parseRespawns)

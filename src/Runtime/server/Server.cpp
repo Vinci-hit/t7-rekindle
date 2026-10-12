@@ -6,6 +6,8 @@
 
 namespace t7 {
 namespace {
+struct ConnectionClosed : std::runtime_error { using std::runtime_error::runtime_error; };
+
 double elapsedMs(detail::TimePoint start, detail::TimePoint end) {
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
@@ -22,7 +24,8 @@ fs::path defaultWritableRoot() {
 }
 }
 Server::~Server() { stop(); }
-void Server::start(const Config& config, const fs::path& root, const fs::path& writableRoot, const std::function<bool()>& cancelled) {
+void Server::start(const Config& config, const fs::path& root, const fs::path& writableRoot,
+                   const std::function<bool()>& cancelled, std::shared_ptr<DiagnosticLogFilter> logFilter) {
     if (!stopping_) throw std::runtime_error("server is already running");
     stop();
     {
@@ -40,7 +43,7 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
         runDirectory_ = std::make_unique<RunDirectory>(writableRoot_ / "data");
         run_ = runDirectory_->path();
         RunDirectory::prune(run_.parent_path());
-        journal_ = std::make_unique<Journal>(run_ / "wire");
+        journal_ = std::make_unique<Journal>(run_ / "wire", 64 * 1024 * 1024, 160, std::move(logFilter));
         signals_ = std::make_unique<detail::ServerSignals>();
         for (int i = 0; i < 3; ++i) {
             auto socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -179,11 +182,11 @@ std::vector<std::string> Server::lines() {
     std::lock_guard<std::mutex> lock(mutex_);
     return journal_ ? journal_->lines() : lastLines_;
 }
-void Server::disconnect(uint64_t id, const std::string& reason) {
+void Server::disconnect(uint64_t id, const std::string& reason, DiagnosticLogLevel level) {
     auto it = sessions_.find(id); if (it == sessions_.end()) return;
     closesocket(it->second.socket); sessions_.erase(it);
     Event event; event.type = "closed"; event.connection = id; queue(std::move(event));
-    journal_->add("CONTROL", id, snapshot_.version, "connection-closed: " + reason);
+    journal_->add(level, "CONTROL", id, snapshot_.version, "connection-closed: " + reason);
 }
 void Server::acceptConnections() {
     const char* roles[] = {"login", "logic", "instance"};
@@ -197,7 +200,7 @@ void Server::acceptConnections() {
         if (ioctlsocket(socket, FIONBIO, &nonblocking) ||
             setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&noDelay), sizeof(noDelay))) {
             auto error = WSAGetLastError(); closesocket(socket);
-            journal_->add("ERROR", 0, "native", "accepted socket setup failed WSA=" + std::to_string(error)); continue;
+            journal_->add(DiagnosticLogLevel::Error, "ERROR", 0, "native", "accepted socket setup failed WSA=" + std::to_string(error)); continue;
         }
         uint64_t id = nextId_++;
         Session session; session.socket = socket; session.role = roles[i]; session.accepted = session.lastReceive = clock_.millis();
@@ -213,7 +216,7 @@ void Server::receiveFrame(uint64_t id, Session& session, const Bytes& frame) {
         session.queued += reply.size(); session.send.push_back({std::move(reply), 0, "native", "method3-key"});
         event.type = "authenticated";
     } else {
-        if (frame[2] == 13) throw std::runtime_error("client CLOSE");
+        if (frame[2] == 13) throw ConnectionClosed("client CLOSE");
         auto clear = decryptMethod3(frame);
         if (clear.size() < 14) throw std::runtime_error("short SH_PACKAGE");
         event.type = "message"; event.sequence = be32(clear.data()); session.sequence = event.sequence;
@@ -229,13 +232,13 @@ bool Server::receiveSession(uint64_t id, Session& session) {
     if (events_.size() >= 1024 || eventBytes_ >= 8 * 1024 * 1024) return false;
     unsigned char bytes[16384];
     int received = recv(session.socket, reinterpret_cast<char*>(bytes), sizeof(bytes), 0);
-    if (!received) throw std::runtime_error("peer EOF");
+    if (!received) throw ConnectionClosed("peer EOF");
     if (received < 0 && WSAGetLastError() != WSAEWOULDBLOCK) throw std::runtime_error("socket read error");
     if (received > 0) {
         session.received += received; session.lastReceive = clock_.millis();
         Bytes raw(bytes, bytes + received);
         session.receive.insert(session.receive.end(), raw.begin(), raw.end());
-        journal_->add("C2S", id, snapshot_.version, "socket-read", std::move(raw), config_.captureWire);
+        journal_->add(DiagnosticLogLevel::Debug, "C2S", id, snapshot_.version, "socket-read", std::move(raw), config_.captureWire);
         if (session.receive.size() > MAX_FRAME * 2) throw std::runtime_error("receive buffer overflow");
     }
     Bytes frame; size_t count = 0;
@@ -251,7 +254,7 @@ bool Server::sendSession(uint64_t id, Session& session, TimePoint retryAt) {
         return detail::SendAttempt{sent, sent < 0 ? WSAGetLastError() : 0};
     }, [&](const PendingWrite& pending, size_t sent) {
         Bytes raw(pending.bytes.begin() + pending.offset, pending.bytes.begin() + pending.offset + sent);
-        journal_->add("S2C", id, pending.version, pending.reason, std::move(raw), config_.captureWire);
+        journal_->add(DiagnosticLogLevel::Debug, "S2C", id, pending.version, pending.reason, std::move(raw), config_.captureWire);
         session.queued -= sent; session.sent += sent;
         if (pending.offset + sent == pending.bytes.size()) ++session.sentMessages;
     });
@@ -267,15 +270,17 @@ bool Server::scanNetwork(TimePoint retryAt) {
     auto first = std::upper_bound(order.begin(), order.end(), lastFirst_);
     std::rotate(order.begin(), first, order.end());
     if (!order.empty()) lastFirst_ = order.front();
-    std::vector<std::pair<uint64_t, std::string>> closed; bool again = false;
+    struct Closed { uint64_t id; std::string reason; DiagnosticLogLevel level; };
+    std::vector<Closed> closed; bool again = false;
     for (auto id : order) {
         auto& session = sessions_.at(id);
         try {
             again = receiveSession(id, session) || again;
             again = sendSession(id, session, retryAt) || again;
-        } catch (const std::exception& e) { closed.emplace_back(id, e.what()); }
+        } catch (const ConnectionClosed& e) { closed.push_back({id, e.what(), DiagnosticLogLevel::Info}); }
+        catch (const std::exception& e) { closed.push_back({id, e.what(), DiagnosticLogLevel::Warn}); }
     }
-    for (const auto& pair : closed) disconnect(pair.first, pair.second);
+    for (const auto& item : closed) disconnect(item.id, item.reason, item.level);
     return again;
 }
 void Server::networkLoop() {
@@ -340,8 +345,8 @@ void Server::processControl(PythonHost& python, const Event& event, std::string&
     } else throw std::runtime_error("unknown native control command");
     auto elapsed = clock_.millis() - started;
     { std::lock_guard<std::mutex> lock(mutex_); ++snapshot_.completedControls; snapshot_.reloadMs = elapsed; snapshot_.error.clear(); }
-    journal_->add("CONTROL", 0, python.version(), "event=" + std::to_string(event.id) + " " + event.name + " passed in " + std::to_string(elapsed) + " ms");
-    for (const auto& warning : python.diagnostics()) journal_->add("LOG-ERROR", 0, python.version(), warning);
+    journal_->add(DiagnosticLogLevel::Info, "CONTROL", 0, python.version(), "event=" + std::to_string(event.id) + " " + event.name + " passed in " + std::to_string(elapsed) + " ms");
+    for (const auto& warning : python.diagnostics()) journal_->add(DiagnosticLogLevel::Warn, "LOG-ERROR", 0, python.version(), warning);
 }
 void Server::commit(Transition& result, const QueuedEvent& event, const std::string& version,
                     std::string phase, TimePoint now, double callbackMs, std::string& state, Timers& timers, bool& committed) {
@@ -390,11 +395,11 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
     }
     committed = true;
     auto late = event.due == TimePoint::max() ? 0.0 : elapsedMs(event.due, event.queuedAt);
-    journal_->add("COMMIT", event.connection, version, label + event.type + " command=" + std::to_string(event.command)
+    journal_->add(DiagnosticLogLevel::Debug, "COMMIT", event.connection, version, label + event.type + " command=" + std::to_string(event.command)
         + " sends=" + std::to_string(result.send.size()) + " queueMs=" + std::to_string(elapsedMs(event.queuedAt, now))
         + " callbackMs=" + std::to_string(callbackMs) + " timerLateMs=" + std::to_string(late));
     if (!writes.empty()) signals_->io();
-    for (const auto& line : result.logs) journal_->add("BUSINESS", event.connection, version, label + line);
+    for (const auto& line : result.logs) journal_->add(line.level, "BUSINESS", event.connection, version, label + line.message);
 }
 void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::vector<uint64_t>& live,
                       std::string& state, Timers& timers) {
@@ -417,7 +422,7 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         }
         if (stopping_) return;
         { std::lock_guard<std::mutex> lock(mutex_); snapshot_.error = e.what(); if (event.type == "control") ++snapshot_.completedControls; }
-        journal_->add("ERROR", event.connection, python.version(), "event=" + std::to_string(event.id) + " " + e.what());
+        journal_->add(DiagnosticLogLevel::Error, "ERROR", event.connection, python.version(), "event=" + std::to_string(event.id) + " " + e.what());
     }
 }
 bool Server::needsWorld() const {
@@ -451,6 +456,8 @@ void Server::updateWorld(const WorldSnapshot& world) {
 void Server::businessLoop() {
     try {
         PythonHost python(root_, run_ / "revisions");
+        if (!boundConfig_.clientDirectory.empty())
+            python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
         std::string state = python.create(python.context(boundConfig_, clock_.millis(), {}));
         Timers timers;
         {

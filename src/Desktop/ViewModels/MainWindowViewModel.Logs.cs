@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,16 +17,17 @@ namespace T7.Rekindle.Desktop.ViewModels
         public bool HasSessionLog => _nativeLogs.Count > 0 || _failureMessage.Length != 0 || _snapshot.State == SessionState.Failed;
         public static string LogDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "T7-Rekindle", "logs");
 
-        private void AppendLog(string level, string message, Exception error = null)
+        private void AppendLog(DiagnosticLogLevel level, string message, Exception error = null)
         {
-            var text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "  " + level + "  [Launcher] " + message;
-            _log.WriteRecord(text, error);
+            var text = _log.Write(level, message, error);
+            if (text == null) return;
             EnqueueLog(text);
             NativeLogText = string.Join(Environment.NewLine, _nativeLogs);
         }
 
         private void EnqueueLog(string text)
         {
+            if (text == null) return;
             _nativeLogs.Enqueue(text);
             while (_nativeLogs.Count > 100) _nativeLogs.Dequeue();
             OnPropertyChanged(nameof(HasSessionLog));
@@ -51,20 +51,18 @@ namespace T7.Rekindle.Desktop.ViewModels
                 });
                 if (_disposed) return;
                 _logCursor = batch.Cursor;
-                if (batch.Result.Gap) EnqueueLog("[NativeBridge] 日志窗口已轮转，完整记录请查看日志目录。");
+                if (batch.Result.Gap) EnqueueLog(_log.Write(DiagnosticLogLevel.Warn,
+                    "日志窗口已轮转，完整记录请查看日志目录。", source: "NativeBridge"));
                 foreach (var record in batch.Result.Records)
                 {
-                    var text = record.Text;
-                    EnqueueLog(text);
-                    _log.WriteRecord(text);
+                    EnqueueLog(_log.WriteRecord(record.Text));
                 }
                 if (_nativeLogs.Count > 0) NativeLogText = string.Join(Environment.NewLine, _nativeLogs);
             }
             catch (ObjectDisposedException) when (_disposed) { }
             catch (Exception error)
             {
-                _log.Error("日志读取失败", error);
-                if (!_disposed) NativeLogText = "日志读取失败：" + error.Message;
+                if (!_disposed) AppendLog(DiagnosticLogLevel.Error, "日志读取失败：" + error.Message, error);
             }
             finally { Volatile.Write(ref _logPollActive, 0); }
         }

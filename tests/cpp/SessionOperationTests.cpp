@@ -29,7 +29,7 @@ bool verifyOperationPublication(const t7::fs::path& packageRoot, uint32_t expect
     auto reached = gate->reached.get_future();
     t7::Bootstrap::TestAdapter adapter;
     adapter.check = [gate, expectedStatus](const t7::fs::path&, const t7::Config&,
-                                          const std::function<void(std::string)>&) {
+                                          const t7::DiagnosticLogCallback&) {
         if (!gate->firstCheck) return;
         gate->firstCheck = false;
         if (expectedStatus == T7NB_OPERATION_FAILED)
@@ -45,7 +45,7 @@ bool verifyOperationPublication(const t7::fs::path& packageRoot, uint32_t expect
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()),
         std::move(adapter), [gate] { gate->pause(); });
     gate->session = session;
-    const auto directory = t7::utf8((packageRoot / "synthetic-client").wstring());
+    const auto directory = t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring());
     uint64_t operationId = 0;
     bool valid = session->submit(T7NB_OPERATION_CHECK, directory, operationId) == T7NB_OK;
     valid = reached.wait_for(std::chrono::seconds(5)) == std::future_status::ready && valid;

@@ -1,4 +1,5 @@
 using System;
+using T7.Rekindle.Core;
 using System.Threading;
 using System.Threading.Tasks;
 using T7.Rekindle.Desktop.Services;
@@ -18,7 +19,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             try { await ConnectAsync(generation, _lifetime.Token).ConfigureAwait(true); }
             catch (Exception error)
             {
-                if (IsCurrent(generation) && !HandleTerminal(error)) { SetStatus("已登录 · 上线失败，请重试"); Record("账号上线失败", error); }
+                if (IsCurrent(generation) && !HandleTerminal(error)) { SetStatus("已登录 · 上线失败，请重试"); Record(DiagnosticLogLevel.Error, "账号上线失败", error); }
             }
             finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
         }
@@ -63,7 +64,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     {
                         if (!IsCurrent(generation) || HandleTerminal(error)) return;
                         _heartbeatHealthy = false;
-                        Record("账号心跳暂未完成", error);
+                        Record(DiagnosticLogLevel.Warn, "账号心跳暂未完成", error);
                     }
                     UpdateOnlineStatus();
                 }
@@ -93,7 +94,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     catch (Exception error)
                     {
                         if (!IsCurrent(generation) || HandleTerminal(error)) return;
-                        Record("账号推送连接暂未完成", error);
+                        Record(DiagnosticLogLevel.Warn, "账号推送连接暂未完成", error);
                     }
                     if (!IsCurrent(generation)) return;
                     _pushHealthy = false;

@@ -92,7 +92,7 @@ def test_low_health_bot_backpedals_while_starting_an_attack(multi):
 @pytest.mark.parametrize('condition', ['attack', 'parry', 'hurt', 'parried', 'parry-success', 'terrain-rebound'])
 def test_weapon_lock_preserves_movement_but_disables_running(multi, condition):
     value = duel(multi)
-    value.update(moving=True, forwardMs=2000, path=[[5., 0, 0]], step=0, lastMoveAt=multi.now)
+    value.update(moving=True, forwardMs=bot.RUN_DELAY_MS, path=[[5., 0, 0]], step=0, lastMoveAt=multi.now)
     if condition in ('attack', 'parry'):
         battle.startAction(multi, 300550 if condition == 'attack' else 300610, actorId=2)
     elif condition == 'hurt':
@@ -179,7 +179,7 @@ def test_successful_parry_keeps_both_bots_moving_without_preserving_their_swings
     app.handleTimer(multi, battle.actionTimer(12))
     battle.startAction(multi, 300550, released=True, actorId=2)
     for rid in (2, 12):
-        actors.data(multi, rid).update(moving=True, forwardMs=2000)
+        actors.data(multi, rid).update(moving=True, forwardMs=bot.RUN_DELAY_MS)
         multi.later(actors.timerName(bot.MOVE_TIMER, rid), bot.MOVE_MS)
     assert combat.parry(multi, 2, 12, actors.pair(world, 2, 12))
     for rid, reaction in ((2, 'parried'), (12, 'parry-success')):

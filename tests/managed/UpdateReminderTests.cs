@@ -41,7 +41,7 @@ namespace T7.ManagedHarness
             using (var model = new AboutViewModel(new FakeDesktopInteraction(), () => pending.Task))
             {
                 Assert(!model.HasUpdateReminder && model.UpdateReminderVersion.Length == 0
-                    && model.VersionCapsuleHint.Contains(model.Version), "unchecked launcher fabricated an update reminder");
+                    && model.VersionCapsuleHint.Contains(model.DisplayVersion), "unchecked launcher fabricated an update reminder");
                 var installedPreview = LauncherInformation.CurrentBuild.Channel == UpdateChannel.Preview;
                 Assert(model.IsPreviewBuild == installedPreview
                     && model.VersionCapsuleHint.Contains(installedPreview ? "预览版" : "正式版"), "capsule omitted installed build metadata");
@@ -60,7 +60,7 @@ namespace T7.ManagedHarness
                 RunTask(model.CheckUpdateCommand.ExecuteAsync(null));
                 Assert(model.HasUpdateReminder && model.UpdateReminderVersion == "v1.2.3"
                     && model.UpdateDownload.Info.Installer == null, "release-page-only update has no reminder");
-                Assert(model.VersionCapsuleHint.Contains(model.Version) && model.VersionCapsuleHint.Contains("v1.2.3"),
+                Assert(model.VersionCapsuleHint.Contains(model.DisplayVersion) && model.VersionCapsuleHint.Contains("v1.2.3"),
                     "version capsule hint omitted the current or target version");
                 var changed = new HashSet<string>();
                 model.PropertyChanged += (_, change) => changed.Add(change.PropertyName);
@@ -261,7 +261,7 @@ namespace T7.ManagedHarness
                     };
                     var name = "capsule-" + (preview ? "preview" : "stable") + (longVersion ? "-long" : "")
                         + (hasUpdate ? "-update-" : "-normal-") + (int)(scale * 100);
-                    LauncherLayoutTests.Render(root, window, output, name, longVersion ? 928 : 1200, longVersion ? 460 : 900, scale);
+                    LauncherLayoutTests.Render(root, window, output, name, longVersion ? 800 : 1200, longVersion ? 460 : 900, scale);
                     positions.Add(new Rect(body.TranslatePoint(new Point(), root), body.RenderSize));
                     Assert(version.Text == build.DisplayVersion && ReferenceEquals(icon.Data,
                         Application.Current.Resources[preview ? "CapsulePreviewIcon" : "CapsuleStableIcon"]),

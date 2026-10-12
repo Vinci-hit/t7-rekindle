@@ -67,7 +67,7 @@ def localPatrol(flow, nav, actorId, reason):
     if nav.findPath(value['position'], anchor).status != 'ready':
         value['patrolAnchor'] = list(value['position'])
     value['repathAt'] = 0
-    flow.result['logs'].append(f"bot-spawn-return-local actor={actorId} reason={reason} position={value['position']}")
+    flow.log("DEBUG", f"bot-spawn-return-local actor={actorId} reason={reason} position={value['position']}")
 
 
 def returnToBattle(flow, nav, observed, actorId):
@@ -110,7 +110,7 @@ def handle(flow, nav, observed, actorId):
             if sampledAt - state['stableSince'] >= LANDING_MS:
                 state['landed'] = True
                 bot.stopMotion(flow, actorId)
-                flow.result['logs'].append(f'bot-spawn-landed actor={actorId} position={position}')
+                flow.log("DEBUG", f'bot-spawn-landed actor={actorId} position={position}')
         else:
             state.pop('stableSince', None)
     try:
@@ -130,7 +130,7 @@ def handle(flow, nav, observed, actorId):
             bot.stopMotion(flow, actorId)
             value.pop('spawnExit')
             value['repathAt'] = 0
-            flow.result['logs'].append(f'bot-spawn-exit-complete actor={actorId} position={position}')
+            flow.log("DEBUG", f'bot-spawn-exit-complete actor={actorId} position={position}')
         return False
     return guide(flow, nav, observed, actorId, settling=onGround)
 
@@ -167,7 +167,7 @@ def guide(flow, nav, observed, actorId, *, settling=False):
             bot.status(flow, 'spawn-exit-no-entry', actorId)
             return True
         state['entry'] = list(entry)
-        flow.result['logs'].append(f"bot-spawn-exit actor={actorId} origin={state['origin']} observed={position} entry={state['entry']}")
+        flow.log("DEBUG", f"bot-spawn-exit actor={actorId} origin={state['origin']} observed={position} entry={state['entry']}")
     entry = state['entry']
     desiredHeading = round(math.degrees(math.atan2(-(entry[1] - position[1]), entry[0] - position[0])))
     if math.dist(entry[:2], position[:2]) < body_collision.DIAMETER:

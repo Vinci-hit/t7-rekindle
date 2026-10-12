@@ -3,11 +3,12 @@ from copy import deepcopy
 import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
-from .codec import login_flow, protocol, room_flow
+from . import battle_clock, settlement
+from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 12
+STATE_VERSION = 14
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -29,7 +30,7 @@ def validateState(state):
         wire.encodePlayerName(state.get("playerName", wire.USER_NAME.decode("gbk")))
     except (ValueError, TypeError):
         return False
-    if type(state.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)) is not bool:
+    if type(state.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)) is not bool or not settlement.validState(state):
         return False
     return all(type(key) is str and type(session) is dict
                and session.get("role") in ("login", "logic", "instance")
@@ -39,13 +40,15 @@ def validateState(state):
                and roster.validState(session)
                and combat.validState(session)
                and player_life.validState(session)
+               and battle_clock.validState(session)
+               and ('killTarget' not in session or kill_flow.valid_kill_target(session['killTarget']))
                and ("bot" not in session or combat.validState(session["bot"]))
                and (not session.get("initialized") or controls.validMoveClock(session))
                for key, session in state["sessions"].items())
 
 
 def migrateState(fromVersion, state):
-    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, STATE_VERSION) or not validateState(state):
+    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, STATE_VERSION) or not validateState(state):
         raise ValueError("no migration for this state version")
     result = deepcopy(state)
     if fromVersion < 12:
@@ -60,6 +63,9 @@ def migrateState(fromVersion, state):
                 if swing is not None and chain is not None:
                     swing.update(intent=intent, state=chain[battle.strikeIndex(intent)],
                                  beganAt=swing['until'] - combat.contactEndMs(intent))
+    if fromVersion < 13:
+        for session in result['sessions'].values():
+            battle_clock.migrate(session)
     return result
 
 
@@ -80,6 +86,9 @@ class Flow:
         self.result = {"state": state, "send": [], "timers": [], "logs": []}
         self.rearmActionTimers()
 
+    def log(self, level, message):
+        self.result["logs"].append({"level": level, "message": message})
+
     def rearmActionTimers(self):
         if self.session is None or not self.session.pop('rearmActionTimers', False):
             return
@@ -92,6 +101,9 @@ class Flow:
         self.session["phase"] = name
         activeInstance = any(session["role"] == "instance" and not session.get("leaving")
                              for session in self.state["sessions"].values())
+        if 'settlement' in self.state and name not in ('settlement', 'leaving'):
+            self.state['phase'] = 'settlement'
+            return
         if self.session["role"] == "instance" or not activeInstance:
             self.state["phase"] = name
 
@@ -138,6 +150,8 @@ def handleTimer(flow, name):
     else:
         flow.timerDue = pending[name]
         del pending[name]
+    if name != 'round-end' and scene.expire(flow):
+        return
     if name == "version":
         flow.send(1, protocol.encode_version_check_response(0), "version-response")
     elif name == "login":
@@ -188,6 +202,7 @@ def handleRoom(flow, body, selector):
 
 
 def handleMessage(flow, event):
+    scene.expire(flow)
     body, command = event["body"], event["command"]
     if type(body) is not bytes or len(body) < 2:
         raise ValueError("business message requires a two-byte selector")
@@ -230,7 +245,7 @@ def handleMessage(flow, event):
     key = f"{command}:{selector}"
     if key not in observed and len(observed) < 64:
         observed[key] = True
-        flow.result["logs"].append(f"unhandled command={command} selector={selector}; no speculative response")
+        flow.log("WARN", f"unhandled command={command} selector={selector}; no speculative response")
 
 
 def handleEvent(event, state, context):
@@ -240,12 +255,12 @@ def handleEvent(event, state, context):
     if eventType == "operator":
         if event.get("name") != "diagnostic":
             raise ValueError("only the diagnostic command is implemented; no speculative correction bundle")
-        flow.result["logs"].append(f"diagnostic phase={state['phase']} sessions={len(state['sessions'])} "
+        flow.log("DEBUG", f"diagnostic phase={state['phase']} sessions={len(state['sessions'])} "
                                    f"baseline={wire.BASELINE_ID} scene=1028 actor=1 heroes={wire.HERO_IDS} "
                                    f"ground={wire.GROUND_STEP_DISTANCE}/{wire.GROUND_STEP_MS}ms "
                                    "prime=state10-state1 outcome=none clientAcceptance=unverified")
         for connection, session in list(state["sessions"].items())[:32]:
-            flow.result["logs"].append(
+            flow.log("DEBUG",
                 f"connection={connection} role={session['role']} phase={session.get('phase', 'waiting')} "
                 f"actorImported={session.get('actorImported', False)} heroChosen={session.get('heroChosen', False)} "
                 f"battleEntered={session.get('battleEntered', False)} pending={list(session.get('pending', {}))}")
@@ -255,6 +270,7 @@ def handleEvent(event, state, context):
             if session is not None and session["role"] == "instance":
                 flow.connection, flow.session = connection, session
                 flow.rearmActionTimers()
+                scene.expire(flow)
                 combat.worldUpdated(flow)
                 bot.worldUpdated(flow)
     elif eventType == "connected":
@@ -264,7 +280,9 @@ def handleEvent(event, state, context):
                                   "authenticated": False}
     elif eventType == "closed":
         state["sessions"].pop(key, None)
-        if not state["sessions"]:
+        if 'settlement' in state:
+            state['phase'] = 'settlement'
+        elif not state["sessions"]:
             state["phase"] = "waiting"
         elif not any(session["role"] == "instance" for session in state["sessions"].values()):
             state["phase"] = "lobby-data-sent"

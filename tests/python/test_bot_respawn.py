@@ -63,7 +63,7 @@ def test_invalid_respawn_resource_is_rejected(mutation):
 
 def test_lethal_hit_stops_only_dead_bot_and_schedules_exactly_five_seconds(multi):
     value = actors.data(multi, 2)
-    value.update(moving=True, initialized=True, heightOffset=.2, forwardMs=1500)
+    value.update(moving=True, initialized=True, heightOffset=.2, forwardMs=500)
     bot.start(multi)
     for rid in (2, 3):
         battle.startAction(multi, 300560, released=True, actorId=rid)

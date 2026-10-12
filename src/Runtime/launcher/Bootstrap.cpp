@@ -4,6 +4,7 @@
 #include "EndpointStorage.h"
 #include "ClientPath.h"
 #include "MovementOverlay.h"
+#include "AudioDiagnostics.h"
 #include <sstream>
 #include <utility>
 
@@ -57,7 +58,7 @@ void write(HANDLE process, uintptr_t address, const void* source, size_t size) {
     if (actual != size) throw std::runtime_error("short process write at " + hexValue(address));
 }
 void inject(HANDLE process, uintptr_t base, uint32_t expectedObject,
-            const Config& config, const std::function<void(std::string)>& log) {
+            const Config& config, const DiagnosticLogCallback& log) {
     SuspendedProcess suspended(process);
     uint32_t object = 0, vtable = 0, fields[3]{}, servers[3]{}, selectorSalt = 0;
     read(process, base + SERVICE_RVA, &object, 4);
@@ -72,7 +73,7 @@ void inject(HANDLE process, uintptr_t base, uint32_t expectedObject,
     Bytes parser(0x8848E - 0x88270); read(process, base + 0x88270, parser.data(), parser.size());
     if (sha256(parser) != "b55a282ee9fcd56ab08ff3d9eb0189e2d82d84c87dc7ec0d2bb1d1d931510eae")
         throw std::runtime_error("client endpoint parser identity mismatch");
-    if (log) log("Direct endpoint layout verified; no parser thread will be created");
+    if (log) log(DiagnosticLogLevel::Debug, "Direct endpoint layout verified; no parser thread will be created");
     const auto allocator = clientEndpointAllocator(process, static_cast<uint32_t>(base));
     suspended.resume();
     const auto addresses = allocateEndpointStorage(process, allocator, config, selectorSalt & 1);
@@ -130,8 +131,8 @@ void inject(HANDLE process, uintptr_t base, uint32_t expectedObject,
         });
     }
     if (log) {
-        log("Direct endpoint vectors published and read back; allocation ownership transferred to client");
-        log("Fixed same-host logic selection published: candidates=2; parity=" + std::to_string(selectorSalt & 1) +
+        log(DiagnosticLogLevel::Debug, "Direct endpoint vectors published and read back; allocation ownership transferred to client");
+        log(DiagnosticLogLevel::Debug, "Fixed same-host logic selection published: candidates=2; parity=" + std::to_string(selectorSalt & 1) +
             "; attempt0=" + config.advertisedAddress + ":" + std::to_string(config.ports[1]) +
             "; attempt1=" + config.advertisedAddress + ":" + std::to_string(config.ports[1]));
     }
@@ -178,7 +179,7 @@ DWORD Bootstrap::exitCode() const {
     if (!process_ || !GetExitCodeProcess(process_, &code)) throw std::runtime_error(errorText("owned client exit code"));
     return code;
 }
-void Bootstrap::check(const fs::path& directory, const Config& config, const std::function<void(std::string)>& log) {
+void Bootstrap::check(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log) {
     validateConfig(config);
     if (testAdapter_.check) {
         testAdapter_.check(directory, config, log);
@@ -190,11 +191,11 @@ void Bootstrap::check(const fs::path& directory, const Config& config, const std
         || fileHash(directory / "TieJiWebHelper.exe") != WEB_HELPER_HASH)
         throw std::runtime_error("unsupported client/protocol baseline");
     if (fs::exists(directory / "TesSafe.sys") && log)
-        log("Bin/TesSafe.sys 保持原样；客户端适配仅在本次进程内存中进行。");
+        log(DiagnosticLogLevel::Debug, "Bin/TesSafe.sys 保持原样；客户端适配仅在本次进程内存中进行。");
     const auto device = resolveOutputDevice(config.outputDevice);
-    if (log) log("Output device preflight: " + device.name + " (adapter " + std::to_string(device.ordinal) + ")");
+    if (log) log(DiagnosticLogLevel::Info, "Output device preflight: " + device.name + " (adapter " + std::to_string(device.ordinal) + ")");
 }
-void Bootstrap::launch(const fs::path& directory, const Config& config, const std::function<void(std::string)>& log,
+void Bootstrap::launch(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log,
                        const std::function<bool()>& cancelled, const std::function<void()>& adapting,
                        const std::function<void(std::string)>& warning) {
     if (running()) throw std::runtime_error("this launcher already owns a running client");
@@ -208,6 +209,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const st
     if (process_ || debugClient_) stop();
     if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
     check(directory, config, log);
+    if (log) logAudioEnvironment([&](std::string message) { log(DiagnosticLogLevel::Debug, std::move(message)); });
     outputDevice_ = resolveOutputDevice(config.outputDevice);
     outputDeviceVerified_ = !outputDevice_.selected;
     if (adapting) adapting();
@@ -224,7 +226,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const st
     clientImageBase_ = image.imageBase;
     try {
         lobbyNews_.start(config.lobbyNewsPath);
-        if (log) log("大厅本地公告服务已启动：" + lobbyNews_.address());
+        if (log) log(DiagnosticLogLevel::Info, "大厅本地公告服务已启动：" + lobbyNews_.address());
         debugClient_->start(executable, CLIENT_HASH, {rule}, [&](HANDLE process, HANDLE thread) {
             const auto module = findMappedImageBase(process, executable);
             if (module.base != base) throw std::runtime_error("client mapped image identity mismatch before preparation");
@@ -234,14 +236,14 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const st
             startupGate_.install(process, static_cast<uint32_t>(base));
             movementOverlay_.install(process, base, log, config.skipStartupAnimation);
             graphicsSettings_.install(process, static_cast<uint32_t>(base), GetThreadId(thread));
-            if (log) log("Client code, imports, TP paths and movement adapted before first ResumeThread; disk binaries unchanged");
+            if (log) log(DiagnosticLogLevel::Debug, "Client code, imports, TP paths and movement adapted before first ResumeThread; disk binaries unchanged");
         }, log, cancelled, {{fs::absolute(directory / "TieJiWebHelper.exe"), WEB_HELPER_HASH,
             [this](HANDLE process, uint32_t base) { lobbyNews_.installHelper(process, base); }}},
         [this](DWORD threadId, uintptr_t address) {
             return startupGate_.handleBreakpoint(threadId, address) || movementOverlay_.handleBreakpoint(threadId, address);
         }, warning);
         process_ = debugClient_->process(); pid_ = debugClient_->pid();
-        if (log) log("Prepared owned client PID=" + std::to_string(pid_) + "; waiting for startup gate");
+        if (log) log(DiagnosticLogLevel::Info, "Prepared owned client PID=" + std::to_string(pid_) + "; waiting for startup gate");
         auto deadline = GetTickCount64() + 60000;
         uint32_t object = 0;
         while (running() && GetTickCount64() < deadline) {
@@ -257,15 +259,15 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const st
                 throw std::runtime_error("client exited before startup gate; exitCode=" + hexValue(exitCode));
             throw std::runtime_error("startup gate readiness timed out");
         }
-        if (log) log("Startup gate reached; beginning endpoint injection");
+        if (log) log(DiagnosticLogLevel::Info, "Startup gate reached; beginning endpoint injection");
         inject(process_, base, object, config, log);
         debugClient_->check();
         if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
         windowClosed();
-        if (log) log("Endpoint publication verified; releasing startup gate");
+        if (log) log(DiagnosticLogLevel::Info, "Endpoint publication verified; releasing startup gate");
         startupGate_.release();
-        if (log) log("Startup gate released; server selection may continue");
-        if (log) log("Endpoints verified; waiting for the game to connect to the configured server");
+        if (log) log(DiagnosticLogLevel::Info, "Startup gate released; server selection may continue");
+        if (log) log(DiagnosticLogLevel::Info, "Endpoints verified; waiting for the game to connect to the configured server");
     } catch (...) { cleanupAndRethrow(std::current_exception(), [this] { stop(); }); }
 }
 void Bootstrap::stop() {

@@ -5,7 +5,7 @@ import struct
 from . import actors, contracts as wire
 from .codec import move_flow
 
-GROUND_RUN_DELAY_MS = 2000
+GROUND_RUN_DELAY_MS = 1000
 MAX_GROUND_ELAPSED_MS = 100
 MOVE_CLOCK = "instance-relative-ms-v1"
 MAX_MOVE_TICK = 0x7FFFFFFF
@@ -77,7 +77,7 @@ def localReport(flow, selector, body):
     cancelMotionTimers(flow)
     ground = groundState(flow)
     if ground["position"] is None:
-        flow.result["logs"].append("client-runtime-position-accepted; no-motion-echo")
+        flow.log("DEBUG", "client-runtime-position-accepted; no-motion-echo")
     ground["position"] = position
     if selector == 3:
         ground["heading"] = heading
@@ -155,13 +155,13 @@ def groundTiming(flow, ground: dict) -> None:
                                   timerDue if timerDue is not None else
                                   flow.now + wire.GROUND_STEP_MS)
         ground["timingTick"] = ground["tick"]
-        flow.result["logs"].append("ground-timing-rebase tick=" + str(ground["tick"]))
+        flow.log("DEBUG", "ground-timing-rebase tick=" + str(ground["tick"]))
     if flow.now < ground["lastAdvanceAt"]:
         raise ValueError("ground monotonic time moved backwards")
     if pending is None and timerDue is None:
         ground["nextDeadline"] = nextDeadline(ground["nextDeadline"], flow.now)
         flow.later("ground-step", ground["nextDeadline"] - flow.now)
-        flow.result["logs"].append("ground-timing-missing-timer repaired")
+        flow.log("WARN", "ground-timing-missing-timer repaired")
 
 
 def advanceGround(flow) -> None:
@@ -183,7 +183,7 @@ def advanceGround(flow) -> None:
         ground["position"] = position
     ground["lastAdvanceAt"] = flow.now
     if elapsed > applied:
-        flow.result["logs"].append("ground-timing-clamp droppedMs=" + str(elapsed - applied))
+        flow.log("WARN", "ground-timing-clamp droppedMs=" + str(elapsed - applied))
 
 
 def validMoveClock(session: dict) -> bool:
@@ -261,7 +261,7 @@ def timer(flow, name):
                   projection.left_right, "move-ground-periodic-position-echo")
         skipped = max(0, (flow.now - ground["nextDeadline"]) // wire.GROUND_STEP_MS)
         if skipped:
-            flow.result["logs"].append("ground-timing-skip missed=" + str(skipped))
+            flow.log("WARN", "ground-timing-skip missed=" + str(skipped))
         ground["nextDeadline"] = nextDeadline(ground["nextDeadline"], flow.now)
         flow.later("ground-step", ground["nextDeadline"] - flow.now)
     return True

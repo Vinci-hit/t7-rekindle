@@ -1,4 +1,5 @@
 #include "DebugClient.h"
+#include "AudioDiagnostics.h"
 #include <algorithm>
 #include <cwctype>
 #include <cstring>
@@ -43,7 +44,7 @@ std::string faultLocation(HANDLE process, uintptr_t address) {
             + "; rva=" + hexAddress(address - reinterpret_cast<uintptr_t>(memory.AllocationBase));
     } catch (const std::exception& error) { return prefix + "; module=unavailable; " + error.what(); }
 }
-void logFaultContext(HANDLE process, DWORD tid, const std::function<void(std::string)>& log) {
+void logFaultContext(HANDLE process, DWORD tid, DiagnosticLogLevel level, const DiagnosticLogCallback& log) {
     HANDLE thread = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
     if (!thread) throw std::runtime_error(errorText("fault thread context"));
     uintptr_t stackPointer = 0;
@@ -55,7 +56,7 @@ void logFaultContext(HANDLE process, DWORD tid, const std::function<void(std::st
             WOW64_CONTEXT context{}; context.ContextFlags = WOW64_CONTEXT_FULL;
             if (!Wow64GetThreadContext(thread, &context)) throw std::runtime_error(errorText("fault WOW64 context"));
             stackPointer = context.Esp; wordSize = sizeof(DWORD);
-            log("Client fault context; arch=x86; EIP=" + hexAddress(context.Eip) + "; ESP=" + hexAddress(context.Esp)
+            log(level, "Client fault context; arch=x86; EIP=" + hexAddress(context.Eip) + "; ESP=" + hexAddress(context.Esp)
                 + "; EBP=" + hexAddress(context.Ebp) + "; EAX=" + hexAddress(context.Eax) + "; EBX=" + hexAddress(context.Ebx)
                 + "; ECX=" + hexAddress(context.Ecx) + "; EDX=" + hexAddress(context.Edx)
                 + "; ESI=" + hexAddress(context.Esi) + "; EDI=" + hexAddress(context.Edi));
@@ -63,7 +64,7 @@ void logFaultContext(HANDLE process, DWORD tid, const std::function<void(std::st
             CONTEXT context{}; context.ContextFlags = CONTEXT_FULL;
             if (!GetThreadContext(thread, &context)) throw std::runtime_error(errorText("fault native context"));
             stackPointer = context.Rsp; wordSize = sizeof(DWORD64);
-            log("Client fault context; arch=x64; RIP=" + hexAddress(context.Rip) + "; RSP=" + hexAddress(context.Rsp)
+            log(level, "Client fault context; arch=x64; RIP=" + hexAddress(context.Rip) + "; RSP=" + hexAddress(context.Rsp)
                 + "; RBP=" + hexAddress(context.Rbp) + "; RAX=" + hexAddress(context.Rax)
                 + "; RCX=" + hexAddress(context.Rcx) + "; RDX=" + hexAddress(context.Rdx));
         }
@@ -79,7 +80,7 @@ void logFaultContext(HANDLE process, DWORD tid, const std::function<void(std::st
         uintptr_t address = 0; std::memcpy(&address, bytes.data() + offset, wordSize);
         MEMORY_BASIC_INFORMATION candidate{};
         if (VirtualQueryEx(process, reinterpret_cast<void*>(address), &candidate, sizeof(candidate)) && candidate.Type == MEM_IMAGE)
-            log("Client fault stack candidate; slot=" + std::to_string(offset / wordSize) + "; " + faultLocation(process, address));
+            log(level, "Client fault stack candidate; slot=" + std::to_string(offset / wordSize) + "; " + faultLocation(process, address));
     }
 }
 std::wstring executablePath(HANDLE process) {
@@ -167,7 +168,7 @@ void DebugClient::stop() {
 void DebugClient::start(const fs::path& executable, const std::string& imageHash,
                         const std::vector<DllEntryRule>& rules,
                         const std::function<void(HANDLE, HANDLE)>& prepare,
-                        const std::function<void(std::string)>& log,
+                        const DiagnosticLogCallback& log,
                         const std::function<bool()>& cancelled,
                         const std::vector<ChildImageRule>& children,
                         const std::function<bool(DWORD, uintptr_t)>& breakpoint,
@@ -191,7 +192,7 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
         bool terminating = false, inputMethodCompatible = false;
         ULONGLONG terminationDeadline = 0;
         const auto warn = [&](const std::string& message) {
-            if (warning) warning(message); else if (log) log("WARNING: " + message);
+            if (warning) warning(message); else if (log) log(DiagnosticLogLevel::Warn, message);
         };
         try {
             if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
@@ -276,12 +277,12 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                         state.role = known ? ProcessRole::VerifiedGameChild : ProcessRole::CompatibleChild;
                         if (known && found->prepare)
                             found->prepare(state.process, static_cast<uint32_t>(reinterpret_cast<uintptr_t>(event.u.CreateProcessInfo.lpBaseOfImage)));
-                        if (log) log(std::string(known ? "Verified" : "Compatible") + " client child process; PID="
+                        if (log) log(DiagnosticLogLevel::Debug, std::string(known ? "Verified" : "Compatible") + " client child process; PID="
                             + std::to_string(event.dwProcessId) + "; image=" + name + "; role=" + roleName(state.role)
                             + (known ? "; reason=game component rule" : "; reason=registered IME module observed"));
                     } else if (!terminating) {
                         if (handleHash(eventFile) != imageHash) throw std::runtime_error("created client image identity changed");
-                        if (log) log("Client process creation observed before user code; PID=" + std::to_string(pid_) + "; role=Main");
+                        if (log) log(DiagnosticLogLevel::Debug, "Client process creation observed before user code; PID=" + std::to_string(pid_) + "; role=Main");
                     }
                 } else if (event.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
                     const auto& state = processes.at(event.dwProcessId);
@@ -295,21 +296,28 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                         warn(exit + "; game session continues");
                     processes.erase(event.dwProcessId);
                     if (event.dwProcessId == pid_) stopping_.store(true);
-                    if (log) log(exit);
+                    if (log) log(DiagnosticLogLevel::Debug, exit);
                 } else if (!stopping_.load() && event.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) {
                     auto& state = processes.at(event.dwProcessId);
                     const auto process = state.process;
                     const auto base = reinterpret_cast<uintptr_t>(event.u.LoadDll.lpBaseOfDll);
                     const auto path = mappedPath(process, base);
                     const auto name = fs::path(path).filename().wstring();
-                    if (log) log("Client module load: " + utf8(name) + "; PID=" + std::to_string(event.dwProcessId)
+                    if (log) log(DiagnosticLogLevel::Debug, "Client module load: " + utf8(name) + "; PID=" + std::to_string(event.dwProcessId)
                                  + "; role=" + roleName(state.role));
+                    if (log && isAudioDiagnosticModule(name)) {
+                        std::string version;
+                        try { version = describeAudioModuleVersion(eventFile); }
+                        catch (const std::exception&) { version = "version=unknown; reason=probe-exception"; }
+                        log(DiagnosticLogLevel::Debug, "Audio module observed; name=" + utf8(name) + "; " + version
+                            + "; PID=" + std::to_string(event.dwProcessId) + "; role=" + roleName(state.role));
+                    }
                     if (forbidden(name)) throw std::runtime_error("TP module reached loader; stopped before initialization: " + utf8(name));
                     const auto registration = registeredModules.find(path);
                     if (!inputMethodCompatible && registration != registeredModules.end()
                         && (state.role == ProcessRole::Main || state.role == ProcessRole::VerifiedGameChild)) {
                         inputMethodCompatible = true;
-                        if (log) log("Input method compatibility enabled; module=" + utf8(name) + "; source=" + registration->second
+                        if (log) log(DiagnosticLogLevel::Info, "Input method compatibility enabled; module=" + utf8(name) + "; source=" + registration->second
                             + "; PID=" + std::to_string(event.dwProcessId) + "; role=" + roleName(state.role)
                             + "; reason=registered module load; scope=session");
                     }
@@ -347,7 +355,7 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                     const auto entry = state.entries.find(address);
                     if ((native || wow64) && event.u.Exception.dwFirstChance && entry != state.entries.end() && entry->second.pending) {
                         initializeDll(state.process, event.dwThreadId, address, entry->second);
-                        if (log) log("Required DLL adapted before initialization: " + utf8(entry->second.rule->name));
+                        if (log) log(DiagnosticLogLevel::Debug, "Required DLL adapted before initialization: " + utf8(entry->second.rule->name));
                     } else if ((native || wow64) && event.u.Exception.dwFirstChance && event.dwProcessId == pid_
                                && breakpoint && breakpoint(event.dwThreadId, address)) {
                         disposition = DBG_CONTINUE;
@@ -356,18 +364,20 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                         (native ? state.nativeInitial : state.wow64Initial) = true;
                     } else {
                         disposition = DBG_EXCEPTION_NOT_HANDLED;
-                        if (log) log("Client exception; firstChance=" + std::to_string(event.u.Exception.dwFirstChance)
+                        const auto level = event.u.Exception.dwFirstChance ? DiagnosticLogLevel::Debug
+                            : state.role == ProcessRole::CompatibleChild ? DiagnosticLogLevel::Warn : DiagnosticLogLevel::Error;
+                        if (log) log(level, "Client exception; firstChance=" + std::to_string(event.u.Exception.dwFirstChance)
                                      + "; code=" + std::to_string(exception.ExceptionCode) + "; address=" + std::to_string(address)
                                      + "; PID=" + std::to_string(event.dwProcessId) + "; role=" + roleName(state.role));
                         if (log && exception.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && exception.NumberParameters >= 2)
-                            log("Client access violation; operation=" + std::to_string(exception.ExceptionInformation[0])
+                            log(level, "Client access violation; operation=" + std::to_string(exception.ExceptionInformation[0])
                                 + "; target=" + std::to_string(exception.ExceptionInformation[1]));
                         if (!event.u.Exception.dwFirstChance) {
                             const auto location = faultLocation(state.process, address);
                             if (log) {
-                                log("Client fault location; " + location);
-                                try { logFaultContext(state.process, event.dwThreadId, log); }
-                                catch (const std::exception& error) { log("Client fault diagnostics incomplete: " + std::string(error.what())); }
+                                log(level, "Client fault location; " + location);
+                                try { logFaultContext(state.process, event.dwThreadId, level, log); }
+                                catch (const std::exception& error) { log(level, "Client fault diagnostics incomplete: " + std::string(error.what())); }
                             }
                             const auto failure = "unhandled client exception code=" + std::to_string(exception.ExceptionCode)
                                 + "; " + location + "; PID=" + std::to_string(event.dwProcessId) + "; role=" + roleName(state.role);

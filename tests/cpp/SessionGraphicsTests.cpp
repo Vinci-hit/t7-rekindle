@@ -44,7 +44,7 @@ bool verifyGraphicsSession(const t7::fs::path& packageRoot) {
         require(graphics.state == T7NB_GRAPHICS_UNAVAILABLE, "idle graphics state");
         uint64_t operation = 0;
         require(session->setOutputDevice(outputDevice) == T7NB_OK, "output device selection rejected");
-        require(session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client").wstring()), operation) == T7NB_OK, "graphics test start");
+        require(session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()), operation) == T7NB_OK, "graphics test start");
         waitFor([&] { session->graphics(graphics); return graphics.state == T7NB_GRAPHICS_READY; });
         require(deviceSeen->load(), "output device was lost between the command and the client launch");
         waitFor([&] { return worldReads->load() > 1; });

@@ -39,7 +39,7 @@
                 <WrapPanel>
                   <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,28,0">
                     <TextBlock Text="启动器版本" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding Version}" ToolTip="{Binding DisplayVersion}" Margin="12,0,0,0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding DisplayVersion}" ToolTip="{Binding DisplayVersion}" Margin="12,0,0,0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
                   </StackPanel>
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="Git 提交" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
@@ -52,10 +52,9 @@
             </StackPanel>
           </Border>
           <Grid x:Name="ClientSupportGrid" Margin="0,16,0,0">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <Button x:Name="ClientDownloadButton" Grid.RowSpan="2" Command="{Binding ShowClientDownloadCommand}" Style="{StaticResource AboutActionCard}"
-                    Margin="0,0,8,0"
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Button x:Name="ClientDownloadButton" Grid.ColumnSpan="3" Command="{Binding ShowClientDownloadCommand}" Style="{StaticResource AboutActionCard}"
                     AutomationProperties.Name="客户端下载" AutomationProperties.HelpText="{Binding Text, ElementName=ClientDownloadDisclaimer}"
                     ToolTip="{Binding ClientDownloadAddress}" TabIndex="9">
               <StackPanel>
@@ -74,8 +73,8 @@
                            Text="外部页面由第三方维护，客户端及相关素材版权归原权利人所有。本项目仅提供页面链接，请自行确认下载来源与使用授权。" />
               </StackPanel>
             </Button>
-            <Button x:Name="EnvironmentInfoButton" Grid.Column="1" Command="{Binding ShowEnvironmentInfoCommand}" Style="{StaticResource AboutActionCard}"
-                    Margin="8,0,0,8" AutomationProperties.Name="环境信息" ToolTip="CPU、内存、显卡与运行组件 · 支持一键复制" TabIndex="10">
+            <Button x:Name="EnvironmentInfoButton" Grid.Row="1" Command="{Binding ShowEnvironmentInfoCommand}" Style="{StaticResource AboutActionCard}"
+                    Margin="0,16,8,0" AutomationProperties.Name="环境信息" ToolTip="CPU、内存、显卡与运行组件 · 支持一键复制" TabIndex="10">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
                 <views:Icon Kind="monitor" Width="24" Height="24" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Margin="12,0">
@@ -85,8 +84,17 @@
                 <views:Icon Grid.Column="2" Kind="chevron-right" Width="16" Height="16" VerticalAlignment="Center" />
               </Grid>
             </Button>
-            <Button x:Name="IssuesButton" Grid.Column="1" Grid.Row="1" Command="{Binding ShowIssuesCommand}" IsEnabled="{Binding HasIssuesAddress}"
-                    Style="{StaticResource AboutActionCard}" Margin="8,8,0,0" AutomationProperties.Name="问题反馈" ToolTip="{Binding IssuesAddress}" TabIndex="11">
+            <Button x:Name="LogDirectoryButton" Grid.Column="1" Grid.Row="1"
+                    Command="{Binding DataContext.OpenLogsCommand, RelativeSource={RelativeSource AncestorType=views:AboutPage}}"
+                    Style="{StaticResource AboutActionCard}" Margin="4,16,4,0" AutomationProperties.Name="日志目录" ToolTip="打开本机日志文件夹" TabIndex="11">
+              <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
+                <views:Icon Kind="folder-open" Width="24" Height="24" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="日志目录" Style="{StaticResource AboutCardTitle}" /><TextBlock Text="打开本机日志文件夹" Style="{StaticResource AboutCardCaption}" /></StackPanel>
+                <views:Icon Grid.Column="2" Kind="chevron-right" Width="16" Height="16" VerticalAlignment="Center" />
+              </Grid>
+            </Button>
+            <Button x:Name="IssuesButton" Grid.Column="2" Grid.Row="1" Command="{Binding ShowIssuesCommand}" IsEnabled="{Binding HasIssuesAddress}"
+                    Style="{StaticResource AboutActionCard}" Margin="8,16,0,0" AutomationProperties.Name="问题反馈" ToolTip="{Binding IssuesAddress}" TabIndex="12">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
                 <views:Icon Kind="message" Width="24" Height="24" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="问题反馈" Style="{StaticResource AboutCardTitle}" /><TextBlock Text="GitHub Issues" Style="{StaticResource AboutCardCaption}" /></StackPanel>
@@ -96,7 +104,7 @@
           </Grid>
           <UniformGrid x:Name="ProjectLinksGrid" Columns="3" Margin="0,16,0,0">
             <Button x:Name="RepositoryButton" Command="{Binding ShowRepositoryCommand}" IsEnabled="{Binding HasRepositoryAddress}"
-                    Style="{StaticResource AboutActionCard}" Margin="0,0,8,0" AutomationProperties.Name="项目源代码仓库" ToolTip="{Binding RepositoryAddress}" TabIndex="12">
+                    Style="{StaticResource AboutActionCard}" Margin="0,0,8,0" AutomationProperties.Name="项目源代码仓库" ToolTip="{Binding RepositoryAddress}" TabIndex="13">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
                 <views:Icon Kind="code" Width="24" Height="24" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="项目源代码仓库" Style="{StaticResource AboutCardTitle}" /><TextBlock Text="GitHub" Style="{StaticResource AboutCardCaption}" /></StackPanel>
@@ -104,7 +112,7 @@
               </Grid>
             </Button>
             <Button x:Name="LicensesButton" Command="{Binding ShowLicensesCommand}" Style="{StaticResource AboutActionCard}"
-                    Margin="4,0,4,0" AutomationProperties.Name="开源软件说明" TabIndex="13">
+                    Margin="4,0,4,0" AutomationProperties.Name="开源软件说明" TabIndex="14">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
                 <views:Icon Kind="file-text" Width="24" Height="24" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="开源软件说明" Style="{StaticResource AboutCardTitle}" /><TextBlock Text="项目与第三方组件许可" Style="{StaticResource AboutCardCaption}" /></StackPanel>
@@ -112,7 +120,7 @@
               </Grid>
             </Button>
             <Button x:Name="ThanksButton" Command="{Binding ShowThanksCommand}" Style="{StaticResource AboutActionCard}"
-                    Margin="8,0,0,0" AutomationProperties.Name="特别感谢" TabIndex="14">
+                    Margin="8,0,0,0" AutomationProperties.Name="特别感谢" TabIndex="15">
               <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /></Grid.ColumnDefinitions>
                 <views:Icon Kind="heart" Width="24" Height="24" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="特别感谢" Style="{StaticResource AboutCardTitle}" /><TextBlock Text="开发、测试与社区贡献" Style="{StaticResource AboutCardCaption}" /></StackPanel>

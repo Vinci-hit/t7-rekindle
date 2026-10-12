@@ -10,7 +10,7 @@
 | 预览版 | 浅金底、墨青文字 | `flask-conical` | 无角标 / 金色“有更新” |
 
 - `About.IsPreviewBuild` 来自 `LauncherInformation.CurrentBuild.Channel`，表示当前运行构建，不表示设置中选中的更新渠道。切换渠道不改变主体类型或当前版本。
-- 主体原样绑定 `About.DisplayVersion`，例如 `v0.1.0`、`v0.1.0p128.2`。开发构建保留现有说明；UI 不解析 `p`、拼接版本或附加 hash。
+- 主体原样绑定 `About.DisplayVersion`，例如正式版 `v0.4.0`、预览版 `p128.2`。开发构建保留现有说明；UI 不解析 `p`、拼接版本或附加 hash。
 - 角标绑定 `About.HasUpdateReminder`，与当前版本类型独立。没有角标不代表已是最新版。检查中、失败、下载、取消及查看更新页沿用现有提醒保留规则。
 - Tooltip 与辅助名称包含当前安装类型、完整版本、是否有更新、已知目标版本及“打开更新页面”；失败时说明保留上次结果。目标版本未知时只显示“有更新”。
 

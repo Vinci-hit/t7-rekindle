@@ -46,7 +46,7 @@ MovementOverlay::MovementOverlay(uint32_t features) : features_(features) {}
 MovementOverlay::~MovementOverlay() { clear(); }
 
 void MovementOverlay::install(HANDLE process, uintptr_t imageBase,
-                              const std::function<void(std::string)>& log, bool skipStartupAnimation) {
+                              const DiagnosticLogCallback& log, bool skipStartupAnimation) {
     if (!process || !imageBase) throw std::runtime_error("movement overlay requires a client process");
     if (installed()) throw std::runtime_error("movement overlay is already installed");
     if (imageBase > UINT32_MAX - MOVEMENT_HOOK_SITES.back().rva - 8)
@@ -82,7 +82,7 @@ void MovementOverlay::install(HANDLE process, uintptr_t imageBase,
             patchedCount_ = i + 1;
             writeClientMemory(process, target, movementJump(target, page.entries[i]));
         }
-        if (log_) log_("Runtime local movement hooks installed; original collision, VFS and disk resources unchanged");
+        if (log_) log_(DiagnosticLogLevel::Debug, "Runtime local movement hooks installed; original collision, VFS and disk resources unchanged");
     } catch (...) { cleanupAndRethrow(std::current_exception(), [this] { rollback(); }); }
 }
 
@@ -113,7 +113,7 @@ bool MovementOverlay::handleBreakpoint(DWORD threadId, uintptr_t address) {
     // The document's own pool owns this expanded buffer. The original parser may
     // retain or mutate it; no external buffer is freed or reused across documents.
     writeBuffer(process_, context.Esi, replacement);
-    if (log_) log_(startupAnimation ? "Startup animation skip branch prepared in memory; original login completion event preserved"
+    if (log_) log_(DiagnosticLogLevel::Debug, startupAnimation ? "Startup animation skip branch prepared in memory; original login completion event preserved"
         : "Runtime local movement resource prepared; kind=" + std::to_string(static_cast<int>(resource)));
     return true;
 }

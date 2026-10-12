@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Common.h"
+#include "../core/DiagnosticLog.h"
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -10,10 +11,10 @@ namespace t7 {
 class Journal {
 public:
     explicit Journal(const fs::path& root, size_t segmentLimit = 64 * 1024 * 1024,
-                     unsigned maxSegments = 160);
+                     unsigned maxSegments = 160, std::shared_ptr<DiagnosticLogFilter> filter = {});
     ~Journal();
     void stop();
-    void add(std::string direction, uint64_t connection, std::string version, std::string reason,
+    void add(DiagnosticLogLevel level, std::string direction, uint64_t connection, std::string version, std::string reason,
              Bytes bytes = {}, bool capture = true);
     std::vector<std::string> lines();
 private:
@@ -28,6 +29,7 @@ private:
     fs::path root_;
     size_t segmentLimit_;
     unsigned maxSegments_;
+    const std::shared_ptr<DiagnosticLogFilter> filter_;
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<Record> pending_;
@@ -37,5 +39,6 @@ private:
     bool stopping_ = false, failed_ = false;
     std::thread thread_;
     void run();
+    void diagnostic(DiagnosticLogLevel level, const std::string& message);
 };
 }

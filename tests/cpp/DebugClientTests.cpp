@@ -66,7 +66,7 @@ void verifyChildren(const t7::fs::path& original) {
             std::string error;
             try {
                 client.start(directory / "T7.DebugParent.exe", hash, {}, [](HANDLE, HANDLE) {},
-                    [&](const std::string& line) {
+                    [&](t7::DiagnosticLogLevel, const std::string& line) {
                         const auto marker = line.find("Verified client child process; PID=");
                         if (marker != std::string::npos) {
                             const auto pid = static_cast<DWORD>(std::stoul(line.substr(marker + 35)));
@@ -119,7 +119,7 @@ void verifyUnhandledException(const t7::fs::path& original) {
         t7::DebugClient client;
         std::vector<std::string> lines;
         client.start(path, t7::fileHash(path), {}, [](HANDLE, HANDLE) {},
-                     [&](const std::string& line) { lines.push_back(line); });
+                     [&](t7::DiagnosticLogLevel, const std::string& line) { lines.push_back(line); });
         require(WaitForSingleObject(client.process(), 10000) == WAIT_OBJECT_0, "faulting fixture did not exit");
         client.stop();
         std::string error;

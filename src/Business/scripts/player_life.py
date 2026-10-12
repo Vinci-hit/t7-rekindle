@@ -41,7 +41,7 @@ def canChoose(flow):
 
 
 def die(flow, attacker, position):
-    from . import combat
+    from . import combat, scene
     if not actors.active(flow, wire.ACTOR_ID) or not battle.enabled(flow):
         return
     battle.resetAction(flow)
@@ -60,10 +60,12 @@ def die(flow, attacker, position):
     controls.activate(flow)
     flow.send(4, battle_flow.encode_battle_dead_notify(entity_rid=wire.ACTOR_ID, server_time_ms=flow.now),
               'player-dead')
+    if scene.checkKillTarget(flow, actors.data(flow, attacker).get('camp', 1)):
+        return
     # Native DEATH owns the camera delay, friend cycling and free mouse-look.
     flow.send(0x36, wire.actorState(flow.now, 9), 'player-observer')
     flow.later(SELECT_TIMER, RESPAWN_MS)
-    flow.result['logs'].append(f'player-death attacker={attacker} respawn-at={flow.now + RESPAWN_MS}')
+    flow.log("INFO", f'player-death attacker={attacker} respawn-at={flow.now + RESPAWN_MS}')
 
 
 def chooseSpawn(flow, snapshot):
@@ -108,7 +110,7 @@ def respawn(flow):
     except (OSError, ValueError) as error:
         status = 'resource-unavailable' if isinstance(error, OSError) else 'resource-invalid'
         if life.get('status') != status:
-            flow.result['logs'].append('player-respawn-' + status)
+            flow.log("WARN", 'player-respawn-' + status)
         flow.session['life'] = {**life, 'status': status}
         point = None
     if point is None:
@@ -129,7 +131,7 @@ def respawn(flow):
     combat.publishHealth(flow, wire.ACTOR_ID)
     controls.activate(flow)
     flow.later(RESPAWN_TIMER, RETRY_MS)
-    flow.result['logs'].append(f"player-respawn hero={flow.session['heroId']} camp={flow.session['camp']} "
+    flow.log("INFO", f"player-respawn hero={flow.session['heroId']} camp={flow.session['camp']} "
                               f'position={position}')
 
 

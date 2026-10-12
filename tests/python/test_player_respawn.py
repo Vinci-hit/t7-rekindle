@@ -168,7 +168,7 @@ def test_respawn_resource_failure_waits_without_falling_back(multi, monkeypatch,
     assert multi.session['health'] == 0
     assert multi.session['life']['state'] == 'waiting'
     assert not any(p['reason'] == 'player-respawn-add' for p in multi.result['send'])
-    assert sum(log.startswith('player-respawn-resource-') for log in multi.result['logs']) == 1
+    assert sum(log["message"].startswith('player-respawn-resource-') for log in multi.result['logs']) == 1
 
 
 def test_unknown_hero_never_uses_infantry_spawn_or_changes_the_visible_roster(multi):

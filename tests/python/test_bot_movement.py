@@ -37,7 +37,7 @@ def lastMove(flow):
 
 
 def run(flow):
-    for _ in range(42):
+    for _ in range(22):
         step(flow, position=(flow.session['bot']['position'][0] + .1, 0, .2))
     assert lastMove(flow).state == 10
 
@@ -59,8 +59,8 @@ def test_native_position_is_preserved_when_velocity_and_animation_change(walking
         assert move.target_instance_id == 2
         assert move.position == pytest.approx(actual)
         assert flow.session['bot']['position'] == list(actual)
-        assert move.current_velocity == (3000 if i < 39 else 5000)
-        assert move.state == (2 if i < 39 else 10)
+        assert move.current_velocity == (3000 if i < 19 else 5000)
+        assert move.state == (2 if i < 19 else 10)
         assert (move.forward_back, move.left_right) == (-1000, 0)
     step(flow)
     assert lastMove(flow).position == pytest.approx((4., 0, .2))
@@ -68,21 +68,21 @@ def test_native_position_is_preserved_when_velocity_and_animation_change(walking
 
 
 def test_frame_crossing_run_threshold_does_not_integrate_position(walking):
-    for i in range(39):
+    for i in range(19):
         step(walking, position=(.05 * (i + 1), 0, .2))
-    step(walking, 75, position=(2.3, 0, .2))
-    assert lastMove(walking).position == pytest.approx((2.3, 0, .2))
+    step(walking, 75, position=(1.3, 0, .2))
+    assert lastMove(walking).position == pytest.approx((1.3, 0, .2))
     assert lastMove(walking).state == 10
 
 
 def test_repath_preserves_continuous_forward_warmup(walking):
-    for i in range(38):
+    for i in range(18):
         step(walking, position=(.1 * (i + 1), 0, .2))
     snapshot(walking, (40., 0., .2))
     tick(walking)
     step(walking, 100)
     assert lastMove(walking).state == 10
-    assert walking.session["bot"]["forwardMs"] == 2000
+    assert walking.session["bot"]["forwardMs"] == 1000
 
 
 def test_stop_and_restart_begin_at_jog_pace(walking):
@@ -230,7 +230,7 @@ def test_old_state_defaults_to_jog_and_current_warmup_survives_migration(walking
     original = deepcopy(walking.state)
     assert app.migrateState(app.STATE_VERSION, walking.state) == original
     assert walking.state == original
-    for field, invalid in (("forwardMs", -1), ("forwardMs", 2001), ("forwardMs", True),
+    for field, invalid in (("forwardMs", -1), ("forwardMs", 1001), ("forwardMs", True),
                            ("lastTurnAt", -1), ("lastTurnAt", "0")):
         state = deepcopy(original)
         state["sessions"]["1"]["bot"][field] = invalid

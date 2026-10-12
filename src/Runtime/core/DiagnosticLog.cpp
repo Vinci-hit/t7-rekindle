@@ -43,13 +43,42 @@ void rotateNativeLog(const fs::path& directory) {
 }
 }
 
+const char* diagnosticLevelName(DiagnosticLogLevel level) {
+    switch (level) {
+    case DiagnosticLogLevel::Debug: return "DEBUG";
+    case DiagnosticLogLevel::Info: return "INFO";
+    case DiagnosticLogLevel::Warn: return "WARN";
+    case DiagnosticLogLevel::Error: return "ERROR";
+    default: throw std::invalid_argument("invalid diagnostic level");
+    }
+}
+
+DiagnosticLogLevel parseDiagnosticLevel(const std::string& level) {
+    if (level == "DEBUG") return DiagnosticLogLevel::Debug;
+    if (level == "INFO") return DiagnosticLogLevel::Info;
+    if (level == "WARN" || level == "WARNING") return DiagnosticLogLevel::Warn;
+    if (level == "ERROR") return DiagnosticLogLevel::Error;
+    throw std::invalid_argument("invalid diagnostic level");
+}
+
+DiagnosticLogLevel diagnosticRecordLevel(const std::string& record) {
+    const auto end = record.find("  [", 21);
+    if (record.size() < 21 || record.compare(19, 2, "  ") != 0 || end == std::string::npos)
+        throw std::invalid_argument("invalid diagnostic record");
+    return parseDiagnosticLevel(record.substr(21, end - 21));
+}
+
 std::string formatDiagnosticRecord(const std::string& message, const char* level, const char* source) {
+    return formatDiagnosticRecord(message, parseDiagnosticLevel(level), source);
+}
+
+std::string formatDiagnosticRecord(const std::string& message, DiagnosticLogLevel level, const char* source) {
     SYSTEMTIME time{};
     GetLocalTime(&time);
     char timestamp[20];
     sprintf_s(timestamp, "%04u-%02u-%02u %02u:%02u:%02u", time.wYear, time.wMonth, time.wDay,
               time.wHour, time.wMinute, time.wSecond);
-    return std::string(timestamp) + "  " + level + "  [" + source + "] " + message;
+    return std::string(timestamp) + "  " + diagnosticLevelName(level) + "  [" + source + "] " + message;
 }
 
 std::string boundedDiagnosticRecord(const std::string& record) {

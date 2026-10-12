@@ -12,7 +12,7 @@
   <PropertyGroup><TargetName>T7.RuntimeTests</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><PreprocessorDefinitions>T7_NATIVE_BRIDGE_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
-    <Link><SubSystem>Console</SubSystem><AdditionalDependencies>python314.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+    <Link><SubSystem>Console</SubSystem><AdditionalDependencies>python314.lib;ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ServerLifecycleSmoke.cpp" />
@@ -22,6 +22,7 @@
     <ClCompile Include="DiagnosticLogTests.cpp" />
     <ClCompile Include="SessionCleanupTests.cpp" />
     <ClCompile Include="SessionOperationTests.cpp" />
+    <ClCompile Include="SessionResourceTests.cpp" />
     <ClCompile Include="SessionGraphicsTests.cpp" />
     <ClCompile Include="SessionAudioTests.cpp" />
     <ClCompile Include="MovementOverlayTests.cpp" />
@@ -39,11 +40,13 @@
     <ClCompile Include="../../src/Runtime/launcher/GraphicsValues.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/RoundEndHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/TerrainHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/BladePoseHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/BladeSweepHookCode.cpp" />

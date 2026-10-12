@@ -101,8 +101,11 @@ namespace T7.ManagedHarness
             {
                 var entry = (await new ReleaseHistoryService(client, UpdateFixtures.Repository, UpdateFixtures.Mirror, current)
                     .GetHistoryAsync(UpdateChannel.Preview, CancellationToken.None)).Single();
-                Assert(entry.CanRollback && entry.ResetsSettings && entry.DisplayVersion == "v0.1.0p12.1" && entry.Installer.FallbackAddress == null,
+                Assert(entry.CanRollback && entry.ResetsSettings && entry.DisplayVersion == "p12.1" && entry.Installer.FallbackAddress == null,
                     "preview identity, cross-channel rollback or settings reset lost");
+                var info = entry.ToInstallInfo();
+                Assert(info.TargetDisplayVersion == "p12.1" && info.TargetVersion == "v0.1.0" && info.UpdateIdentity == "preview:112:1",
+                    "preview rollback presentation changed its numeric version or installation identity");
                 var start = UpdateInstallationService.CreateStartInfo("Setup.exe", Path.GetTempPath(), 123, entry);
                 Assert(start.Arguments.Contains("/ROLLBACK=1 /RESETSETTINGS=1 /UPDATECHANNEL=preview"), "rollback installation options lost");
             }

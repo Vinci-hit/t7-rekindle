@@ -11,22 +11,7 @@ from Business.scripts.navigation import NavMesh
 from test_bot_player import flowAt
 from test_melee_combat import swing, advance, hp
 from blade_fixture import contact, publish
-
-
-def spawnXml():
-    root = ET.Element("SH_RES_ACTOR_SPAWN_GROUP_TAB")
-    for camp, born, infantry, count in [(1, 1, 1, 10), (2, 1, 1, 10), (1, 0, 1, 14),
-                                        (2, 0, 1, 12), (1, 1, 0, 4), (2, 1, 0, 6)]:
-        group = ET.SubElement(root, "SH_RES_ACTOR_SPAWN_GROUP")
-        flags = dict(is_enable=1, is_blue=int(camp == 1), is_red=int(camp == 2), is_born=born,
-                     is_revive=1-born, is_infantry=infantry, is_cavalry=1-infantry, point_num=count)
-        for key, value in flags.items():
-            ET.SubElement(group, key, value=str(value))
-        for i in range(count):
-            point = ET.SubElement(group, "points")
-            ET.SubElement(point, "pos", value=f"{i},{camp * 20},0.2")
-            ET.SubElement(point, "dir", value="0,1,0" if camp == 1 else "0,-1,0")
-    return root
+from vfs_fixture import spawnXml
 
 
 def test_spawn_resource_excludes_revive_and_cavalry_points():

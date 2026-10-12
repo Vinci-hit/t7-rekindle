@@ -1,22 +1,12 @@
 from collections import Counter
 from copy import deepcopy
-import struct
-import zlib
 
 import pytest
 
 from Business.scripts import actors, app, battle, bot, bot_names, bot_profiles, roster
 from test_bot_decision import duel, nearBot, observe, choose
 from test_bot_player import flowAt
-
-
-def nameTable(rows):
-    header = bytearray(140)
-    struct.pack_into('<4sIII', header, 0, b'MSES', 7, 68, len(rows))
-    header[64:68] = b'GBK\0'
-    struct.pack_into('<I', header, 132, 140)
-    return bytes(header) + b''.join(struct.pack('<I32s32s', 0, kind.encode('ascii'), name.encode('gbk'))
-                                    for kind, name in rows)
+from vfs_fixture import NAME_PATH, archiveBytes, nameTable
 
 
 def test_name_resource_reads_only_npc_names_and_deduplicates():
@@ -24,16 +14,13 @@ def test_name_resource_reads_only_npc_names_and_deduplicates():
     assert bot_names.parseNames(data) == ('测试甲', '测试乙')
 
 
-def test_names_load_from_selected_client_and_exclude_human_name(tmp_path, monkeypatch):
+def test_names_load_from_selected_client_and_exclude_human_name(tmp_path):
     directory = tmp_path / 'client' / 'Bin'
     directory.mkdir(parents=True)
     archive = directory.parent / 'vfs' / 'data1.vfs'
     archive.parent.mkdir()
     data = nameTable([('npc', '测试甲'), ('npc', '测试乙'), ('npc', '测试丙')])
-    compressed = zlib.compress(data)
-    archive.write_bytes(b'padding' + compressed)
-    for key, value in [('NAME_OFFSET', 7), ('NAME_STORED_SIZE', len(compressed)), ('NAME_SIZE', len(data))]:
-        monkeypatch.setattr(bot_names, key, value)
+    archive.write_bytes(archiveBytes([(NAME_PATH, data, 3)], padding=7))
     bot_names.loadNames.cache_clear()
     names = bot_names.loadNames(str(directory))
     assert set(bot_names.assignNames(names, 2, 42, '测试甲')) == {'测试乙', '测试丙'}

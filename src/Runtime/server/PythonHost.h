@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 #include "../core/WorldSnapshot.h"
+#include "../core/DiagnosticLog.h"
 #include <Python.h>
 
 namespace t7 {
@@ -17,7 +18,7 @@ struct Transition {
     std::string state;
     std::vector<Outgoing> send;
     std::vector<TimerChange> timers;
-    std::vector<std::string> logs;
+    std::vector<DiagnosticMessage> logs;
 };
 class PythonHost {
 public:
@@ -28,6 +29,8 @@ public:
     std::string context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections,
                         const WorldSnapshot& world = {});
     std::string create(const std::string& context);
+    void checkResources(const fs::path& directory, const std::string& playerName = "");
+    std::vector<std::string> closeRevision();
     Transition dispatch(const Event& event, const std::string& state, const std::string& context);
     std::string prepare();
     std::string switchVersion(const std::string& state, bool rollback);

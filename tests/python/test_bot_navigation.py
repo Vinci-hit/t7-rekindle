@@ -1,9 +1,8 @@
-import struct
-
 import pytest
 
 from Business.scripts.navigation import NavMesh
-from Business.scripts.navmesh_resource import MAGIC, TagReader, readCompressedEntry
+from Business.scripts.navmesh_resource import TagReader
+from vfs_fixture import NAV_PATH, archiveBytes, syntheticTagfile, vint
 
 
 def mesh():
@@ -54,64 +53,12 @@ def test_nonfinite_vertices_and_invalid_polygons_are_rejected():
         NavMesh.fromPolygons([[(0, 0, 0), (1, 0, 0)]])
 
 
-def vint(value):
-    unsigned = abs(value) * 2 + (value < 0)
-    data = bytearray()
-    while unsigned > 127:
-        data.append((unsigned & 127) | 128)
-        unsigned >>= 7
-    return bytes(data + bytes([unsigned]))
-
-
 def test_signed_tag_integer_and_truncation():
     for n in [0, 1, -1, 1803, 8069, 2**31 - 1]:
         assert TagReader(vint(n)).integer() == n
     for data in [b"", b"\x80", b"\x80" * 10]:
         with pytest.raises(ValueError):
             TagReader(data).integer()
-
-
-def test_bounded_zlib_entry_consumes_each_stream():
-    import io
-    import zlib
-    raw = b"fixture" * 100
-    packed = zlib.compress(raw[:300]) + zlib.compress(raw[300:])
-    assert readCompressedEntry(io.BytesIO(b"prefix" + packed), 6, len(packed), len(raw)) == raw
-    for bad in [packed[:-1], packed + b"trailing", zlib.compress(raw * 10)]:
-        with pytest.raises(ValueError):
-            readCompressedEntry(io.BytesIO(bad), 0, len(bad), len(raw))
-
-
-def syntheticTagfile():
-    def string(value):
-        return vint(len(value)) + value.encode("ascii")
-
-    def schema(name, version, parent, fields):
-        data = vint(2) + string(name) + vint(version) + vint(parent) + vint(len(fields))
-        for field, kind, ref in fields:
-            data += string(field) + vint(kind) + (string(ref) if ref else b"")
-        return data
-
-    def integers(values):
-        return vint(4) + b"".join(map(vint, values))
-
-    data = MAGIC + vint(1) + vint(5) + string("hk_2014.2.5-r1") + vint(-10) + vint(0) * 3
-    data += schema("Base", 0, 0, [("referenceCount", 0, None)])
-    data += schema("hkaiNavMesh", 14, 1, [
-        ("faces", 25, "Face"), ("edges", 25, "Edge"),
-        ("vertices", 20, None), ("streamingSets", 18, None)])
-    data += schema("Face", 0, 0, [(n, 2, None) for n in ("startEdgeIndex", "numEdges", "numUserEdges")])
-    data += schema("Edge", 0, 0, [(n, 2, None) for n in ("a", "b", "oppositeEdge", "oppositeFace")])
-    data += vint(4) + vint(2) + b"\x1e"
-    data += vint(2) + b"\x07" + integers([0, 4]) + integers([4, 4]) + integers([0, 0])
-    data += vint(8) + b"\x0f"
-    for column in ([0, 1, 2, 3, 1, 4, 5, 2], [1, 2, 3, 0, 4, 5, 2, 1],
-                   [-1, 7, -1, -1, -1, -1, -1, 1], [-1, 1, -1, -1, -1, -1, -1, 0]):
-        data += integers(column)
-    data += vint(6) + vint(4)
-    for x, y in [(0, 0), (4, 0), (4, 4), (0, 4), (8, 0), (8, 4)]:
-        data += struct.pack("<4f", x, y, 0, 0)
-    return data + vint(0) + vint(7)
 
 
 def test_full_synthetic_tagfile_columnar_arrays_and_inherited_mask():
@@ -167,18 +114,15 @@ def test_nearly_collinear_face_boundary_is_not_a_geometry_exception():
 @pytest.fixture
 def clientNavigation(tmp_path, monkeypatch):
     import hashlib
-    import zlib
     from Business.scripts import navmesh_resource as resource
     data = syntheticTagfile()
-    packed = zlib.compress(data)
+    packed = archiveBytes([(NAV_PATH, data, 3)])
     directory = tmp_path / "Game" / "Bin"
     directory.mkdir(parents=True)
     (directory.parent / "vfs").mkdir()
     archive = directory.parent / "vfs/map.vfs"
     archive.write_bytes(packed)
-    for name, value in {"NAV_OFFSET": 0, "NAV_SIZE": len(data), "NAV_STORED_SIZE": len(packed),
-                        "NAV_HASH": hashlib.sha256(data).hexdigest()}.items():
-        monkeypatch.setattr(resource, name, value)
+    monkeypatch.setattr(resource, "NAV_HASH", hashlib.sha256(data).hexdigest())
     resource.loadNavigation.cache_clear()
     try:
         yield directory, archive, packed

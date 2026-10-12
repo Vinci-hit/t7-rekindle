@@ -23,6 +23,7 @@ def hurtTimer(actorId):
 
 def initialize(flow):
     player_life.reset(flow)
+    flow.session['firstBloodAwarded'] = False
     for actorId in actors.ids(flow.session):
         data = battle.actorData(flow, actorId)
         data["health"] = MAX_HEALTH
@@ -38,6 +39,8 @@ def initialize(flow):
 
 
 def validState(data):
+    if type(data.get('firstBloodAwarded', False)) is not bool:
+        return False
     if type(data.get('killStreak', 0)) is not int or not 0 <= data.get('killStreak', 0) <= kill_flow.MAX_STREAK:
         return False
     if any(type(data.get(key, 0)) is not int or not 0 <= data.get(key, 0) <= kill_flow.MAX_SCORE
@@ -91,7 +94,7 @@ def cancelSwing(flow, actorId, *, reason=None):
         return
     if swing is not None and reason and not swing.get("hits"):
         detail = swing.get("miss", "expired") if flow.now >= swing["until"] else reason
-        flow.result["logs"].append(f"combat-miss attacker={actorId} reason={detail}")
+        flow.log("DEBUG", f"combat-miss attacker={actorId} reason={detail}")
 
 
 def contactEndMs(intent):
@@ -176,7 +179,7 @@ def hitTerrain(flow, attacker, contact, *, intent=None):
         attacker_mid=attacker, target_mid=0, attacker_weapon_id=wire.WEAPON_ID,
         target_weapon_id=0, server_time_ms=int(getattr(flow, 'contactAt', flow.now))), "combat-terrain-hit")
     point = ",".join(f"{v:.2f}" for v in contact["position"])
-    flow.result["logs"].append(
+    flow.log("DEBUG",
         f"combat-terrain attacker={attacker} material={contact['material']} point={point}")
 
 
@@ -196,7 +199,7 @@ def scoreTotals(data):
     return data.get('kills', 0), data.get('deaths', 0), data.get('battlePoints', 0)
 
 
-def publishScore(flow, actorId, *, previous=None):
+def publishScore(flow, actorId, *, previous=None, statMessageId=0):
     current = scoreTotals(battle.actorData(flow, actorId))
     if current == (0, 0, 0):
         return
@@ -204,16 +207,22 @@ def publishScore(flow, actorId, *, previous=None):
     flow.send(kill_flow.SCORE_COMMAND, kill_flow.encode_score_update_event(
         server_time_ms=flow.now, entity_rid=actorId, previous_kills=previous[0], kills=current[0],
         previous_deaths=previous[1], deaths=current[1],
-        previous_points=previous[2], points=current[2]), 'combat-score')
+        previous_points=previous[2], points=current[2], stat_message_id=statMessageId), 'combat-score')
+
+
+def campKills(flow):
+    members = tuple(actors.data(flow, actorId) for actorId in actors.ids(flow.session))
+    return {camp: sum(value.get('kills', 0) for value in members if value.get('camp', 1) == camp)
+            for camp in (1, 2)}
 
 
 def publishCampScore(flow):
-    members = tuple(actors.data(flow, actorId) for actorId in actors.ids(flow.session))
     # The deathmatch HUD's kill counters are script variables, not combat points.
-    totals = {camp: min(kill_flow.MAX_SCORE, sum(value.get('kills', 0) for value in members
-                                               if value.get('camp', 1) == camp)) for camp in (1, 2)}
+    totals = campKills(flow)
     flow.send(kill_flow.SCRIPT_COMMAND, kill_flow.encode_camp_kill_update(
-        server_time_ms=flow.now, instance_id=1, blue_kills=totals[1], red_kills=totals[2]), 'combat-camp-score')
+        server_time_ms=flow.now, instance_id=1,
+        blue_kills=min(kill_flow.MAX_SCORE, totals[1]), red_kills=min(kill_flow.MAX_SCORE, totals[2]),
+        kill_target=flow.session.get('killTarget')), 'combat-camp-score')
 
 
 def parry(flow, attacker, defender, snapshot, *, attackIntent=None, defenceIntent=None):
@@ -239,7 +248,7 @@ def parry(flow, attacker, defender, snapshot, *, attackIntent=None, defenceInten
     battle.parryReaction(flow, defender, attacker, success=True, intent=defence['intent'])
     if defender != wire.ACTOR_ID:
         bot.parrySucceeded(flow, defender)
-    flow.result["logs"].append(
+    flow.log("DEBUG",
         f"combat-parry attacker={attacker} target={defender} attack={attack['intent']} defence={defence['intent']}")
     return True
 
@@ -275,7 +284,7 @@ def bodyContact(snapshot, attacker, target):
 
 
 def applyHit(flow, attacker, target, snapshot, *, contact=None, intent=None):
-    if not actors.active(flow, attacker) or not actors.active(flow, target):
+    if flow.session.get('roundEnded') or not actors.active(flow, attacker) or not actors.active(flow, target):
         return
     hitPosition, hitDirection, hitNormal = (bodyContact(snapshot, attacker, target) if contact is None
                                           else tuple(tuple(contact[key]) for key in ("position", "direction", "normal")))
@@ -299,7 +308,7 @@ def applyHit(flow, attacker, target, snapshot, *, contact=None, intent=None):
             target_life_state=battle_flow.LIFE_STATE_KILL if data['health'] == 0 else battle_flow.LIFE_STATE_NONE,
             attack_weapon_id=wire.WEAPON_ID, target_result_type=battle_flow.RESULT_DATA_DELTA_HP,
             target_result_data=data['health'] - previousHealth), 'combat-damage')
-    flow.result["logs"].append(f"combat-hit attacker={attacker} target={target} hp={data['health']}")
+    flow.log("DEBUG", f"combat-hit attacker={attacker} target={target} hp={data['health']}")
     if data['health'] == 0:
         if target == wire.ACTOR_ID:
             player_life.die(flow, attacker, position)
@@ -349,6 +358,8 @@ def checkHit(flow, attacker):
             return
         swing["hits"] = [*swing.get("hits", []), target]
         applyHit(flow, attacker, target, snapshot, contact=contact)
+        if flow.session.get('roundEnded'):
+            return
     hits = swing.get("hits", [])
     camp = data.get("camp", 1)
     remaining = any(rid not in hits and actors.active(flow, rid)
@@ -376,6 +387,8 @@ def worldUpdated(flow):
         # A fresh native frame is damage evidence; the legacy retry deadline is not a hit gate.
         flow.cancel(hitTimer(actorId))
         checkHit(flow, actorId)
+        if flow.session.get('roundEnded'):
+            return
 
 
 def finishHurt(flow, actorId):

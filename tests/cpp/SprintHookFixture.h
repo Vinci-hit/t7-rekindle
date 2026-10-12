@@ -178,7 +178,7 @@ inline void verify(HANDLE process) {
     }
     verifyJump(process);
     writeWord(process, KEYS, 1); expect(process, 3, false, "jog speed");
-    time(1999); expect(process, 3, false, "sprint armed too early");
+    time(999); expect(process, 3, false, "sprint armed too early");
     time(1); expect(process, 5, true, "run speed/HUD did not arm");
     if (readWord(process, worldFixture::MOVABLE + 0x2C) != 10) throw std::runtime_error("run state did not follow speed");
     const auto writes = readWord(process, STATE_WRITES); pump(process);
@@ -215,7 +215,7 @@ inline void verify(HANDLE process) {
     }
     // Losing forward movement, crouching or taking a hit still cancels the carried run.
     for (uint32_t keys : {0u, 2u, 4u, 17u, 1u}) {
-        writeWord(process, KEYS, 1); pump(process); time(2000);
+        writeWord(process, KEYS, 1); pump(process); time(1000);
         expect(process, 5, true, "run setup before airborne interruption");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
         if (keys == 1) writeWord(process, FIGHT + 0x38, 35);
@@ -224,16 +224,16 @@ inline void verify(HANDLE process) {
         writeWord(process, FIGHT + 0x38, 2); writeWord(process, KEYS, 1); time(3000);
         expect(process, 3, false, "interrupted run rearmed in midair");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
-        time(1999); expect(process, 3, false, "landing reused canceled run eligibility");
+        time(999); expect(process, 3, false, "landing reused canceled run eligibility");
         time(1); expect(process, 5, true, "canceled run did not rearm on the ground");
     }
     writeWord(process, KEYS, 0); pump(process);
-    writeWord(process, KEYS, 1); pump(process); time(1000);
+    writeWord(process, KEYS, 1); pump(process); time(500);
     writeWord(process, KEYS, 33); expect(process, 3, false, "jump created run eligibility before acceleration completed");
     writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001);
     writeWord(process, KEYS, 1); time(3000); expect(process, 3, false, "slow takeoff accelerated in midair");
     writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
-    time(1999); expect(process, 3, false, "slow jump counted airtime toward ground acceleration");
+    time(999); expect(process, 3, false, "slow jump counted airtime toward ground acceleration");
     time(1); expect(process, 5, true, "slow jump did not rearm after ground acceleration");
     for (const auto& chain : std::vector<std::vector<uint32_t>>{
         {235,237,238,239}, {241,243,244,245}, {247,249,250,251}, {253,255,256,257},
@@ -242,12 +242,12 @@ inline void verify(HANDLE process) {
         for (auto state : chain) {
             writeWord(process, FIGHT + 0x38, state);
             expect(process, 3, false, "attack/parry retained run speed or HUD");
-            writeWord(process, KEYS, 1); time(2000);
+            writeWord(process, KEYS, 1); time(1000);
             expect(process, 3, false, "held movement armed running during attack/parry");
             writeWord(process, KEYS, 9);
             expect(process, 3, false, "direction change accelerated attack/parry");
         }
-        writeWord(process, FIGHT + 0x38, 2); pump(process); time(1999);
+        writeWord(process, FIGHT + 0x38, 2); pump(process); time(999);
         expect(process, 3, false, "attack/parry kept elapsed run time");
         time(1); expect(process, 5, true, "attack/parry recovery did not rearm running");
     }
@@ -297,20 +297,20 @@ inline void verify(HANDLE process) {
     if (readWord(process, DIRECTION)) throw std::runtime_error("released keys resumed motion");
     expectDirection(process, 0, false);
     for (uint32_t keys : {0u, 2u, 4u, 8u, 3u, 17u, 33u}) {
-        writeWord(process, KEYS, keys); pump(process); time(2000);
+        writeWord(process, KEYS, keys); pump(process); time(1000);
         expect(process, 3, false, "stop/backward/strafe/crouch/jump armed running");
     }
-    writeWord(process, KEYS, 1); pump(process); time(2000); expect(process, 5, true, "run rearm");
+    writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "run rearm");
     writeWord(process, FIGHT + 0x38, 35); expect(process, 3, false, "hurt kept sprint ready");
-    writeWord(process, FIGHT + 0x38, 2); pump(process); time(1999); expect(process, 3, false, "hurt kept elapsed run time");
+    writeWord(process, FIGHT + 0x38, 2); pump(process); time(999); expect(process, 3, false, "hurt kept elapsed run time");
     time(1); expect(process, 5, true, "hurt recovery rearm");
     writeWord(process, worldFixture::STATE + 0x38, 0); expect(process, 3, false, "leaving kept sprint ready");
-    writeWord(process, worldFixture::STATE + 0x38, 4); pump(process); time(2000);
+    writeWord(process, worldFixture::STATE + 0x38, 4); pump(process); time(1000);
     writeWord(process, worldFixture::INSTANCE + 0x6C, 2); expect(process, 3, false, "epoch reused sprint readiness");
-    time(2000); expect(process, 5, true, "epoch recovery");
+    time(1000); expect(process, 5, true, "epoch recovery");
     // Tick subtraction remains valid across GetTickCount wraparound.
     writeWord(process, KEYS, 0); pump(process); tick = 0xFFFFFF00; time(0);
-    writeWord(process, KEYS, 1); pump(process); time(2000); expect(process, 5, true, "clock wrap broke run timer");
+    writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "clock wrap broke run timer");
     writeWord(process, FIGHT + 0x38, 439); pump(process);
     writeWord(process, KEYS, 4); pump(process);
     writeWord(process, FIGHT + 0x38, 35); expect(process, 3, false, "interrupted dash speed");

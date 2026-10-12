@@ -2,6 +2,9 @@
 #include "RemoteImage.h"
 #include <cmath>
 #include <cstring>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 
 namespace t7 {
 bool validAudioValues(const AudioValues& v) {
@@ -12,6 +15,13 @@ bool validAudioValues(const AudioValues& v) {
 bool sameAudioValues(const AudioValues& a, const AudioValues& b) {
     return a.musicMuted == b.musicMuted && a.musicVolume == b.musicVolume
         && a.effectsMuted == b.effectsMuted && a.effectsVolume == b.effectsVolume;
+}
+std::string describeAudioValues(const AudioValues& values) {
+    std::ostringstream text;
+    text.imbue(std::locale::classic()); text << std::setprecision(9);
+    text << "musicMuted=" << values.musicMuted << "; musicVolume=" << values.musicVolume
+         << "; effectsMuted=" << values.effectsMuted << "; effectsVolume=" << values.effectsVolume;
+    return text.str();
 }
 namespace {
 void write(HANDLE process, uint32_t address, const void* data, size_t size) {
@@ -39,7 +49,10 @@ bool AudioSettings::poll(AudioValues& values, uint32_t& result, bool& applied) {
     const auto bytes = readClientMemory(process_, remote_, 0x20);
     uint32_t command = 0; std::memcpy(&command, bytes.data(), 4);
     if (command) {
-        if (GetTickCount64() - requestedAt_ > 10000) throw std::runtime_error("audio frame thread response timed out");
+        const auto elapsed = GetTickCount64() - requestedAt_;
+        if (elapsed > 10000) throw std::runtime_error("audio frame thread response timed out; pendingCommand="
+            + std::to_string(pending_) + "; observedCommand=" + std::to_string(command)
+            + "; elapsedMs=" + std::to_string(elapsed) + "; hasSnapshot=" + std::to_string(hasValues_));
         return false;
     }
     applied = pending_ == 2; pending_ = 0;

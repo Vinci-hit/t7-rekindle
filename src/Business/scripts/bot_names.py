@@ -1,13 +1,12 @@
 """Read NPC display names from the selected client's AI name table."""
 from functools import lru_cache
-from pathlib import Path
 import random
 import struct
 
 from .contracts import encodePlayerName
-from .navmesh_resource import readCompressedEntry
+from .vfs_resource import readResource
 
-NAME_OFFSET, NAME_STORED_SIZE, NAME_SIZE = 521368910, 1255, 6532
+NAME_PATH = 'data/table/sh_res_ai_name_cli.bin'
 HEADER_SIZE, RECORD_SIZE = 140, 68
 PREFIXES = {'aggressive': '[进攻]', 'balanced': '[全能]', 'defensive': '[防守]', 'berserker': '[疯狗]'}
 
@@ -38,8 +37,7 @@ def parseNames(data):
 
 @lru_cache(maxsize=1)
 def loadNames(clientDirectory):
-    with (Path(clientDirectory).parent / 'vfs' / 'data1.vfs').open('rb') as source:
-        return parseNames(readCompressedEntry(source, NAME_OFFSET, NAME_STORED_SIZE, NAME_SIZE))
+    return readResource(clientDirectory, 'data1.vfs', NAME_PATH, parseNames)
 
 
 def assignNames(names, count, seed, playerName):

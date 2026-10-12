@@ -9,6 +9,13 @@ namespace T7.ManagedHarness
 {
     internal sealed class FakeLauncherBridge : INativeBridge
     {
+        public DiagnosticLogLevel LogLevel { get; private set; } = DiagnosticLogLevel.Info;
+        public DiagnosticLogLevel? RejectedLogLevel { get; set; }
+        public void SetLogLevel(DiagnosticLogLevel level)
+        {
+            if (level == RejectedLogLevel) throw new InvalidOperationException("fixture log level failure");
+            LogLevel = level;
+        }
         public Guid OutputDevice { get; private set; }
         public int OutputDeviceSetCount { get; private set; }
         public void SetOutputDevice(Guid identifier) { OutputDevice = identifier; OutputDeviceSetCount++; }
