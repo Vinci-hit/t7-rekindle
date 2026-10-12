@@ -1,5 +1,6 @@
 #pragma once
 #include "SprintHookFixture.h"
+#include "LobbyReturnHookFixture.h"
 #include "../../src/Runtime/launcher/RoundEndHookCode.h"
 
 namespace roundEndFixture {
@@ -11,6 +12,7 @@ constexpr uint32_t DATA = BASE + 0xE000, COMMAND = DATA, CALLS = DATA + 4, PACKE
 constexpr uint32_t ROOM = DATA + 0x80, SCENE = DATA + 0xC0, DISPATCH = DATA + 0x400;
 
 inline void prepare(HANDLE process) {
+    lobbyReturnFixture::prepare(process);
     writeWord(process, BASE + 0x2E3A4C4, ROOM); writeWord(process, BASE + 0x2E3CB88, SCENE);
     for (const auto& entry : t7::roundEndOriginals(BASE))
         t7::writeClientMemory(process, BASE + entry.first, entry.second);
@@ -32,7 +34,10 @@ inline void prepare(HANDLE process) {
     c.call(BASE + 0x6A7A60); const auto done = c.jump();
     c.bind(notFinish); c.emit({0x83,0xF8,2}); const auto notLeave = c.branch(0x85);
     c.emit({0x6A,0,0x6A,0,0x6A,0,0x6A,0}); c.call(BASE + t7::NATIVE_LEAVE_RVA);
-    c.bind(notLeave); c.bind(done); c.emit({0x61,0x9D,0xC3});
+    const auto left = c.jump();
+    c.bind(notLeave); c.emit({0x83,0xF8,3}); const auto notRead = c.branch(0x85);
+    c.call(lobbyReturnFixture::READ_CALL);
+    c.bind(notRead); c.bind(left); c.bind(done); c.emit({0x61,0x9D,0xC3});
     t7::writeClientMemory(process, DISPATCH, c.bytes);
 
     t7::verifyRoundEndFunctions(process, BASE);
@@ -55,6 +60,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
             require(GetTickCount64() < deadline, "round end frame timeout"); Sleep(1);
         }
     };
+    lobbyReturnFixture::verify(process, reader, mailbox, step);
     uint32_t epoch = readWord(process, INSTANCE + 0x68), calls = readWord(process, CALLS);
     auto newRound = [&] {
         writeWord(process, INSTANCE + 0x68, ++epoch);
