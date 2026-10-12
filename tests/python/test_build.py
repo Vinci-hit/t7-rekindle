@@ -165,6 +165,19 @@ def test_desktop_declares_the_x64_solution_platform():
     assert project.findtext("PropertyGroup/PlatformTarget") == "x64"
 
 
+def test_solution_builds_native_bridge_before_desktop():
+    namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
+    native = ET.parse(ROOT / "src/Runtime/T7.NativeBridge.vcxproj").getroot()
+    guid = native.findtext(".//m:ProjectGuid", namespaces=namespace)
+    solution = (ROOT / "T7-Rekindle.sln").read_text(encoding="utf-8")
+    desktop = next(project for project in solution.split("\nEndProject\n")
+                   if ' = "T7.Desktop",' in project)
+    section = "ProjectSection(ProjectDependencies) = postProject"
+    assert section in desktop, "Desktop must wait for NativeBridge before copying its DLL"
+    dependencies = desktop.split(section, 1)[1].split("EndProjectSection", 1)[0]
+    assert f"{guid} = {guid}" in dependencies
+
+
 def test_each_managed_project_has_a_complete_nuget_lock_file():
     for project in (ROOT / "src/Core", ROOT / "src/Desktop", ROOT / "tests/managed"):
         lock = json.loads((project / "packages.lock.json").read_text(encoding="utf-8"))
