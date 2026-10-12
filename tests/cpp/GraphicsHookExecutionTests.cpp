@@ -7,6 +7,7 @@
 #include "SprintHookFixture.h"
 #include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
+#include "RoundEndHookFixture.h"
 #include "../../src/Runtime/launcher/ChatInputHookCode.h"
 #include "../../src/Runtime/launcher/WeaponTrailHookCode.h"
 #include <cstring>
@@ -86,6 +87,7 @@ void fixture(const t7::fs::path& path) {
     code.insert(code.end(), {0x6A,10,0xFF,0x15}); word(code, BASE + 0x1904);
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(1);
     const auto paused = branch(code, 0x84);
+    imm(0xB8, roundEndFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0xD9, 0xE8}); // FLD1
     imm(0xB8, 0x3F800000); code.insert(code.end(), {0x66, 0x0F, 0x6E, 0xC0}); // XMM0 = 1.0
     imm(0xB9, FRAME); code.push_back(0xE8); word(code, t7::GRAPHICS_TICK_RVA - (0x1000 + static_cast<uint32_t>(code.size()) + 4));
@@ -108,6 +110,7 @@ void prepare(HANDLE process) {
     terrainFixture::prepare(process);
     sprintFixture::prepare(process);
     chatInputFixture::prepare(process);
+    roundEndFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
     t7::writeClientMemory(process, BASE + 0x33B444, {0x8B,0xD0,0x33,0xC9,0x8B,0x3A,0x8B,0xC1,0xC3});
     writeWord(process, RENDERER + 0x458, ADAPTER_ORDINAL); writeWord(process, RENDERER + 0x468, ADAPTER);
@@ -296,6 +299,7 @@ bool verifyGraphicsHookExecution() {
         catch (const std::exception& error) { throw std::runtime_error(std::string("sprint: ") + error.what()); }
         try { chatInputFixture::verify(client.process(), graphics.world()); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("chat input: ") + error.what()); }
+        roundEndFixture::verify(client.process(), graphics.world(), worldMailbox);
         require(readWord(client.process(), STATS) == readWord(client.process(), STATS + 4), "frame hook changed ESP");
         for (const auto pair : std::array<std::pair<uint32_t, uint32_t>, 6>{{
             {8,0x11223344},{12,0x22334455},{16,0x33445566},{20,0x44556677},{24,0x3F800000},{28,0x3F800000}
@@ -319,7 +323,7 @@ bool verifyGraphicsHookExecution() {
         client.check(); client.stop(); graphics.clear();
         require(t7::fs::canonical(directory).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "graphics cleanup boundary");
         t7::fs::remove_all(directory);
-        std::cout << "x86 output device, graphics/audio/world, weapon trail, sprint/chat input, and FPU/SSE preservation passed\n";
+        std::cout << "x86 output device, graphics/audio/world, weapon trail, sprint/chat input, round settlement, and FPU/SSE preservation passed\n";
         return true;
     } catch (const std::exception& e) {
         try { client.stop(); graphics.clear(); } catch (const std::exception& cleanup) { std::cerr << cleanup.what() << '\n'; }

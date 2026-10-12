@@ -4,6 +4,7 @@
 #include "SprintHookCode.h"
 #include "ChatInputHookCode.h"
 #include "WeaponTrailHookCode.h"
+#include "RoundEndHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -22,6 +23,7 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
     verifySprintFunctions(process, imageBase);
     verifyChatInputFunctions(process, imageBase);
     verifyWeaponTrailFunctions(process, imageBase);
+    verifyRoundEndFunctions(process, imageBase);
     for (const auto& entry : std::vector<std::pair<uint32_t, Bytes>>{
         {RID_LOOKUP_RVA, {0x55,0x8B,0xEC,0xFF,0x75,0x08}},
         {COMPONENT_RVA, {0x55,0x8B,0xEC,0x8B,0x55,0x08,0x56,0x8B,0x71,0x7C}},
@@ -45,6 +47,7 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     c.call(address + CHAT_INPUT_CODE_OFFSET);
     c.call(address + SPRINT_CODE_OFFSET);
     c.call(address + WEAPON_TRAIL_CODE_OFFSET);
+    c.call(address + ROUND_END_CODE_OFFSET);
     c.emit({0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC}); // FXSAVE; CLD
     std::vector<size_t> invalid;
@@ -214,8 +217,14 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     const auto bladeSweep = buildBladeSweepHook(address, imageBase);
     std::memcpy(page.data() + BLADE_SWEEP_CODE_OFFSET, bladeSweep.data(), bladeSweep.size());
     const auto contactFrame = buildContactFrameHook(address);
+    if (contactFrame.size() > ROUND_END_CODE_OFFSET - CONTACT_CODE_OFFSET)
+        throw std::runtime_error("contact journal overlaps round end hook");
     std::memcpy(page.data() + CONTACT_CODE_OFFSET, contactFrame.data(), contactFrame.size());
     writeSprintDirections(page);
+    const auto roundEnd = buildRoundEndHooks(address, imageBase);
+    static_assert(ROUND_END_CODE_OFFSET + 0x1000 <= LIVE_ACTORS_OFFSET, "round end code capacity");
+    static_assert(ROUND_END_DATA_OFFSET + sizeof(RoundEndMailbox) <= WORLD_CODE_OFFSET, "round end data capacity");
+    std::memcpy(page.data() + ROUND_END_CODE_OFFSET, roundEnd.data(), roundEnd.size());
     const auto weaponTrail = buildWeaponTrailHook(address, imageBase);
     std::memcpy(page.data() + WEAPON_TRAIL_CODE_OFFSET, weaponTrail.data(), weaponTrail.size());
     writeWeaponTrailPreset(page);

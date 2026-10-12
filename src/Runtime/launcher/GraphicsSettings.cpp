@@ -1,5 +1,6 @@
 #include "GraphicsSettings.h"
 #include "RemoteImage.h"
+#include "RoundEndHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -27,6 +28,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     if (!remote) throw std::runtime_error(errorText("graphics mailbox allocation"));
     const auto pointer = reinterpret_cast<uintptr_t>(remote);
     bool patched = false;
+    bool roundEndPatched = false;
     try {
         if (pointer > UINT32_MAX - size) throw std::runtime_error("settings mailbox outside x86 range");
         const auto base = static_cast<uint32_t>(pointer);
@@ -47,6 +49,9 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         Bytes jump(7, 0x90); jump[0] = 0xE9;
         const uint32_t delta = base + GRAPHICS_CODE_OFFSET - (imageBase + GRAPHICS_TICK_RVA + 5);
         std::memcpy(jump.data() + 1, &delta, 4);
+        roundEndPatched = true;
+        for (const auto& entry : roundEndJumps(base + worldOffset, imageBase))
+            writeClientMemory(process, imageBase + entry.first, entry.second);
         patched = true; writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, jump);
         process_ = process; remote_ = base; imageBase_ = imageBase;
         audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase);
@@ -54,6 +59,9 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     } catch (...) {
         // install() runs before the first ResumeThread, so rollback cannot race execution.
         if (patched) writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL);
+        if (roundEndPatched)
+            for (const auto& entry : roundEndOriginals(imageBase))
+                writeClientMemory(process, imageBase + entry.first, entry.second);
         if (!VirtualFreeEx(process, remote, 0, MEM_RELEASE)) throw std::runtime_error(errorText("graphics allocation rollback"));
         throw;
     }

@@ -1,5 +1,6 @@
 #include "ClientWorld.h"
 #include "RemoteImage.h"
+#include "RoundEndHookCode.h"
 #include <cmath>
 #include <cstring>
 
@@ -84,6 +85,10 @@ void ClientWorld::request() {
 }
 bool ClientWorld::poll(WorldSnapshot& value) {
     if (!process_) return false;
+    const auto roundEnd = readClientMemory(process_, remote_ + ROUND_END_DATA_OFFSET, sizeof(RoundEndMailbox));
+    RoundEndMailbox handoff;
+    std::memcpy(&handoff, roundEnd.data(), sizeof(handoff));
+    if (handoff.status == 2) throw std::runtime_error("round end native logout handoff failed; new client session required");
     if (!pending_) { request(); return false; }
     const auto bytes = readClientMemory(process_, remote_, sizeof(WorldMailbox));
     WorldMailbox raw;

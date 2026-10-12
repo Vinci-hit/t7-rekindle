@@ -67,14 +67,14 @@ def test_timeout_ends_the_round_once_and_waits_for_client_logout(game, delay):
     finish(game, delay)
     assert [packet["body"] for packet in game.result["send"] if packet["command"] == 0xA] == [
         wire.roundState(deadline + delay, 5, 0),
-        leave_flow.encode_si_finish_game(server_time_ms=deadline + delay, local_user_id=wire.USER_ID),
+        leave_flow.encode_si_finish_game(server_time_ms=deadline + delay, game_result=3, local_user_id=wire.USER_ID),
     ]
     active = [move_flow.decode_move_notify_active(packet["body"]).active
               for packet in game.result["send"]
               if packet["reason"] == "instance-move-notify-active-after-in-scene"]
     assert active == [0]
     assert game.session["roundEnded"] is True and not battle.enabled(game)
-    assert game.session["phase"] == game.state["phase"] == "game-ended"
+    assert game.session["phase"] == game.state["phase"] == "settlement"
     assert game.session["pending"] == {} and not game.session.get("leaving")
     assert not any(packet["command"] == 0x2C for packet in game.result["send"])
     assert app.validateState(game.state)
@@ -155,7 +155,7 @@ def test_leave_before_or_after_timeout_finishes_only_once_and_preserves_logout(g
     app.handleTimer(game, "logout")
     assert [packet["body"] for packet in game.result["send"]] == [
         leave_flow.encode_sync_logout_response(server_time_ms=game.now, back_data=255)]
-    assert game.session["phase"] == "lobby-data-sent" and not game.session["pending"]
+    assert game.session["phase"] == "settlement" and not game.session["pending"]
 
 
 def test_late_gameplay_requests_do_not_restart_a_finished_round(game):

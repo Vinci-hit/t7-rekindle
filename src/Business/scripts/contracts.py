@@ -53,14 +53,14 @@ def exact(body, length, label):
         raise ValueError(f"{label} requires exactly {length} bytes")
 
 
-def roundState(now, current, duration):
-    return struct.pack(">HQQiQQi", 0x67, now, 1, current, now, duration, 0)
+def roundState(now, current, duration, *, startedAt=None):
+    return struct.pack(">HQQiQQi", 0x67, now, 1, current, now if startedAt is None else startedAt, duration, 0)
 
 
-def roundInfo(now):
+def roundInfo(now, duration=GAME_MS):
     return (struct.pack(">HQQiiiiiQQiii", 0x66, now, 1,
                         1, 0, 0, 0, 0, now, 0, 0, 0, 2)
-            + struct.pack(">iQiQi", 3, 0, 4, GAME_MS, 0))
+            + struct.pack(">iQiQi", 3, 0, 4, duration, 0))
 
 
 def instanceInfo(now, startedAt=None):

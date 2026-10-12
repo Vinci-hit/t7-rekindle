@@ -2,11 +2,17 @@
 import struct
 
 from . import actors, roster, contracts as wire, controls, battle, bot, combat, player_life
+from . import battle_clock, settlement
 from .codec import battle_flow, leave_flow, login_flow, room_flow, vision_flow
 
 
 def begin(flow):
+    battle_clock.initialize(flow)
+    flow.state.pop('settlement', None)
     bot.stopAll(flow, publish=False)
+    flow.cancelTimers()
+    for key in ('roundEnded', 'leaving', 'logoutData', 'battleEntered', 'heroChosen', 'loaded'):
+        flow.session.pop(key, None)
     battle.resetAction(flow)
     player_life.reset(flow)
     flow.send(0x2C, flow.syncBody(), "instance-sync-login-rsp-after-auth")
@@ -79,7 +85,7 @@ def timer(flow, name):
             server_time_ms=flow.now, instance_id=1), "instance-game-info")
         flow.later("instance-round-info", 200)
     elif name == "instance-round-info":
-        flow.send(0xA, wire.roundInfo(flow.now), "instance-round-info")
+        flow.send(0xA, wire.roundInfo(flow.now, battle_clock.current(flow)['durationMs']), "instance-round-info")
         flow.later("instance-round-state", 200)
     elif name == "instance-round-state":
         flow.send(0xA, wire.roundState(flow.now, 2, wire.PREPARE_MS), "instance-round-state-after-auth")
@@ -99,12 +105,16 @@ def timer(flow, name):
             return True
         startRound(flow)
     elif name == "round-game":
-        flow.send(0xA, wire.roundState(flow.now, 4, wire.GAME_MS), "instance-round-state-game")
+        if not battle_clock.start(flow):
+            return True
+        clock = battle_clock.current(flow)
+        flow.send(0xA, wire.roundState(flow.now, 4, clock['durationMs'], startedAt=clock['startedAt']),
+                  "instance-round-state-game")
         flow.send(0x36, wire.actorState(flow.now, 6), "actor-in-scene-after-round-game")
         controls.enableGround(flow)
         flow.phase("game-sent")
         bot.start(flow)
-        flow.later("round-end", wire.GAME_MS)
+        flow.later("round-end", battle_clock.deadline(flow.session) - flow.now)
     elif name == "round-end":
         finishRound(flow)
     elif name == "time-sync":
@@ -113,31 +123,47 @@ def timer(flow, name):
     elif name == "logout":
         flow.send(0x2C, leave_flow.encode_sync_logout_response(
             server_time_ms=flow.now, back_data=flow.session.pop("logoutData")), "sync-logout-response")
-        flow.phase("lobby-data-sent")
+        flow.phase("settlement" if flow.session['role'] == 'instance' else "lobby-data-sent")
     else:
         return False
     return True
 
 
+def expire(flow):
+    if (flow.session['role'] == 'instance' and not flow.session.get('roundEnded')
+            and battle_clock.expired(flow)):
+        finishRound(flow)
+        return True
+    return False
+
+
 def finishRound(flow):
+    if flow.session["role"] != "instance" or flow.session.get("roundEnded"):
+        return
+    snapshot = settlement.freeze(flow)
+    flow.session["roundEnded"] = True
     bot.stopAll(flow)
     flow.cancelTimers()
     battle.resetAction(flow)
     flow.session["groundEnabled"] = False
-    if flow.session["role"] != "instance" or flow.session.get("roundEnded"):
-        return
-    flow.session["roundEnded"] = True
     if flow.session.get("battleEntered"):
         controls.activate(flow)
+    settlement.publishScores(flow, snapshot)
     flow.send(0xA, wire.roundState(flow.now, 5, 0), "instance-round-state-end")
+    settlement.publishResult(flow, snapshot)
     flow.send(0xA, leave_flow.encode_si_finish_game(
-        server_time_ms=flow.now, local_user_id=wire.USER_ID), "instance-finish-game")
-    flow.phase("game-ended")
+        server_time_ms=flow.now, game_result=snapshot['result'], local_user_id=wire.USER_ID), "instance-finish-game")
+    flow.phase("settlement")
+    flow.result['logs'].append(f"settlement reason={snapshot['reason']} result={snapshot['result']} "
+                               f"campKills={snapshot['campKills']} members={len(snapshot['members'])}")
 
 
 def leave(flow, body):
     backData = leave_flow.decode_sync_logout_request(body)
+    if flow.session.get('leaving'):
+        return
     finishRound(flow)
+    flow.cancelTimers()
     if flow.session["role"] == "instance":
         flow.send(0xA, leave_flow.encode_instance_leave_instance(
             server_time_ms=flow.now), "instance-leave-instance")
@@ -155,6 +181,8 @@ def message(flow, command, selector, body):
         guid, groupType = leave_flow.decode_user_group_quit_request(body)
         flow.send(0x37, leave_flow.encode_user_group_quit_response(
             user_group_guid=guid, user_group_type=groupType), "user-group-quit-response")
+        if groupType == leave_flow.USER_GROUP_TYPE_END_SETTLE_ALL_ACTOR:
+            flow.state.pop('settlement', None)
         flow.phase("lobby-data-sent")
         return True
     if flow.session["role"] != "instance" or flow.session.get("leaving"):
@@ -165,6 +193,10 @@ def message(flow, command, selector, body):
     if command == 0xA and selector == 0x6A:
         flow.send(0xA, wire.instanceInfo(flow.now, flow.session.get("instanceStartedAt")),
                   "instance-update-request")
+        clock = battle_clock.current(flow)
+        if clock['startedAt'] is not None:
+            flow.send(0xA, wire.roundState(flow.now, 4, clock['durationMs'], startedAt=clock['startedAt']),
+                      'instance-round-state-refresh')
         combat.publishCampScore(flow)
     elif command == 0xA and selector == 0xB:
         placeholder = room_flow.decode_instance_choose_hero_request(body)
