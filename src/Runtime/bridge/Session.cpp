@@ -467,6 +467,7 @@ void Session::executeStart(const Command& command) {
     }
     server_ = std::make_unique<Server>();
     const auto packageRoot = fs::path(wide(packageRoot_));
+    config.lobbyNewsPath = packageRoot / "Business/news/index.html";
     server_->start(config, packageRoot, localDataRoot(), [this, id = command.id] { return cancelled(id); });
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     auto actual = server_->boundConfig();
