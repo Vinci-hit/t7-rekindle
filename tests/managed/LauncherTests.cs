@@ -23,6 +23,7 @@ namespace T7.ManagedHarness
                 TestDirectories(directory);
                 ClientDirectorySearchTests.Run(directory);
                 DirectorySelectionTests.Run(directory);
+                ClientResourceTests.Run(directory);
                 TestPersistence(directory);
                 SettingsMergeTests.Run(directory);
                 GameSettingsFileTests.Run(directory);
@@ -149,7 +150,7 @@ namespace T7.ManagedHarness
                 {
                     RunTask(model.ValidationTask);
                     var start = model.StartCommand.ExecuteAsync(null);
-                    Pump();
+                    WaitUntil(() => bridge.CheckCount == 1);
                     Assert(bridge.CheckCount == 1 && bridge.StartCount == 0 && !start.IsCompleted,
                         "start did not await native preflight");
                     Assert(model.AreSessionFieldsLocked && !model.CanStart,
@@ -243,8 +244,9 @@ namespace T7.ManagedHarness
                 Assert(model.IsHomeSelected && endedCount == 1, "stopping the game did not return to home exactly once");
 
                 bridge.HoldStart = true;
+                var previousStarts = bridge.StartCount;
                 var start = model.StartCommand.ExecuteAsync(null);
-                Pump();
+                WaitUntil(() => bridge.StartCount > previousStarts);
                 Assert(model.CanCancel && model.AreSessionFieldsLocked, "startup cancellation state is invalid");
                 model.CancelCommand.Execute(null);
                 RunTask(start);
@@ -350,6 +352,7 @@ namespace T7.ManagedHarness
             {
                 RunTask(model.ValidationTask);
                 var pending = model.CheckCommand.ExecuteAsync(null);
+                WaitUntil(() => bridge.CheckCount == 1);
                 Assert(!model.AreSessionFieldsLocked && !model.CanStart, "manual check did not allow edits or blocked launch incorrectly");
                 model.ClientDirectory = @"C:\New";
                 RunTask(model.ValidationTask);
@@ -360,6 +363,7 @@ namespace T7.ManagedHarness
                 bridge.PendingCheck = null;
                 bridge.PendingStart = new TaskCompletionSource<OperationSnapshot>();
                 pending = model.StartCommand.ExecuteAsync(null);
+                WaitUntil(() => bridge.StartCount == 1);
                 bridge.Snapshot = new SessionSnapshot { State = SessionState.Failed, ErrorCode = 1000, CleanupComplete = true };
                 bridge.PendingStart.SetResult(new OperationSnapshot { Status = OperationStatus.Failed, Error = "specific startup failure" });
                 RunTask(pending);
@@ -381,7 +385,7 @@ namespace T7.ManagedHarness
                 model.CopyLogsCommand.Execute(null);
                 Assert(model.HasNotice && !model.IsNoticeError && model.NoticeText.Contains("已复制"), "successful copy appeared as an error");
                 Assert(interaction.ConfirmCount == 0, "copying diagnostics prompted for confirmation");
-                Assert(interaction.Text == model.EndpointText + Environment.NewLine + model.NativeLogText,
+                Assert(interaction.Text == DiagnosticSanitizer.Redact(model.EndpointText + Environment.NewLine + model.NativeLogText),
                     "copying diagnostics lost the endpoint or session logs");
             }
         }
@@ -444,6 +448,13 @@ namespace T7.ManagedHarness
             Assert(task.IsCompleted, "launcher test timed out");
             task.GetAwaiter().GetResult();
             Pump();
+        }
+
+        internal static void WaitUntil(Func<bool> condition)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(8);
+            while (!condition() && DateTime.UtcNow < deadline) { Pump(); Thread.Sleep(5); }
+            Assert(condition(), "launcher stage timed out");
         }
 
         internal static void Pump()

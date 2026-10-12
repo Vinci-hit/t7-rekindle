@@ -19,7 +19,7 @@ bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, boo
     adapter.exitCode = [exitCode] { return exitCode; };
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), std::move(adapter));
     uint64_t operationId = 0;
-    bool valid = session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client").wstring()),
+    bool valid = session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()),
         operationId, u8"重燃玩家", skipStartupAnimation) == T7NB_OK;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     t7::bridge::Snapshot snapshot;
@@ -82,7 +82,7 @@ bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel) {
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), std::move(adapter));
     state->session = session;
     uint64_t operationId = 0;
-    bool valid = session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client").wstring()), operationId) == T7NB_OK;
+    bool valid = session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()), operationId) == T7NB_OK;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     t7::bridge::Snapshot snapshot;
     do {
@@ -126,7 +126,7 @@ bool verifyWindowCloseCleanup(const t7::fs::path& packageRoot, bool failCleanup)
         state->alive = false;
     };
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), std::move(adapter));
-    const auto directory = t7::utf8((packageRoot / "synthetic-client").wstring());
+    const auto directory = t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring());
     t7::bridge::Snapshot snapshot;
     const auto waitState = [&](uint32_t expected) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

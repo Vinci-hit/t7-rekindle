@@ -42,6 +42,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             return ExecuteAsync(async token =>
             {
                 var result = await _inspectDirectory(directory);
+                await RefreshClientVersionAsync(result, version);
                 if (version == _validationVersion)
                 {
                     _directoryResult = result;
@@ -61,11 +62,13 @@ namespace T7.Rekindle.Desktop.ViewModels
             SelectedPage = 0;
             var directory = ClientDirectory;
             var name = PlayerName.Trim();
+            var version = _validationVersion;
             var skipStartupAnimation = SkipStartupAnimation;
             var outputDevice = ParseOutputDevice(SelectedOutputDeviceId);
             return ExecuteAsync(async token =>
             {
                 var result = await _inspectDirectory(directory);
+                await RefreshClientVersionAsync(result, version);
                 _directoryResult = result;
                 if (!result.IsValid) throw new InvalidOperationException(result.Message);
                 token.ThrowIfCancellationRequested();
@@ -102,6 +105,12 @@ namespace T7.Rekindle.Desktop.ViewModels
             _lastAction = name;
             _failureMessage = string.Empty;
             _completedMessage = string.Empty;
+            if (kind == OperationKind.Check || kind == OperationKind.Start)
+            {
+                _clientVersion = "";
+                _resourceCheckText = "检查中";
+                NotifyClientResources();
+            }
             UpdatePresentation();
             AppendLog("INFO", name + "操作已提交。");
             try
@@ -110,6 +119,8 @@ namespace T7.Rekindle.Desktop.ViewModels
                 Refresh();
                 var result = await pending;
                 if (_disposed || (kind == OperationKind.Check && version != _validationVersion)) return;
+                if (kind == OperationKind.Check || kind == OperationKind.Start)
+                    CompleteResourceCheck(result.Status, result.Error);
                 if (result.Status == OperationStatus.Cancelled)
                     _completedMessage = name + "已取消";
                 else if (result.Status != OperationStatus.Succeeded)
@@ -121,11 +132,15 @@ namespace T7.Rekindle.Desktop.ViewModels
             }
             catch (OperationCanceledException)
             {
+                if (version == _validationVersion && kind != OperationKind.Stop)
+                    CompleteResourceCheck(OperationStatus.Cancelled, "");
                 if (kind != OperationKind.Check || version == _validationVersion) _completedMessage = name + "已取消";
                 AppendLog("INFO", name + "操作已取消。");
             }
             catch (Exception error)
             {
+                if (version == _validationVersion && kind != OperationKind.Stop)
+                    CompleteResourceCheck(OperationStatus.Failed, error.Message);
                 if (kind != OperationKind.Check || version == _validationVersion) _failureMessage = error.Message;
                 AppendLog("ERROR", name + "失败：" + error.Message, error);
             }
@@ -138,7 +153,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 if (!_disposed)
                 {
                     Refresh(kind == OperationKind.Check && version != _validationVersion);
-                    if (_failureMessage.Length != 0) LogsExpanded = true;
+                    if (_failureMessage.Length != 0 && !IsResourceFailure(_failureMessage)) LogsExpanded = true;
                     UpdatePresentation();
                 }
             }
@@ -166,7 +181,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     _lastAction = "运行";
                     LogsExpanded = true;
                 }
-                if (_snapshot.State == SessionState.FailedCleaning && previous.State != SessionState.FailedCleaning)
+                if (_snapshot.State == SessionState.FailedCleaning && !_operationActive && !IsResourceFailure(_failureMessage))
                     LogsExpanded = true;
                 if (_snapshot.State == SessionState.Idle && _snapshot.Phase == "client-exited")
                     _completedMessage = "游戏已正常退出";
@@ -219,7 +234,9 @@ namespace T7.Rekindle.Desktop.ViewModels
             else if (_hasSaveError)
                 Present("配置保存失败", "目录与名称尚未保存，请检查写入权限后重试。", "Danger", "!", "重试保存");
             else if (_failureMessage.Length != 0)
-                Present(_lastAction == "运行" ? "游戏异常退出" : _lastAction + "失败", SummarizeError(_failureMessage) + " 请查看日志，排查后重试。", "Danger", "!", "重试启动");
+                Present(_lastAction == "运行" ? "游戏异常退出" : _lastAction + "失败",
+                    IsResourceFailure(_failureMessage) ? "资源不匹配" : SummarizeError(_failureMessage) + " 请查看日志，排查后重试。",
+                    "Danger", "!", "重试启动");
             else if (_completedMessage.Length != 0)
                 Present("准备就绪", string.Empty, "Success", "✓", "启动游戏");
             else Present("准备就绪", string.Empty, "Success", "✓", "启动游戏");
@@ -250,6 +267,7 @@ namespace T7.Rekindle.Desktop.ViewModels
 
         private static string SummarizeError(string message)
         {
+            if (IsResourceFailure(message)) return "资源不匹配";
             if (message.Contains("unsupported client/protocol baseline")) return "客户端版本与当前启动器支持的版本不一致。";
             var line = message.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             var summary = line.Length == 0 ? message : line[0];

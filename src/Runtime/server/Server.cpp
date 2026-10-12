@@ -451,6 +451,8 @@ void Server::updateWorld(const WorldSnapshot& world) {
 void Server::businessLoop() {
     try {
         PythonHost python(root_, run_ / "revisions");
+        if (!boundConfig_.clientDirectory.empty())
+            python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
         std::string state = python.create(python.context(boundConfig_, clock_.millis(), {}));
         Timers timers;
         {

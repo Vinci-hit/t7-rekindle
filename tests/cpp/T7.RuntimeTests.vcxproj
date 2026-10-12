@@ -21,6 +21,7 @@
     <ClCompile Include="DiagnosticLogTests.cpp" />
     <ClCompile Include="SessionCleanupTests.cpp" />
     <ClCompile Include="SessionOperationTests.cpp" />
+    <ClCompile Include="SessionResourceTests.cpp" />
     <ClCompile Include="SessionGraphicsTests.cpp" />
     <ClCompile Include="SessionAudioTests.cpp" />
     <ClCompile Include="MovementOverlayTests.cpp" />

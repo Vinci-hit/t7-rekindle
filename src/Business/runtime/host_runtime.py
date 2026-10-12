@@ -230,6 +230,10 @@ class Runtime:
             raise ValueError("initial state rejected")
         return encode(value)
 
+    def checkResources(self, clientDirectory, playerName=''):
+        module = importlib.import_module(self.active.name + '.client_resources')
+        module.checkResources(clientDirectory, playerName)
+
     def dispatch(self, event, state, context):
         contextValue = decode(context)
         result = self.active.module.handleEvent(decode(event), decode(state), contextValue)

@@ -38,7 +38,7 @@ std::string checkLogs(const t7::fs::path& packageRoot, t7::Bootstrap::TestAdapte
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), std::move(adapter));
     try {
         uint64_t id = 0;
-        require(session->submit(T7NB_OPERATION_CHECK, t7::utf8((packageRoot / "client").wstring()), id) == T7NB_OK,
+        require(session->submit(T7NB_OPERATION_CHECK, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()), id) == T7NB_OK,
             "diagnostic check submission failed");
         t7::bridge::Operation operation;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

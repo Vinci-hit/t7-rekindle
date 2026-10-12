@@ -99,6 +99,7 @@ def run(root: Path) -> dict:
             "three dynamic loopback listeners reach readiness",
             "fragmented AUTH and method3 key reply on all channels",
             "fake client adapter exercises Session start/stop assembly",
+            "resource preflight rejects incompatible entries before launch and releases CPython on cancellation",
             "business connected/authenticated transition and timer contract",
             "wire capture default/off and explicit diagnostic opt-in",
             "journal rotation, cursor bounds, cancellation and cleanup",

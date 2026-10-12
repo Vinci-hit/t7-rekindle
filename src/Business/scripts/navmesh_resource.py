@@ -1,17 +1,15 @@
 """Read-only adapter for the supported client's Havok v5 navigation resource."""
 from functools import lru_cache
 from hashlib import sha256
-from pathlib import Path
 import math
 import struct
-import zlib
+
+from .vfs_resource import readResource
 
 MAGIC = bytes.fromhex("1e0db0cacefa11d0")
 MAX_ITEMS = 100000
 MAX_BYTES = 16 * 1024 * 1024
-NAV_OFFSET = 203763021
-NAV_STORED_SIZE = 89863
-NAV_SIZE = 156048
+NAV_PATH = 'data/scene/map/lysd/anavmesh.dat'
 NAV_HASH = "b92da3edc697ada355a95359d94ff3025841bf2de57833297901361452c539a3"
 
 
@@ -143,40 +141,11 @@ class TagReader:
         return root
 
 
-def readCompressedEntry(source, offset, storedSize, decodedSize):
-    if min(offset, storedSize, decodedSize) < 0 or max(storedSize, decodedSize) > MAX_BYTES:
-        raise ValueError("navigation entry bounds invalid")
-    source.seek(offset)
-    remaining = source.read(storedSize)
-    if len(remaining) != storedSize:
-        raise ValueError("navigation archive is truncated")
-    result = bytearray()
-    while remaining:
-        decoder = zlib.decompressobj()
-        try:
-            block = decoder.decompress(remaining, min(16384, decodedSize - len(result)) + 1)
-        except zlib.error as error:
-            raise ValueError("invalid navigation compressed stream") from error
-        if not decoder.eof or decoder.unconsumed_tail or not 0 < len(block) <= 16384:
-            raise ValueError("navigation compressed stream extent mismatch")
-        if len(result) + len(block) > decodedSize:
-            raise ValueError("navigation decoded size exceeds entry")
-        result.extend(block)
-        remaining = decoder.unused_data
-    if len(result) != decodedSize:
-        raise ValueError("navigation decoded size mismatch")
-    return bytes(result)
-
-
 @lru_cache(maxsize=1)
 def loadNavigation(clientDirectory):
     from .navigation import NavMesh
-    directory = Path(clientDirectory)
-    if not directory.is_absolute():
-        raise ValueError("navigation requires the selected absolute client directory")
-    # Runtime passes the executable directory, not the game root.
-    with (directory.parent / "vfs" / "map.vfs").open("rb") as source:
-        data = readCompressedEntry(source, NAV_OFFSET, NAV_STORED_SIZE, NAV_SIZE)
-    if sha256(data).hexdigest() != NAV_HASH:
-        raise ValueError("navigation resource does not match the supported client")
-    return NavMesh.fromResource(TagReader(data).document())
+    def parse(data):
+        if sha256(data).hexdigest() != NAV_HASH:
+            raise ValueError("navigation resource does not match the supported client")
+        return NavMesh.fromResource(TagReader(data).document())
+    return readResource(clientDirectory, 'map.vfs', NAV_PATH, parse)

@@ -95,15 +95,16 @@ namespace T7.ManagedHarness
                     timestamp + "  ERROR  [Journal] #42 synthetic fixture business failure",
                     timestamp + "  WARNING  [Journal] WIRE COVERAGE INCOMPLETE"
                 };
-                var bridge = new FakeLauncherBridge { LogLines = nativeLines, Failure = "launcher failure" };
+                var bridge = new FakeLauncherBridge { Failure = "launcher failure" };
                 using (var model = new MainWindowViewModel(bridge,
                     new SettingsService(Path.Combine(directory, "forwarded-logs")),
                     new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "Player" }, null,
                     path => Task.FromResult(ValidDirectory(path)), new FakeDesktopInteraction()))
                 {
-                    // Account initialization logs are outside the forwarding contract.
-                    LogManager.Configuration = configuration;
+                    // Account and client metadata initialization are outside this forwarding contract.
                     RunTask(model.ValidationTask);
+                    LogManager.Configuration = configuration;
+                    bridge.LogLines = nativeLines;
                     var deadline = DateTime.UtcNow.AddSeconds(5);
                     while (target.Logs.Count < nativeLines.Length && DateTime.UtcNow < deadline)
                     {
@@ -125,12 +126,12 @@ namespace T7.ManagedHarness
                     for (var index = 4; index < 7; index++)
                         Assert(target.Logs[index].EndsWith("|" + nativeLines[index] + " ", StringComparison.Ordinal),
                             "unrecognized native log text was discarded or changed");
-                    Assert(model.NativeLogText == string.Join(Environment.NewLine, nativeLines),
+                    Assert(model.NativeLogText.EndsWith(string.Join(Environment.NewLine, nativeLines), StringComparison.Ordinal),
                         "desktop log formatting changed the original UI log text");
 
                     RunTask(model.StartCommand.ExecuteAsync(null));
                     var launcherLines = model.NativeLogText.Split(new[] { Environment.NewLine }, StringSplitOptions.None)
-                        .Where(line => line.Contains("  [Launcher] ")).ToArray();
+                        .Where(line => line.Contains("  [Launcher] ") && !line.Contains("客户端版本：")).ToArray();
                     Assert(launcherLines.Length == 2 && launcherLines.Any(line => line.Contains("  ERROR  ")),
                         "launcher fixture did not produce info and error records");
                     foreach (var line in launcherLines)

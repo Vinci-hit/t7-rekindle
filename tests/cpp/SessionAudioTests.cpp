@@ -32,7 +32,7 @@ bool verifyAudioSession(const t7::fs::path& packageRoot) {
         session->audio(audio);
         require(audio.state == T7NB_AUDIO_UNAVAILABLE, "idle audio state");
         uint64_t operation = 0;
-        require(session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client").wstring()), operation) == T7NB_OK, "audio test start");
+        require(session->submit(T7NB_OPERATION_START, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()), operation) == T7NB_OK, "audio test start");
         waitFor([&] { session->audio(audio); return audio.state == T7NB_AUDIO_READY; });
         const auto revision = audio.revision;
         auto change = audio.values; change.musicMuted = 1;

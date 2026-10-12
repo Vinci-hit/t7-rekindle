@@ -2,6 +2,8 @@
 #include "../core/Common.h"
 #include "../core/DiagnosticLog.h"
 #include "../core/PlayerName.h"
+#include "../server/PythonHost.h"
+#include "../server/RunDirectory.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -435,6 +437,28 @@ void Session::executeCheck(const Command& command) {
     config.outputDevice = command.outputDevice;
     config.ports[0] = 1; config.ports[1] = 2; config.ports[2] = 3;
     bootstrap_.check(fs::path(wide(command.clientDirectory)), config, [this](std::string line) { log(line); });
+    if (cancelled(command.id)) throw std::runtime_error("check cancelled");
+    RunDirectory run(localDataRoot() / "data");
+    std::exception_ptr failure;
+    try {
+        PythonHost python(fs::path(wide(packageRoot_)), run.path() / "revisions");
+        try {
+            if (cancelled(command.id)) throw std::runtime_error("check cancelled");
+            python.checkResources(fs::path(wide(command.clientDirectory)));
+        } catch (...) { failure = std::current_exception(); }
+        try {
+            for (const auto& line : python.closeRevision()) log(line, "WARNING");
+        } catch (const std::exception& error) {
+            log(std::string("resource check revision cleanup: ") + error.what(), "ERROR");
+            if (!failure) failure = std::current_exception();
+        }
+    } catch (...) { if (!failure) failure = std::current_exception(); }
+    try { run.finish(); }
+    catch (const std::exception& error) {
+        log(std::string("resource check history retention: ") + error.what(), "WARNING");
+    }
+    if (failure) std::rethrow_exception(failure);
+    if (cancelled(command.id)) throw std::runtime_error("check cancelled");
     log("client preflight passed");
 }
 

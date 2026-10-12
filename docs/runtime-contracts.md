@@ -42,7 +42,15 @@ Idle → Checking → StartingRuntime → StartingClient → AdaptingClient → 
 
 每个 `Session` 只有一个生命周期 worker，操作按提交顺序串行。`cancel` 直接设置当前 operation 的原子取消标志并唤醒 worker，不排在阻塞的 Start 后面。`SafeHandle.ReleaseHandle` 只提交非阻塞释放请求，由 native worker 持有内部引用完成清理。
 
-客户端由 Bootstrap 和 Job Object 管理。运行时移动适配由 MovementOverlay 管理，撤销入口后再释放远程页；先确认客户端已停止，再关闭 Python 和 listener。Python 只由业务 worker 初始化、调用和关闭，业务代码被视为可信代码而非隔离沙箱。
+客户端由 Bootstrap 和 Job Object 管理。运行时移动适配由 MovementOverlay 管理，撤销入口后再释放远程页；先确认客户端已停止，再关闭 Python 和 listener。运行期间 Python 由业务 worker 初始化、调用和关闭；显式 Check 则由 Session worker 独占短生命周期 PythonHost，完成后释放再允许 Start。业务代码被视为可信代码而非隔离沙箱。
+
+显式 Check 在程序与设备预检之后执行内部 `checkResources(clientDirectory)`，不创建 Server、listener 或客户端进程。Start 在业务 worker 发布 ready 之前执行同一资源预检，直接调用 Native Start 也会检查；没有客户端目录的独立 Server 协议测试不加载资源。`createState` 不承担文件读取。
+
+名称资源沿用组队时的 19 个可用名称及前缀长度约束；Start 额外传入本次玩家名称，提前检查去除同名后的名称池，避免场景组队时才发现名称不足。
+
+资源读取按 GBK 路径表和 44 字节目录记录定位，仅搜索归档末尾 64 MiB；目标条目的存储及解压大小各限 16 MiB。支持 raw 和每块至多 16 KiB 的独立 zlib 流，验证目录范围、路径唯一性和分块数量；歧义目录不选择猜测结果。缓存仅属于当前 Python revision，每次预检清空并重读，revision 退役时清理。检查结束、失败或取消均沿用 RunDirectory 与 Python owner 生命周期，不增加 C ABI 或业务状态字段。
+
+资源错误通过现有错误字符串携带 `[T7_RESOURCE:<code>]` 标识，区分归档读取、目录非法/歧义、条目缺失、大小超限、解压失败、内容不匹配及覆盖布局。日志保留归档、条目、偏移/长度和异常链；Desktop 将这些错误统一显示为“资源不匹配”，不把详细异常直接放入普通状态区。
 
 游戏主窗口从已校验的客户端对象读取，并核对窗口所属 PID；只有观察到该窗口后才启用关闭检测。窗口被销毁且连续 1 秒未出现同进程、同窗口类的替代主窗口时，自动进入 `StoppingClient`，终止本次 Job 中的残留进程并清理本地服务；最小化、隐藏和短暂窗口重建不触发清理。成功后以 `client-window-closed` 返回 `Idle`，不将主动终止产生的退出码当作崩溃；清理失败仍保持 `FailedCleaning`，清理期间拒绝新的 Start 和 Check。未托管的进程不受影响。
 

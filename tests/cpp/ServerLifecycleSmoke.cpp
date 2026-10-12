@@ -21,6 +21,7 @@ bool verifyMovementOverlay();
 bool verifyMovementHookExecution();
 bool verifyGraphicsHookExecution();
 bool verifyGraphicsSession(const t7::fs::path& packageRoot);
+bool verifyResourcePreflight(const t7::fs::path& packageRoot);
 bool verifyAudioSession(const t7::fs::path& packageRoot);
 
 namespace {
@@ -267,7 +268,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
     auto session = t7::bridge::Session::createForTest(
         t7::utf8(packageRoot.wstring()), std::move(adapter));
     const auto clientDirectory = t7::utf8(
-        (t7::fs::temp_directory_path() / L"T7-Rekindle-synthetic-client").wstring());
+        (packageRoot / "synthetic-client" / "Bin").wstring());
     uint64_t startId = 0;
     if (session->submit(T7NB_OPERATION_START, clientDirectory, startId) != T7NB_OK
         || !waitForOperation(session, startId, T7NB_OPERATION_SUCCEEDED)
@@ -368,7 +369,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::PythonHost first(argv[1], ownerRoot);
             t7::Config worldConfig;
-            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client";
+            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client" / "Bin";
             t7::WorldSnapshot world;
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
@@ -508,6 +509,7 @@ int wmain(int argc, wchar_t** argv) {
         // the fake client adapter confined to this native test host.
         if (!verifySessionAssembly(t7::fs::path(argv[1]))) result = 23;
         if (!verifyGraphicsSession(t7::fs::path(argv[1]))) result = 38;
+        if (!verifyResourcePreflight(t7::fs::path(argv[1]))) result = 43;
         if (!verifyAudioSession(t7::fs::path(argv[1]))) result = 39;
         if (!verifyJournalContracts(t7::fs::path(argv[1]))) result = 25;
         if (!verifyDiagnosticLogs(t7::fs::path(argv[1]))) result = 37;

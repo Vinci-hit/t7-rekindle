@@ -57,11 +57,13 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<string, bool> isClientRunning = null,
             Func<IReadOnlyList<string>> readGraphicsResolutions = null,
             Func<IReadOnlyList<OutputDeviceOption>> readOutputDevices = null,
-            Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null)
+            Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null,
+            Func<string, Task<ClientVersionResult>> readClientVersion = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _inspectDirectory = inspectDirectory;
+            _readClientVersion = readClientVersion ?? (path => Task.Run(() => ClientVersionService.Read(path)));
             _locateDirectory = locateDirectory ?? ((path, token) => Task.Run(() => ClientDirectoryService.Locate(path, token), token));
             _interaction = interaction;
             _isClientRunning = isClientRunning ?? GameSettingsFileService.IsClientRunning;
@@ -193,7 +195,9 @@ namespace T7.Rekindle.Desktop.ViewModels
         public bool CanClose => !IsBusy;
         public bool CanStart => !IsBusy && !_isValidating && !_directoryHasDraft && _directoryResult.IsValid && !HasPlayerNameError && !_hasSaveError;
         public bool CanCancel => _operationCancellation != null && !_operationCancellation.IsCancellationRequested
-            && (_snapshot.State == SessionState.StartingRuntime || _snapshot.State == SessionState.Checking);
+            && (_snapshot.State == SessionState.StartingRuntime || _snapshot.State == SessionState.Checking
+                || ((_activeKind == OperationKind.Check || _activeKind == OperationKind.Start)
+                    && (_snapshot.State == SessionState.Idle || _snapshot.State == SessionState.Failed)));
         public bool CanStop => !_operationActive && (_snapshot.State == SessionState.Running || _snapshot.State == SessionState.FailedCleaning);
         public string StopButtonText => _snapshot.State == SessionState.FailedCleaning ? "重试清理" : "结束游戏";
         public string CancelButtonText => _activeKind == OperationKind.Check ? "取消检查" : "取消启动";

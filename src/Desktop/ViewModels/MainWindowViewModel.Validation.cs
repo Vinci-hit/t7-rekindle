@@ -22,6 +22,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             ++_validationVersion;
             _validationCancellation?.Cancel();
             _isValidating = _isScanningDirectory = false;
+            ResetClientResources();
             UpdatePresentation();
         }
         public string DirectoryMessage => _isScanningDirectory ? "正在自动定位游戏目录，可重新选择或修改路径…"
@@ -33,6 +34,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private async Task ValidateDirectoryAsync(bool debounce, bool scanDescendants = false)
         {
             var version = ++_validationVersion;
+            ResetClientResources();
             _validationCancellation?.Cancel();
             var cancellation = new CancellationTokenSource();
             _validationCancellation = cancellation;
@@ -46,6 +48,9 @@ namespace T7.Rekindle.Desktop.ViewModels
                 var result = scanDescendants
                     ? await _locateDirectory(path, cancellation.Token)
                     : await _inspectDirectory(path);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (_disposed || version != _validationVersion) return;
+                await RefreshClientVersionAsync(result, version);
                 cancellation.Token.ThrowIfCancellationRequested();
                 if (_disposed || version != _validationVersion) return;
                 _directoryResult = result;

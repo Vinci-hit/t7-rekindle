@@ -103,7 +103,7 @@ namespace T7.ManagedHarness
                 LauncherTests.RunTask(model.ValidationTask);
                 bridge.HoldStart = true;
                 var start = model.MainActionCommand.ExecuteAsync(null);
-                LauncherTests.Pump();
+                LauncherTests.WaitUntil(() => bridge.StartCount == 1);
                 Render(window, output, "home-launching", 1200, 900);
                 LauncherTests.Assert(!action.IsEnabled && bridge.StartCount == 1, "busy launch accepts another request");
                 VerifyStartingActionIcon(actionIcon);
@@ -126,7 +126,7 @@ namespace T7.ManagedHarness
                 bridge.HoldStart = false;
                 bridge.PendingStart = new TaskCompletionSource<OperationSnapshot>();
                 var nextStart = model.StartCommand.ExecuteAsync(null);
-                LauncherTests.Pump();
+                LauncherTests.WaitUntil(() => bridge.StartCount == 2);
                 VerifyStartingActionIcon(actionIcon);
                 bridge.Snapshot = new SessionSnapshot { State = SessionState.Running };
                 bridge.PendingStart.SetResult(new OperationSnapshot { Status = OperationStatus.Succeeded });
