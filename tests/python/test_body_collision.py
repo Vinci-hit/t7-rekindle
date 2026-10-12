@@ -123,7 +123,7 @@ def test_body_memory_validation_and_reload(multi):
 @pytest.mark.parametrize('heading,state', [(90, 8), (-90, 4), (180, 6), (135, 7)])
 def test_body_detour_uses_matching_side_or_back_walk_state(multi, heading, state):
     value = actors.data(multi, 2)
-    value.update(heading=0, forwardMs=2000)
+    value.update(heading=0, forwardMs=bot.RUN_DELAY_MS)
     bot.broadcast(multi, True, heading, actorId=2)
     packet = move_flow.decode_move_bc_with_system_and_active(multi.result['send'][-1]['body'])
     assert (packet.state, packet.current_velocity) == (state, 3000)
@@ -133,7 +133,7 @@ def test_side_step_clears_run_and_sends_jog_intent_without_displacement(multi, m
     sample(multi, {2: ((0, 0, .2), 0)})
     value = actors.data(multi, 2)
     value.update(position=[0, 0, .2], initialized=True, heightOffset=.2, heading=0,
-                 forwardMs=2000, lastMoveAt=multi.now - 50, path=[[10, 0, 0]], step=0)
+                 forwardMs=bot.RUN_DELAY_MS, lastMoveAt=multi.now - 50, path=[[10, 0, 0]], step=0)
     monkeypatch.setattr(bodies, 'moveBot', lambda *args: [0, .25, .2])
     bot.move(multi, 2)
     assert value['position'] == [0, 0, .2]

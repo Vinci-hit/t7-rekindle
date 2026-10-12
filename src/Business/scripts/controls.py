@@ -5,7 +5,7 @@ import struct
 from . import actors, contracts as wire
 from .codec import move_flow
 
-GROUND_RUN_DELAY_MS = 2000
+GROUND_RUN_DELAY_MS = 1000
 MAX_GROUND_ELAPSED_MS = 100
 MOVE_CLOCK = "instance-relative-ms-v1"
 MAX_MOVE_TICK = 0x7FFFFFFF

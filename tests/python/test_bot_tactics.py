@@ -87,7 +87,7 @@ def test_sideways_flanking_faces_target_and_does_not_accumulate_run_speed(multi)
     fight(multi, {1: ((0, 0, .2), 180), 2: ((-1.7, 0, .2), 0), 3: ((-2.4, 0, .2), 0)})
     value = actors.data(multi, 3)
     plan(multi, 3)
-    value.update(path=[[-2.4, 2., 0.]], step=0, lastMoveAt=multi.now, forwardMs=2000)
+    value.update(path=[[-2.4, 2., 0.]], step=0, lastMoveAt=multi.now, forwardMs=bot.RUN_DELAY_MS)
     multi.now += bot.MOVE_MS
     multi.context['botWorld']['sampledAt'] = multi.now
     bot.move(multi, 3)
