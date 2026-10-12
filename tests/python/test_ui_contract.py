@@ -167,20 +167,23 @@ def test_about_page_has_real_metadata_and_project_entry_points():
         "{Binding CopyHashCommand}", "{Binding ShowRepositoryCommand}", "{Binding ShowIssuesCommand}",
         "{Binding ShowLicensesCommand}", "{Binding ShowThanksCommand}",
         "{Binding ShowEnvironmentInfoCommand}", "{Binding ShowClientDownloadCommand}",
+        "{Binding DataContext.OpenLogsCommand, RelativeSource={RelativeSource AncestorType=views:AboutPage}}",
     }
     named = {item.attrib.get("{" + XAML + "}Name"): item for item in about.iter()}
     support = named["ClientSupportGrid"]
     assert [button.attrib["Command"] for button in _find(support, "Button")] == [
-        "{Binding ShowClientDownloadCommand}", "{Binding ShowEnvironmentInfoCommand}", "{Binding ShowIssuesCommand}",
+        "{Binding ShowClientDownloadCommand}", "{Binding ShowEnvironmentInfoCommand}",
+        "{Binding DataContext.OpenLogsCommand, RelativeSource={RelativeSource AncestorType=views:AboutPage}}",
+        "{Binding ShowIssuesCommand}",
     ]
-    assert named["ClientDownloadButton"].attrib["Grid.RowSpan"] == "2"
+    assert named["ClientDownloadButton"].attrib["Grid.ColumnSpan"] == "3"
     entry_grid = named["ProjectLinksGrid"]
     assert entry_grid.attrib["Columns"] == "3"
     assert entry_grid.attrib["Margin"] == "0,16,0,0"
     assert [button.attrib["Command"] for button in _find(entry_grid, "Button")] == [
         "{Binding ShowRepositoryCommand}", "{Binding ShowLicensesCommand}", "{Binding ShowThanksCommand}",
     ]
-    assert [button.attrib["TabIndex"] for button in _find(about, "Button")] == [str(index) for index in range(8, 15)]
+    assert [button.attrib["TabIndex"] for button in _find(about, "Button")] == [str(index) for index in range(8, 16)]
     assert [button.attrib["Margin"] for button in _find(entry_grid, "Button")] == ["0,0,8,0", "4,0,4,0", "8,0,0,0"]
     repository_button = _find(entry_grid, "Button")[0]
     assert repository_button.attrib["AutomationProperties.Name"] == "项目源代码仓库"
@@ -193,6 +196,21 @@ def test_about_page_has_real_metadata_and_project_entry_points():
     assert named["AboutScroll"].attrib["HorizontalScrollBarVisibility"] == "Disabled"
     assert named["AboutScroll"].attrib["VerticalScrollBarVisibility"] == "Auto"
     assert len(_find(about, "UniformGrid")) == 1
+
+
+def test_about_log_directory_card_reuses_the_local_logs_command():
+    about = _xaml(ROOT / "src/Desktop/Views/AboutPage.xaml")
+    named = {item.attrib.get("{" + XAML + "}Name"): item for item in about.iter()}
+    card = named["LogDirectoryButton"]
+    assert card in named["ClientSupportGrid"].iter()
+    assert card.attrib["Command"] == (
+        "{Binding DataContext.OpenLogsCommand, RelativeSource={RelativeSource AncestorType=views:AboutPage}}"
+    )
+    assert card.attrib["AutomationProperties.Name"] == "日志目录"
+    assert card.attrib["ToolTip"] == "打开本机日志文件夹"
+    assert card.attrib["Style"] == "{StaticResource AboutActionCard}"
+    assert card.attrib["TabIndex"] == "11"
+    assert _find(card, "TextBlock")[0].attrib["Text"] == "日志目录"
 
 
 def test_about_client_download_card_explains_external_source():

@@ -37,10 +37,12 @@ namespace T7.ManagedHarness
                     var cards = new[]
                     {
                         (Button)page.FindName("ClientDownloadButton"), (Button)page.FindName("EnvironmentInfoButton"),
-                        (Button)page.FindName("IssuesButton"), (Button)page.FindName("RepositoryButton"),
+                        (Button)page.FindName("LogDirectoryButton"), (Button)page.FindName("IssuesButton"),
+                        (Button)page.FindName("RepositoryButton"),
                         (Button)page.FindName("LicensesButton"), (Button)page.FindName("ThanksButton")
                     };
                     Assert(content != null && scroll != null && links != null, "about page is missing its grouped layout");
+                    foreach (var card in cards) Assert(card != null, "about page is missing an action card");
                     foreach (var scale in new[] { 1.0, 1.5, 2.0 })
                     foreach (var size in new[] { new Size(1200, 900), new Size(960, 720), new Size(800, 650), new Size(1200, 900) })
                     {
@@ -50,14 +52,17 @@ namespace T7.ManagedHarness
                         AssertDownloadCardStyle(cards[0], cards[1]);
                         var compact = size.Width < 1200;
                         Assert(links.Columns == (compact ? 1 : 3), "about links did not adapt to the available width");
-                        for (var i = 4; i < cards.Length; i++)
-                            Assert(Math.Abs(cards[i].ActualHeight - cards[3].ActualHeight) < 1
-                                && Math.Abs(cards[i].ActualWidth - cards[3].ActualWidth) < 1,
+                        for (var i = 5; i < cards.Length; i++)
+                            Assert(Math.Abs(cards[i].ActualHeight - cards[4].ActualHeight) < 1
+                                && Math.Abs(cards[i].ActualWidth - cards[4].ActualWidth) < 1,
                                 "project link cards have inconsistent sizes");
-                        Assert(Grid.GetRowSpan(cards[0]) == (compact ? 1 : 2)
-                            && Grid.GetColumn(cards[1]) == (compact ? 0 : 1)
-                            && Grid.GetRow(cards[1]) == (compact ? 1 : 0)
-                            && Grid.GetRow(cards[2]) == (compact ? 2 : 1), "about support cards lost their responsive hierarchy");
+                        Assert(Grid.GetColumnSpan(cards[0]) == (compact ? 1 : 3)
+                            && Grid.GetRow(cards[0]) == 0 && Grid.GetRowSpan(cards[0]) == 1
+                            && Grid.GetColumn(cards[1]) == 0 && Grid.GetRow(cards[1]) == 1
+                            && Grid.GetColumn(cards[2]) == (compact ? 0 : 1)
+                            && Grid.GetRow(cards[2]) == (compact ? 2 : 1)
+                            && Grid.GetColumn(cards[3]) == (compact ? 0 : 2)
+                            && Grid.GetRow(cards[3]) == (compact ? 3 : 1), "about support cards lost their responsive hierarchy");
                         for (var i = 0; i < cards.Length; i++)
                         {
                             var card = cards[i];
@@ -77,16 +82,16 @@ namespace T7.ManagedHarness
                         if (!compact)
                         {
                             Assert(scroll.ScrollableHeight < 1, "the default about page requires unnecessary scrolling");
-                            Assert(Math.Abs(cards[0].ActualHeight - cards[1].ActualHeight - cards[2].ActualHeight - 16) < 1,
+                            Assert(Math.Abs(cards[0].ActualWidth - cards[1].ActualWidth - cards[2].ActualWidth - cards[3].ActualWidth - 24) < 2,
                                 "download and support card edges are not aligned");
                             foreach (var card in cards) LauncherLayoutTests.AssertWithin(card, root, size.Width, size.Height);
                         }
                         else
                         {
-                            cards[5].BringIntoView();
+                            cards[6].BringIntoView();
                             Pump();
                             LauncherLayoutTests.Render(root, window, output, name + "-bottom", size.Width, size.Height, scale);
-                            LauncherLayoutTests.AssertWithin(cards[5], root, size.Width, size.Height);
+                            LauncherLayoutTests.AssertWithin(cards[6], root, size.Width, size.Height);
                         }
                     }
                 }
