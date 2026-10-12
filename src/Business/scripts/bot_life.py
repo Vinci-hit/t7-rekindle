@@ -43,6 +43,13 @@ def announceKill(flow, attacker, target):
     from . import combat
     winner = actors.data(flow, attacker)
     victim = actors.data(flow, target)
+    # Older running rounds have no first-blood flag; existing kills/deaths still consume it.
+    firstBlood = not flow.session.get('firstBloodAwarded', False) and not any(
+        value.get(key, 0) for value in (flow.session, *actors.bots(flow.session).values())
+        for key in ('kills', 'deaths', 'killStreak'))
+    flow.session['firstBloodAwarded'] = True
+    # The life streak is the temporary identity; capture it before clearing the victim.
+    wasButcher = victim.get('killStreak', 0) >= kill_flow.BUTCHER_STREAK
     previousWinner, previousVictim = combat.scoreTotals(winner), combat.scoreTotals(victim)
     winner.update(kills=min(kill_flow.MAX_SCORE, previousWinner[0] + 1),
                   battlePoints=min(kill_flow.MAX_SCORE, previousWinner[2] + KILL_POINTS))
@@ -54,10 +61,15 @@ def announceKill(flow, attacker, target):
     if streak >= 2:
         flow.send(kill_flow.SCORE_COMMAND, kill_flow.encode_score_stat_message(
             server_time_ms=flow.now, entity_rid=attacker, count=streak), 'combat-kill-streak')
-    combat.publishScore(flow, attacker, previous=previousWinner)
+    if wasButcher:
+        flow.send(kill_flow.SCORE_COMMAND, kill_flow.encode_butcher_killer_message(
+            server_time_ms=flow.now, entity_rid=attacker), 'combat-butcher-killer')
+    combat.publishScore(flow, attacker, previous=previousWinner,
+                        statMessageId=kill_flow.FIRST_BLOOD_MESSAGE_ID if firstBlood else 0)
     combat.publishScore(flow, target, previous=previousVictim)
     combat.publishCampScore(flow)
     flow.log("INFO", f"combat-kill attacker={attacker} target={target} streak={streak} "
+                              f"first-blood={firstBlood} butcher-ended={wasButcher} "
                               f"kills={winner['kills']} points={winner['battlePoints']} target-deaths={victim['deaths']}")
 
 

@@ -23,11 +23,11 @@ def updates(flow):
             if packet['command'] == 12 and packet['body'][:2] == b'\0\1']
 
 
-def decode(packet):
+def decode(packet, *, messageId=0):
     body = packet['body']
     assert len(body) == 74
     selector, now, rid, reason, count = struct.unpack_from('>HQQii', body)
-    assert (selector, reason, count) == (1, 0, 4)
+    assert (selector, reason, count) == (1, messageId, 4)
     fields = [struct.unpack_from('>iii', body, offset) for offset in (26, 38, 50, 62)]
     assert [item[0] for item in fields] == [2, 44, 3, 1]
     return now, rid, fields
@@ -85,7 +85,7 @@ def test_every_lethal_hit_credits_killer_and_victim_once(multi, camp, attacker, 
     assert totals(multi, attacker) == (1, 0, 100) and totals(multi, target) == (0, 1, 0)
     assert all(totals(multi, rid) == (0, 0, 0) for rid in actors.ids(multi.session) if rid not in (attacker, target))
     winnerPacket, victimPacket = updates(multi)
-    assert decode(winnerPacket) == (multi.now, attacker, scoreItems((0, 0, 0), (1, 0, 100)))
+    assert decode(winnerPacket, messageId=730000) == (multi.now, attacker, scoreItems((0, 0, 0), (1, 0, 100)))
     assert decode(victimPacket) == (multi.now, target, scoreItems((0, 0, 0), (0, 1, 0)))
     deadIndex = next(i for i, p in enumerate(multi.result['send']) if p['reason'] in ('bot-dead', 'player-dead'))
     assert all(multi.result['send'].index(packet) < deadIndex for packet in (winnerPacket, victimPacket))
@@ -107,7 +107,8 @@ def test_multi_kill_records_each_victim_with_monotonic_totals(multi):
     attack(multi)
     advance(multi, combat.hitTimer(1))
     assert totals(multi, 1) == (3, 0, 300)
-    assert [decode(packet)[1:] for packet in updates(multi)] == [
+    assert [decode(packet, messageId=730000 if index == 0 else 0)[1:]
+            for index, packet in enumerate(updates(multi))] == [
         entry for i, rid in enumerate(targets) for entry in (
             (1, scoreItems((i, 0, i * 100), (i + 1, 0, (i + 1) * 100))),
             (rid, scoreItems((0, 0, 0), (0, 1, 0))))]

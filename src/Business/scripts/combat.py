@@ -23,6 +23,7 @@ def hurtTimer(actorId):
 
 def initialize(flow):
     player_life.reset(flow)
+    flow.session['firstBloodAwarded'] = False
     for actorId in actors.ids(flow.session):
         data = battle.actorData(flow, actorId)
         data["health"] = MAX_HEALTH
@@ -38,6 +39,8 @@ def initialize(flow):
 
 
 def validState(data):
+    if type(data.get('firstBloodAwarded', False)) is not bool:
+        return False
     if type(data.get('killStreak', 0)) is not int or not 0 <= data.get('killStreak', 0) <= kill_flow.MAX_STREAK:
         return False
     if any(type(data.get(key, 0)) is not int or not 0 <= data.get(key, 0) <= kill_flow.MAX_SCORE
@@ -196,7 +199,7 @@ def scoreTotals(data):
     return data.get('kills', 0), data.get('deaths', 0), data.get('battlePoints', 0)
 
 
-def publishScore(flow, actorId, *, previous=None):
+def publishScore(flow, actorId, *, previous=None, statMessageId=0):
     current = scoreTotals(battle.actorData(flow, actorId))
     if current == (0, 0, 0):
         return
@@ -204,7 +207,7 @@ def publishScore(flow, actorId, *, previous=None):
     flow.send(kill_flow.SCORE_COMMAND, kill_flow.encode_score_update_event(
         server_time_ms=flow.now, entity_rid=actorId, previous_kills=previous[0], kills=current[0],
         previous_deaths=previous[1], deaths=current[1],
-        previous_points=previous[2], points=current[2]), 'combat-score')
+        previous_points=previous[2], points=current[2], stat_message_id=statMessageId), 'combat-score')
 
 
 def publishCampScore(flow):
