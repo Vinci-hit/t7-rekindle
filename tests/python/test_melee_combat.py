@@ -125,7 +125,7 @@ def test_held_parry_accepts_both_lateral_guards_but_keeps_vertical_pairing(
     blocked = defence in acceptedDefences
     assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else combat.DAMAGE)
     assert hp(arena, attacker) == combat.MAX_HEALTH
-    assert any("combat-parry" in log for log in arena.result["logs"]) == blocked
+    assert any("combat-parry" in log["message"] for log in arena.result["logs"]) == blocked
     if blocked:
         assert battle.actionState(arena, attacker)["reaction"] == "parried"
         assert battle.actionState(arena, defender)["reaction"] == "parry-success"
@@ -160,7 +160,7 @@ def test_lateral_parry_uses_relative_positions_and_current_facing(
     advance(arena, combat.hitTimer(attacker))
     assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else combat.DAMAGE)
     assert (battle.actionState(arena, defender).get("reaction") == "parry-success") == blocked
-    assert any("combat-parry" in log for log in arena.result["logs"]) == blocked
+    assert any("combat-parry" in log["message"] for log in arena.result["logs"]) == blocked
 
 
 @pytest.mark.parametrize("attacker", [1, 2])
@@ -179,7 +179,7 @@ def test_lateral_guard_does_not_bypass_contact_requirements(arena, attacker, att
     if failure == "epoch": world["instanceStartedAt"] += 1
     advance(arena, combat.hitTimer(attacker), fresh=False)
     assert hp(arena, 1) == hp(arena, 2) == combat.MAX_HEALTH
-    assert not any("combat-parry" in log for log in arena.result["logs"])
+    assert not any("combat-parry" in log["message"] for log in arena.result["logs"])
     assert battle.actionState(arena, defender).get("reaction") is None
 
 

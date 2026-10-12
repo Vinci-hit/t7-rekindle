@@ -55,6 +55,13 @@ int main() {
                               reinterpret_cast<const uint8_t*>(root.data()), static_cast<uint32_t>(root.size()), 0};
     assert(t7_native_create(&create, &session) == T7NB_OK && session);
 
+    assert(t7_native_set_log_level(nullptr, T7NB_LOG_INFO) == T7NB_INVALID_HANDLE);
+    assert(t7_native_set_log_level(session, 4) == T7NB_INVALID_ARGUMENT);
+    assert(t7_native_set_log_level(session, UINT32_MAX) == T7NB_INVALID_ARGUMENT);
+    for (uint32_t level = T7NB_LOG_DEBUG; level <= T7NB_LOG_ERROR; ++level)
+        assert(t7_native_set_log_level(session, level) == T7NB_OK);
+    assert(t7_native_set_log_level(session, T7NB_LOG_INFO) == T7NB_OK);
+
     uint8_t outputDevice[16]{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
     assert(t7_native_set_output_device(nullptr, outputDevice, sizeof(outputDevice)) == T7NB_INVALID_HANDLE);
     assert(t7_native_set_output_device(session, nullptr, sizeof(outputDevice)) == T7NB_INVALID_ARGUMENT);

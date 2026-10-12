@@ -60,7 +60,7 @@ def test_repeated_failed_escape_tries_another_direction_without_spamming(walking
     assert value['unstuck']['attempt'] == 2
     assert value['unstuck']['goal'] != previous['goal']
     assert value['unstuck']['goal'][1] * previous['goal'][1] < 0
-    assert len([line for line in walking.result['logs'] if line.startswith('bot-stuck ')]) == 2
+    assert len([line for line in walking.result['logs'] if line["message"].startswith('bot-stuck ')]) == 2
 
 
 def test_progress_restarts_the_observation_window(walking):

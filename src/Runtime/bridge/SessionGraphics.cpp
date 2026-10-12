@@ -30,7 +30,7 @@ void Session::monitorGraphics() {
     try {
         GraphicsValues values; uint32_t result = 0; bool applied = false;
         if (!bootstrap_.pollGraphics(values, result, applied)) return;
-        if (applied && result == 0) log("Graphics application was not confirmed by the client display state", "WARNING");
+        if (applied && result == 0) log("Graphics application was not confirmed by the client display state", DiagnosticLogLevel::Warn);
         bool submit = false;
         GraphicsValues request;
         {
@@ -59,7 +59,7 @@ void Session::monitorGraphics() {
             std::lock_guard<std::mutex> lock(mutex_);
             graphics_.state = T7NB_GRAPHICS_FAILED; graphicsQueued_ = false;
         }
-        log(std::string("Graphics synchronization stopped: ") + error.what(), "WARNING");
+        log(std::string("Graphics synchronization stopped: ") + error.what(), DiagnosticLogLevel::Warn);
     }
 }
 }

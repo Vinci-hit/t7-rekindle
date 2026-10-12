@@ -1,4 +1,5 @@
 #pragma once
+#include "../core/DiagnosticLog.h"
 #include "../core/Common.h"
 #include "MovementOverlay.h"
 #include "DebugClient.h"
@@ -14,8 +15,8 @@ public:
     // Test-only seam for lifecycle tests.  Product Session instances use the
     // default constructor and always execute the real client adapter below.
     struct TestAdapter {
-        std::function<void(const fs::path&, const Config&, const std::function<void(std::string)>&)> check;
-        std::function<void(const fs::path&, const Config&, const std::function<void(std::string)>&,
+        std::function<void(const fs::path&, const Config&, const DiagnosticLogCallback&)> check;
+        std::function<void(const fs::path&, const Config&, const DiagnosticLogCallback&,
                            const std::function<bool()>&, const std::function<void()>&)> launch;
         std::function<bool()> running;
         std::function<bool()> windowClosed;
@@ -29,8 +30,8 @@ public:
     };
     explicit Bootstrap(TestAdapter adapter = {});
     ~Bootstrap();
-    void check(const fs::path& directory, const Config& config, const std::function<void(std::string)>& log = {});
-    void launch(const fs::path& directory, const Config& config, const std::function<void(std::string)>& log,
+    void check(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log = {});
+    void launch(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log,
                 const std::function<bool()>& cancelled = {}, const std::function<void()>& adapting = {},
                 const std::function<void(std::string)>& warning = {});
     bool running() const;

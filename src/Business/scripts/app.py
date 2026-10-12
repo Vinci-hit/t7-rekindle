@@ -85,6 +85,9 @@ class Flow:
         self.result = {"state": state, "send": [], "timers": [], "logs": []}
         self.rearmActionTimers()
 
+    def log(self, level, message):
+        self.result["logs"].append({"level": level, "message": message})
+
     def rearmActionTimers(self):
         if self.session is None or not self.session.pop('rearmActionTimers', False):
             return
@@ -241,7 +244,7 @@ def handleMessage(flow, event):
     key = f"{command}:{selector}"
     if key not in observed and len(observed) < 64:
         observed[key] = True
-        flow.result["logs"].append(f"unhandled command={command} selector={selector}; no speculative response")
+        flow.log("WARN", f"unhandled command={command} selector={selector}; no speculative response")
 
 
 def handleEvent(event, state, context):
@@ -251,12 +254,12 @@ def handleEvent(event, state, context):
     if eventType == "operator":
         if event.get("name") != "diagnostic":
             raise ValueError("only the diagnostic command is implemented; no speculative correction bundle")
-        flow.result["logs"].append(f"diagnostic phase={state['phase']} sessions={len(state['sessions'])} "
+        flow.log("DEBUG", f"diagnostic phase={state['phase']} sessions={len(state['sessions'])} "
                                    f"baseline={wire.BASELINE_ID} scene=1028 actor=1 heroes={wire.HERO_IDS} "
                                    f"ground={wire.GROUND_STEP_DISTANCE}/{wire.GROUND_STEP_MS}ms "
                                    "prime=state10-state1 outcome=none clientAcceptance=unverified")
         for connection, session in list(state["sessions"].items())[:32]:
-            flow.result["logs"].append(
+            flow.log("DEBUG",
                 f"connection={connection} role={session['role']} phase={session.get('phase', 'waiting')} "
                 f"actorImported={session.get('actorImported', False)} heroChosen={session.get('heroChosen', False)} "
                 f"battleEntered={session.get('battleEntered', False)} pending={list(session.get('pending', {}))}")

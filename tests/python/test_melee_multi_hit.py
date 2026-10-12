@@ -141,7 +141,7 @@ def test_successful_multi_hit_does_not_log_a_miss_when_window_ends(multi):
     attack(multi)
     while combat.hitTimer(1) in multi.session['pending']:
         advance(multi, combat.hitTimer(1))
-    assert not any('combat-miss attacker=1' in log for log in multi.result['logs'])
+    assert not any('combat-miss attacker=1' in log["message"] for log in multi.result['logs'])
 
 
 @pytest.mark.parametrize('hits', [None, '2', [True], [0], [21], [2, 2], ['2']])

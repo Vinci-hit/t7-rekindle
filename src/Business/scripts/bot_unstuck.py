@@ -117,7 +117,7 @@ def plan(flow, nav, actorId, heading=None):
     value.update(path=[], step=0, repathAt=0, forwardMs=0)
     mode = 'escape' if recovery.goal is not None else 'wait'
     distance = math.dist(value['position'][:2], recovery.goal[:2]) if recovery.goal is not None else 0.
-    flow.result['logs'].append(f'bot-stuck actor={actorId} attempt={attempt} mode={mode} '
+    flow.log("DEBUG", f'bot-stuck actor={actorId} attempt={attempt} mode={mode} '
                               f'turn={TURNS[turn]} distance={distance:.2f}')
     return recovery
 
@@ -178,7 +178,7 @@ def meshPlan(flow, nav, actorId):
     value['meshRecovery'] = state
     value.pop('motionProbe', None)
     mode = 'move' if goal is not None else 'wait'
-    flow.result['logs'].append(f'bot-mesh-recovery actor={actorId} attempt={attempt} mode={mode} '
+    flow.log("DEBUG", f'bot-mesh-recovery actor={actorId} attempt={attempt} mode={mode} '
                               f'position={position} goal={goal}')
     return state
 
@@ -193,7 +193,7 @@ def returnToMesh(flow, nav, observed, actorId):
     if state is not None and bot_tactics.groundGoal(nav, position) is not None:
         bot.stopMotion(flow, actorId)
         value.update(repathAt=0, senseAt=0)
-        flow.result['logs'].append(f'bot-mesh-returned actor={actorId} position={position}')
+        flow.log("DEBUG", f'bot-mesh-returned actor={actorId} position={position}')
         return False
     if state is None:
         bot.stopMotion(flow, actorId)

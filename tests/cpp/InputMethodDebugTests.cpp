@@ -134,7 +134,7 @@ bool verifyInputMethodDebugClient() {
             std::vector<HANDLE> observed;
             std::vector<std::string> logs, warnings;
             std::mutex mutex;
-            const auto log = [&](const std::string& line) {
+            const auto log = [&](t7::DiagnosticLogLevel, const std::string& line) {
                 std::lock_guard<std::mutex> lock(mutex); logs.push_back(line);
                 if (line.find("Compatible client child process; PID=") == 0
                     || line.find("Verified client child process; PID=") == 0) {

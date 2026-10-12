@@ -58,7 +58,7 @@ void Session::monitorAudio() {
             std::lock_guard<std::mutex> lock(mutex_);
             audio_.state = T7NB_AUDIO_FAILED; audioQueued_ = false;
         }
-        log(std::string("Audio synchronization stopped: ") + error.what(), "WARNING");
+        log(std::string("Audio synchronization stopped: ") + error.what(), DiagnosticLogLevel::Warn);
     }
 }
 }

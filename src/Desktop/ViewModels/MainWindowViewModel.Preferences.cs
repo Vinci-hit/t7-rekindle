@@ -1,4 +1,5 @@
 using System;
+using T7.Rekindle.Core;
 using T7.Rekindle.Desktop.Services;
 
 namespace T7.Rekindle.Desktop.ViewModels
@@ -8,6 +9,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private bool _minimizeToTray;
         private bool _startWithWindows;
         private bool _skipStartupAnimation;
+        private DiagnosticLogLevel _selectedLogLevel;
         private string _preferenceError = string.Empty;
         private string _gameSettingsError = string.Empty;
         internal Action<bool> RegisterStartup { get; set; } = WindowsStartupService.SetEnabled;
@@ -22,6 +24,54 @@ namespace T7.Rekindle.Desktop.ViewModels
         {
             get => _startWithWindows;
             set => SavePreference(value, true);
+        }
+
+        public DiagnosticLogLevel SelectedLogLevel
+        {
+            get => _selectedLogLevel;
+            set
+            {
+                if (_disposed || _selectedLogLevel == value) return;
+                if (!DiagnosticLogLevels.IsValid(value)) throw new ArgumentOutOfRangeException(nameof(value));
+                var previous = _selectedLogLevel;
+                var applied = false;
+                PreferenceError = string.Empty;
+                try
+                {
+                    var settings = CreateSettings(_savedDirectory, _savedName);
+                    settings.LogLevel = DiagnosticLogLevels.Name(value);
+                    _bridge.SetLogLevel(value);
+                    applied = true;
+                    LogService.SetMinimumLevel(value);
+                    _settings.Save(settings);
+                    _selectedLogLevel = value;
+                    Notices.Resolve("preferences.save-failed");
+                }
+                catch (Exception error)
+                {
+                    PreferenceError = "日志等级未保存，请重试";
+                    if (applied)
+                    {
+                        // Restore each runtime sink independently when persistence fails.
+                        try { _bridge.SetLogLevel(previous); }
+                        catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
+                        try { LogService.SetMinimumLevel(previous); }
+                        catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
+                    }
+                    _log.Error("保存日志等级失败", error);
+                    if (!IsSettingsSelected || SettingsTabIndex != 1)
+                        Notices.Publish("preferences.save-failed", PreferenceError, NoticeSeverity.Error, "查看设置",
+                            () => { IsSettingsSelected = true; SettingsTabIndex = 1; });
+                }
+                System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.DataBind, new Action(() => OnPropertyChanged(nameof(SelectedLogLevel))));
+            }
+        }
+
+        private void ReportLogLevelRestoreFailure(Exception error)
+        {
+            _log.Error("恢复日志等级失败", error);
+            PreferenceError = "日志等级恢复失败，请重启启动器后重试";
         }
 
         public bool SkipStartupAnimation

@@ -33,7 +33,7 @@ def begin(flow):
 def initializeBattleState(flow):
     startedAt = flow.session.get("instanceStartedAt")
     if startedAt is None:
-        flow.result["logs"].append("new instance required for natural initialization; unknown instance epoch")
+        flow.log("INFO", "new instance required for natural initialization; unknown instance epoch")
         return
     body = battle_flow.encode_battle_state_sync_simple(
         instance_id=wire.ACTOR_ID, seq_no=1, state=battle_flow.ACT_STATE_IDLE,
@@ -101,7 +101,7 @@ def timer(flow, name):
     elif name == "round-start":
         if not flow.session.get("battleEntered"):
             flow.session["prepareExpired"] = True
-            flow.result["logs"].append("PREPARE elapsed without battle confirmation; waiting for PLAY_REQ")
+            flow.log("INFO", "PREPARE elapsed without battle confirmation; waiting for PLAY_REQ")
             return True
         startRound(flow)
     elif name == "round-game":
@@ -154,7 +154,7 @@ def finishRound(flow):
     flow.send(0xA, leave_flow.encode_si_finish_game(
         server_time_ms=flow.now, game_result=snapshot['result'], local_user_id=wire.USER_ID), "instance-finish-game")
     flow.phase("settlement")
-    flow.result['logs'].append(f"settlement reason={snapshot['reason']} result={snapshot['result']} "
+    flow.log("INFO", f"settlement reason={snapshot['reason']} result={snapshot['result']} "
                                f"campKills={snapshot['campKills']} members={len(snapshot['members'])}")
 
 

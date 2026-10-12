@@ -35,12 +35,15 @@ namespace T7.Rekindle.Desktop
             }
             _settings = new SettingsService();
             var settings = _settings.Load();
+            LogService.SetMinimumLevel(DiagnosticLogLevels.Parse(settings.LogLevel));
             _darkTheme = settings.DarkTheme;
             ApplyTheme();
             SystemParameters.StaticPropertyChanged += OnSystemParametersChanged;
+            MainWindowViewModel viewModel;
             try
             {
                 _bridge = new NativeBridgeService(AppContext.BaseDirectory);
+                viewModel = new MainWindowViewModel(_bridge, _settings, settings, _settings.LastWarning);
             }
             catch (Exception error)
             {
@@ -49,7 +52,6 @@ namespace T7.Rekindle.Desktop
                 Shutdown(1);
                 return;
             }
-            var viewModel = new MainWindowViewModel(_bridge, _settings, settings, _settings.LastWarning);
             var window = new MainWindow { DataContext = viewModel };
             MainWindow = window;
             window.Show();

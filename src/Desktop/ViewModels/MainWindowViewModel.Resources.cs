@@ -42,7 +42,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             if (_disposed || version != _validationVersion) return;
             _clientVersion = result.Version;
             NotifyClientResources();
-            AppendLog(result.Diagnostic.Length == 0 ? "INFO" : "WARNING",
+            AppendLog(result.Diagnostic.Length == 0 ? DiagnosticLogLevel.Info : DiagnosticLogLevel.Warn,
                 ClientVersionText + (result.Diagnostic.Length == 0 ? "" : "; " + result.Diagnostic));
         }
 

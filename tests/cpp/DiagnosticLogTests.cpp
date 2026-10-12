@@ -34,9 +34,12 @@ private:
     std::wstring previous_;
 };
 
-std::string checkLogs(const t7::fs::path& packageRoot, t7::Bootstrap::TestAdapter adapter, uint32_t status) {
+std::string checkLogs(const t7::fs::path& packageRoot, t7::Bootstrap::TestAdapter adapter, uint32_t status,
+                      uint32_t minimumLevel = UINT32_MAX, const std::function<void(t7::bridge::Session&)>& prepare = {}) {
     auto session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), std::move(adapter));
     try {
+        if (minimumLevel != UINT32_MAX) require(session->setLogLevel(minimumLevel) == T7NB_OK, "diagnostic level setup failed");
+        if (prepare) prepare(*session);
         uint64_t id = 0;
         require(session->submit(T7NB_OPERATION_CHECK, t7::utf8((packageRoot / "synthetic-client" / "Bin").wstring()), id) == T7NB_OK,
             "diagnostic check submission failed");
@@ -56,6 +59,7 @@ std::string checkLogs(const t7::fs::path& packageRoot, t7::Bootstrap::TestAdapte
         require(session->readLogs(cursor, buffer.data(), required, required, flags) == T7NB_OK,
             "diagnostic log read failed");
         session->requestClose();
+        require(session->setLogLevel(T7NB_LOG_INFO) == T7NB_INVALID_HANDLE, "closed session accepted a log level");
         require(session->waitForWorkerForTest(std::chrono::seconds(5)), "diagnostic worker did not stop");
         return {buffer.begin(), buffer.end()};
     } catch (...) {
@@ -65,17 +69,73 @@ std::string checkLogs(const t7::fs::path& packageRoot, t7::Bootstrap::TestAdapte
     }
 }
 
+void verifyLevels(const t7::fs::path& packageRoot, const t7::fs::path& root) {
+    for (uint32_t minimum = T7NB_LOG_DEBUG; minimum <= T7NB_LOG_ERROR; ++minimum) {
+        const auto directory = root / std::to_string(minimum);
+        LocalDataScope local(directory);
+        t7::Bootstrap::TestAdapter adapter;
+        adapter.check = [](const auto&, const auto&, const t7::DiagnosticLogCallback& log) {
+            for (uint32_t level = T7NB_LOG_DEBUG; level <= T7NB_LOG_ERROR; ++level)
+                log(static_cast<t7::DiagnosticLogLevel>(level), "fixture-level-" + std::to_string(level));
+        };
+        const auto logs = checkLogs(packageRoot, std::move(adapter), T7NB_OPERATION_SUCCEEDED, minimum);
+        const auto disk = contents(directory / "T7-Rekindle/logs/native.log");
+        for (uint32_t level = T7NB_LOG_DEBUG; level <= T7NB_LOG_ERROR; ++level) {
+            const auto marker = "fixture-level-" + std::to_string(level);
+            require((logs.find(marker) != std::string::npos) == (level >= minimum), "native memory level filter mismatch");
+            require((disk.find(marker) != std::string::npos) == (level >= minimum), "native file level filter mismatch");
+        }
+        require(logs.find("  WARN  ") != std::string::npos || minimum == T7NB_LOG_ERROR, "native warning is not canonical");
+        require(logs.find("WARNING") == std::string::npos, "native output used legacy severity");
+    }
+    require(t7::diagnosticRecordLevel("2026-01-02 03:04:05  WARNING  [fixture] legacy") == t7::DiagnosticLogLevel::Warn,
+        "legacy warning parsing changed");
+}
+
+void verifyLiveLevelChanges(const t7::fs::path& packageRoot, const t7::fs::path& root) {
+    LocalDataScope local(root);
+    t7::bridge::Session* current = nullptr;
+    t7::Bootstrap::TestAdapter adapter;
+    adapter.check = [&](const auto&, const auto&, const t7::DiagnosticLogCallback& log) {
+        log(t7::DiagnosticLogLevel::Debug, "hidden-at-default");
+        log(t7::DiagnosticLogLevel::Info, "retained-before-change");
+        require(current->setLogLevel(T7NB_LOG_DEBUG) == T7NB_OK, "changing level during check failed");
+        log(t7::DiagnosticLogLevel::Debug, "visible-after-debug");
+        require(current->setLogLevel(T7NB_LOG_ERROR) == T7NB_OK, "changing level to error failed");
+        log(t7::DiagnosticLogLevel::Warn, "hidden-after-error");
+        log(t7::DiagnosticLogLevel::Error, "visible-error");
+    };
+    const auto logs = checkLogs(packageRoot, std::move(adapter), T7NB_OPERATION_SUCCEEDED, UINT32_MAX,
+        [&](auto& session) { current = &session; });
+    for (const auto& text : {logs, contents(root / "T7-Rekindle/logs/native.log")}) {
+        require(text.find("hidden-") == std::string::npos, "live level change leaked filtered records");
+        require(text.find("retained-before-change") != std::string::npos && text.find("visible-after-debug") != std::string::npos
+            && text.find("visible-error") != std::string::npos, "live level change rewrote or lost logs");
+    }
+}
+
+void verifyBusinessLevels(const t7::fs::path& packageRoot, const t7::fs::path& root) {
+    t7::PythonHost python(packageRoot, root);
+    const auto context = python.context(t7::Config{}, 1, {});
+    const auto state = python.create(context);
+    t7::Event event;
+    event.type = "operator"; event.name = "diagnostic";
+    const auto result = python.dispatch(event, state, context);
+    require(result.logs.size() == 1 && result.logs.front().level == t7::DiagnosticLogLevel::Debug
+        && result.logs.front().message.find("diagnostic phase=") == 0, "Python host lost structured severity or message");
+}
+
 void verifyNativeWriteFailure(const t7::fs::path& packageRoot, const t7::fs::path& root) {
     LocalDataScope local(root);
     t7::fs::create_directories(root / "T7-Rekindle/logs/native.log");
     t7::Bootstrap::TestAdapter adapter;
-    adapter.check = [](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>&) {
+    adapter.check = [](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&) {
         throw std::runtime_error("fixture native failure");
     };
     const auto logs = checkLogs(packageRoot, std::move(adapter), T7NB_OPERATION_FAILED);
     require(logs.find("  ERROR  [NativeBridge] operation failed: fixture native failure") != std::string::npos,
         "native file failure replaced the original error");
-    require(logs.find(u8"  WARNING  [NativeBridge] 日志文件写入失败：") != std::string::npos,
+    require(logs.find(u8"  ERROR  [NativeBridge] 日志文件写入失败：") != std::string::npos,
         "native file failure has no separate warning");
 }
 
@@ -85,8 +145,8 @@ void verifyUtf8Boundary(const t7::fs::path& packageRoot, const t7::fs::path& roo
     for (unsigned index = 0; index < 4096; ++index) message += u8"界";
     message += " end-of-full-record";
     t7::Bootstrap::TestAdapter adapter;
-    adapter.check = [message](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>& log) {
-        log(message);
+    adapter.check = [message](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback& log) {
+        log(t7::DiagnosticLogLevel::Info, message);
     };
     const auto logs = checkLogs(packageRoot, std::move(adapter), T7NB_OPERATION_SUCCEEDED);
     require(!t7::wide(logs).empty() && logs.find("[truncated]") != std::string::npos,
@@ -162,6 +222,9 @@ bool verifyDiagnosticLogs(const t7::fs::path& packageRoot) {
     try {
         const auto root = packageRoot / "diagnostic-tests";
         t7::fs::create_directories(root);
+        verifyLevels(packageRoot, root / "levels");
+        verifyLiveLevelChanges(packageRoot, root / "live-levels");
+        verifyBusinessLevels(packageRoot, root / "business-levels");
         verifyNativeWriteFailure(packageRoot, root / "write-failure");
         verifyUtf8Boundary(packageRoot, root / "utf8");
         verifyDailyRotation(root / "rotation");

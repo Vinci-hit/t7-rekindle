@@ -28,7 +28,8 @@ class Server {
 public:
     Server() = default;
     ~Server();
-    void start(const Config& config, const fs::path& root, const fs::path& writableRoot = {}, const std::function<bool()>& cancelled = {});
+    void start(const Config& config, const fs::path& root, const fs::path& writableRoot = {},
+               const std::function<bool()>& cancelled = {}, std::shared_ptr<DiagnosticLogFilter> logFilter = {});
     void stop();
     // start() waits for this condition before returning.  The method is kept
     // public for the bridge worker and tests that need an explicit readiness
@@ -95,6 +96,6 @@ private:
                 std::string phase, TimePoint now, double callbackMs, std::string& state, Timers& timers, bool& committed);
     void fail(const std::exception& error);
     void queue(Event event, TimePoint due = TimePoint::max());
-    void disconnect(uint64_t id, const std::string& reason);
+    void disconnect(uint64_t id, const std::string& reason, DiagnosticLogLevel level);
 };
 }

@@ -17,6 +17,7 @@ namespace T7.Rekindle.Core
         public bool SkipStartupAnimation { get; set; }
         public string UpdateChannel { get; set; } = "stable";
         public string OutputDeviceId { get; set; } = string.Empty;
+        public string LogLevel { get; set; } = "INFO";
     }
 
     public static class SettingsSchema
@@ -31,6 +32,8 @@ namespace T7.Rekindle.Core
             }
 
             if (settings.UpdateChannel != "stable" && settings.UpdateChannel != "preview") return false;
+            if (!DiagnosticLogLevels.TryParse(settings.LogLevel, out var logLevel)
+                || DiagnosticLogLevels.Name(logLevel) != settings.LogLevel) return false;
             if (settings.OutputDeviceId == null || (settings.OutputDeviceId.Length != 0
                 && !Guid.TryParseExact(settings.OutputDeviceId, "D", out _))) return false;
 

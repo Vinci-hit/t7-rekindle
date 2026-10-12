@@ -24,7 +24,7 @@ def assemble(flow):
                                 flow.session['instanceStartedAt'])
         value['name'] = bot_names.PREFIXES[value['profile']] + names[rid - 2]
         values[str(rid)] = value
-        flow.result['logs'].append(f"bot-profile actor={rid} template={value['profile']} tempo={value['tempo']} lane={value['lane']}")
+        flow.log("DEBUG", f"bot-profile actor={rid} template={value['profile']} tempo={value['tempo']} lane={value['lane']}")
     flow.session.pop("bot", None)
     flow.session.pop('bodyPlayer', None)
     flow.session.update(bots=values, resourceId=wire.RESOURCE_ID, spawnPosition=list(position), spawnHeading=heading,
@@ -32,7 +32,7 @@ def assemble(flow):
                                        for team, points in respawns.items()})
     controls.groundState(flow).update(position=list(position), heading=heading)
     combat.initialize(flow)
-    flow.result["logs"].append(f"infantry-spawns blue=10 red=10 player-camp={camp} friendly-bots=9 enemy-bots=10")
+    flow.log("INFO", f"infantry-spawns blue=10 red=10 player-camp={camp} friendly-bots=9 enemy-bots=10")
 
 
 def playerVision(flow):

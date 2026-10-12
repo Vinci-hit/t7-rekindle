@@ -12,6 +12,7 @@ namespace T7.Rekindle.Desktop.Services
 {
     public interface INativeBridge
     {
+        void SetLogLevel(DiagnosticLogLevel level);
         void SetOutputDevice(Guid identifier);
         Task<OperationSnapshot> CheckAsync(string clientDirectory, CancellationToken cancellationToken);
         Task<OperationSnapshot> StartAsync(string clientDirectory, CancellationToken cancellationToken);
@@ -653,6 +654,7 @@ namespace T7.Rekindle.Desktop.Services
 
             private NativeMethods(IntPtr module)
             {
+                SetLogLevel = Resolve<LogLevelDelegate>(module, "t7_native_set_log_level");
                 SetOutputDevice = Resolve<OutputDeviceDelegate>(module, "t7_native_set_output_device");
                 GetGraphics = Resolve<GraphicsDelegate>(module, "t7_native_get_graphics");
                 ApplyGraphics = Resolve<GraphicsDelegate>(module, "t7_native_apply_graphics");

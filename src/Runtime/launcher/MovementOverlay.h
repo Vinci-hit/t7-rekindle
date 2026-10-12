@@ -1,4 +1,5 @@
 #pragma once
+#include "../core/DiagnosticLog.h"
 
 #include "../core/Common.h"
 #include <functional>
@@ -46,7 +47,7 @@ public:
     // Install before first resume under the owned debugger. Resource edits use
     // the client's XML memory pool; its VFS, collision assets and disk stay intact.
     void install(HANDLE process, uintptr_t imageBase,
-                 const std::function<void(std::string)>& log = {}, bool skipStartupAnimation = false);
+                 const DiagnosticLogCallback& log = {}, bool skipStartupAnimation = false);
     void rollback();
     bool handleBreakpoint(DWORD threadId, uintptr_t address);
 
@@ -62,7 +63,7 @@ private:
     uint32_t features_ = 0;
     size_t patchedCount_ = 0;
     bool skipStartupAnimation_ = false;
-    std::function<void(std::string)> log_;
+    DiagnosticLogCallback log_;
 
     void clear() noexcept;
 };

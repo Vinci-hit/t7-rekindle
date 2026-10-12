@@ -112,7 +112,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 NotifyClientResources();
             }
             UpdatePresentation();
-            AppendLog("INFO", name + "操作已提交。");
+            AppendLog(DiagnosticLogLevel.Info, name + "操作已提交。");
             try
             {
                 var pending = action(cancellation.Token);
@@ -127,7 +127,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     _failureMessage = string.IsNullOrEmpty(result.Error) ? "操作未完成，请查看详细日志。" : result.Error;
                 else if (kind == OperationKind.Check) _completedMessage = "客户端检查通过";
                 else if (kind == OperationKind.Stop) _completedMessage = "游戏已结束";
-                AppendLog(_failureMessage.Length == 0 ? "INFO" : "ERROR",
+                AppendLog(_failureMessage.Length == 0 ? DiagnosticLogLevel.Info : DiagnosticLogLevel.Error,
                     _failureMessage.Length == 0 ? name + "操作完成。" : _failureMessage);
             }
             catch (OperationCanceledException)
@@ -135,14 +135,14 @@ namespace T7.Rekindle.Desktop.ViewModels
                 if (version == _validationVersion && kind != OperationKind.Stop)
                     CompleteResourceCheck(OperationStatus.Cancelled, "");
                 if (kind != OperationKind.Check || version == _validationVersion) _completedMessage = name + "已取消";
-                AppendLog("INFO", name + "操作已取消。");
+                AppendLog(DiagnosticLogLevel.Info, name + "操作已取消。");
             }
             catch (Exception error)
             {
                 if (version == _validationVersion && kind != OperationKind.Stop)
                     CompleteResourceCheck(OperationStatus.Failed, error.Message);
                 if (kind != OperationKind.Check || version == _validationVersion) _failureMessage = error.Message;
-                AppendLog("ERROR", name + "失败：" + error.Message, error);
+                AppendLog(DiagnosticLogLevel.Error, name + "失败：" + error.Message, error);
             }
             finally
             {
@@ -163,7 +163,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         {
             if (!CanCancel) return;
             _operationCancellation.Cancel();
-            AppendLog("INFO", "已请求取消，等待本次会话清理完成。");
+            AppendLog(DiagnosticLogLevel.Info, "已请求取消，等待本次会话清理完成。");
             UpdatePresentation();
         }
 

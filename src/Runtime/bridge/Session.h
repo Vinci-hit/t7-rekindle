@@ -3,6 +3,7 @@
 #include "../launcher/Bootstrap.h"
 #include "../server/Server.h"
 #include "T7NativeBridge.h"
+#include "../core/DiagnosticLog.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -69,6 +70,7 @@ public:
                    std::string playerName = u8"新玩家", bool skipStartupAnimation = false);
     int32_t cancel(uint64_t operationId);
     int32_t setOutputDevice(const GUID& identifier);
+    int32_t setLogLevel(uint32_t level);
     int32_t snapshot(Snapshot& result) const;
     int32_t graphics(GraphicsSnapshot& result) const;
     int32_t applyGraphics(uint64_t revision, const GraphicsValues& values);
@@ -103,7 +105,7 @@ private:
     void monitorAudio();
     void setFailure(uint64_t operationId, uint32_t code, const std::string& message);
     std::string cleanup() noexcept;
-    void log(const std::string& text, const char* level = "INFO");
+    void log(const std::string& text, DiagnosticLogLevel level = DiagnosticLogLevel::Info);
     void logRecord(const std::string& record);
     bool cancelled(uint64_t operationId) const;
     void setState(uint32_t state, uint32_t operation, uint64_t operationId, const std::string& phase);
@@ -114,6 +116,7 @@ private:
     std::deque<Command> commands_;
     std::map<uint64_t, Operation> operations_;
     std::deque<LogRecord> logs_;
+    const std::shared_ptr<DiagnosticLogFilter> logFilter_ = std::make_shared<DiagnosticLogFilter>();
     uint64_t nextOperation_ = 1;
     uint64_t nextLog_ = 1;
     uint64_t earliestLog_ = 1;

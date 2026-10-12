@@ -185,7 +185,14 @@ def validateTransition(result, context):
         _integer(timer["event"]["connection"], 1, (1 << 63) - 1, "timer connection")
         encode(timer["event"])
     for log in result["logs"]:
-        if type(log) is not str or len(log) > 4096:
+        if type(log) is dict:
+            if (set(log) != {"level", "message"} or type(log["level"]) is not str
+                    or log["level"] not in ("DEBUG", "INFO", "WARN", "ERROR")):
+                raise ValueError("invalid business log")
+            message = log["message"]
+        else:
+            message = log
+        if type(message) is not str or len(message) > 4096:
             raise ValueError("invalid business log")
     encode(result["state"])
 
@@ -242,7 +249,7 @@ class Runtime:
             raise ValueError("business state rejected")
         return (encode(result["state"]), result["send"],
                 [(item["id"], item["delayMs"], encode(item["event"]), item["event"]["connection"]) for item in result["timers"]],
-                result["logs"])
+                [dict(level="INFO", message=log) if type(log) is str else log for log in result["logs"]])
 
     def switch(self, state, rollback=False):
         target = self.previous if rollback else self.candidate

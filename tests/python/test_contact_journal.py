@@ -165,7 +165,7 @@ def test_native_hold_at_contact_time_can_parry_after_business_release(multi):
     battle.releaseAction(multi, battle.BLOCK_RELEASE)
     combat.worldUpdated(multi)
     assert hp(multi, 1) == 100
-    assert any('combat-parry' in line for line in multi.result['logs'])
+    assert any('combat-parry' in line["message"] for line in multi.result['logs'])
 
 
 def test_global_contact_order_interrupts_later_swing_even_if_input_batch_is_reversed(multi):

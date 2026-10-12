@@ -133,7 +133,7 @@ def status(flow, text, actorId=wire.BOT_ID):
     value = actors.data(flow, actorId)
     if value["status"] != text:
         value["status"] = text
-        flow.result["logs"].append(f"bot actor={actorId} status={text}")
+        flow.log("DEBUG", f"bot actor={actorId} status={text}")
 
 
 def movementAxes(angle):
@@ -426,7 +426,7 @@ def think(flow, actorId=wire.BOT_ID):
                 value.update(lastAttack=choice.intent, decisionSeed=choice.seed)
                 value.pop('pressAt', None)
             value["reactAt"] = None
-            flow.result["logs"].append(f"bot-decision actor={actorId} target={snapshot.get('targetId', 1)} reason={choice.reason} intent={choice.intent}")
+            flow.log("DEBUG", f"bot-decision actor={actorId} target={snapshot.get('targetId', 1)} reason={choice.reason} intent={choice.intent}")
             status(flow, choice.reason, actorId)
             return
     value["reactAt"] = None

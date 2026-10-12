@@ -239,7 +239,7 @@ bool verifyGraphicsHookExecution() {
                 t7::writeClientMemory(process, BASE + anchor.first, {static_cast<unsigned char>(anchor.second)});
             }
             graphics.install(process, BASE, GetThreadId(thread));
-        }, [](const std::string& line) {
+        }, [](t7::DiagnosticLogLevel, const std::string& line) {
             if (line.find("exception") != std::string::npos || line.find("fault") != std::string::npos
                 || line.find("violation") != std::string::npos) std::cerr << line << '\n';
         });

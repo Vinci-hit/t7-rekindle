@@ -4,8 +4,9 @@
 #include <chrono>
 
 namespace t7 {
-Journal::Journal(const fs::path& root, size_t segmentLimit, unsigned maxSegments)
-    : root_(root), segmentLimit_(segmentLimit), maxSegments_(maxSegments) {
+Journal::Journal(const fs::path& root, size_t segmentLimit, unsigned maxSegments, std::shared_ptr<DiagnosticLogFilter> filter)
+    : root_(root), segmentLimit_(segmentLimit), maxSegments_(maxSegments),
+      filter_(filter ? std::move(filter) : std::make_shared<DiagnosticLogFilter>()) {
     if (!segmentLimit_ || !maxSegments_) throw std::runtime_error("journal retention limits must be positive");
     std::error_code error;
     if (!fs::create_directory(root_, error) || error)
@@ -18,7 +19,13 @@ void Journal::stop() {
     { std::lock_guard<std::mutex> lock(mutex_); stopping_ = true; }
     changed_.notify_all(); if (thread_.joinable()) thread_.join();
 }
-void Journal::add(std::string direction, uint64_t connection, std::string version, std::string reason,
+void Journal::diagnostic(DiagnosticLogLevel level, const std::string& message) {
+    if (!filter_->allows(level)) return;
+    lines_.push_back(formatDiagnosticRecord(message, level, "Journal"));
+    while (lines_.size() > 1000) lines_.pop_front();
+}
+
+void Journal::add(DiagnosticLogLevel level, std::string direction, uint64_t connection, std::string version, std::string reason,
                   Bytes bytes, bool capture) {
     const auto wireLength = bytes.size();
     if (!capture) Bytes{}.swap(bytes);
@@ -33,14 +40,12 @@ void Journal::add(std::string direction, uint64_t connection, std::string versio
     const bool isError = direction == "ERROR" || direction == "LOG-ERROR";
     const auto message = (isError ? "" : direction + " ") + "#" + std::to_string(connection)
         + " " + version.substr(0, 12) + " " + reason;
-    lines_.push_back(formatDiagnosticRecord(message, isError ? "ERROR" : "INFO", "Journal"));
-    while (lines_.size() > 1000) lines_.pop_front();
+    diagnostic(level, message);
     size_t size = bytes.size() + reason.size() + 256;
     if (failed_ || queuedBytes_ + size > 8 * 1024 * 1024) {
         ++dropped_;
         if (dropped_ == 1) {
-            lines_.push_back(formatDiagnosticRecord("WIRE COVERAGE INCOMPLETE: log queue/write failure", "WARNING", "Journal"));
-            while (lines_.size() > 1000) lines_.pop_front();
+            diagnostic(DiagnosticLogLevel::Warn, "WIRE COVERAGE INCOMPLETE: log queue/write failure");
         }
         return;
     }
@@ -97,9 +102,8 @@ void Journal::run() {
             failed_ = true;
             dropped_ += pending_.size() + 1;
             pending_.clear(); queuedBytes_ = 0;
-            lines_.push_back(formatDiagnosticRecord(std::string("LOG FAILURE: ") + e.what(), "ERROR", "Journal"));
-            lines_.push_back(formatDiagnosticRecord("WIRE COVERAGE INCOMPLETE: pending records discarded after write failure", "WARNING", "Journal"));
-            while (lines_.size() > 1000) lines_.pop_front();
+            diagnostic(DiagnosticLogLevel::Error, std::string("LOG FAILURE: ") + e.what());
+            diagnostic(DiagnosticLogLevel::Warn, "WIRE COVERAGE INCOMPLETE: pending records discarded after write failure");
             return;
         }
     }

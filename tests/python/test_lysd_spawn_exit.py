@@ -85,7 +85,7 @@ def test_stable_landing_rejoins_navigation_and_normal_decision(ledge):
     assert 'spawnExit' not in value and value['initialized']
     assert value['heightOffset'] == pytest.approx(.2)
     assert bot.MOVE_TIMER in ledge.session['pending']
-    assert any('spawn-exit-complete' in log for log in ledge.result['logs'])
+    assert any('spawn-exit-complete' in log["message"] for log in ledge.result['logs'])
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ def test_landed_actor_without_enemy_keeps_low_priority_return_route(lowerGround)
     assert value['spawnExit']['landed'] and value['initialized']
     assert value.get('opponentId') is None
     assert value['status'].startswith('spawn-return-')
-    assert any('bot-spawn-landed actor=2' in log for log in lowerGround.result['logs'])
+    assert any('bot-spawn-landed actor=2' in log["message"] for log in lowerGround.result['logs'])
 
 
 def test_search_and_current_action_take_priority_over_return_route(lowerGround):

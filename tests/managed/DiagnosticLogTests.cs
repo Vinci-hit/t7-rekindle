@@ -35,13 +35,13 @@ namespace T7.ManagedHarness
             try
             {
                 Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("th-TH");
+                var earliest = DateTime.Now.AddSeconds(-1);
                 using (var model = new MainWindowViewModel(new FakeLauncherBridge(),
                     new SettingsService(Path.Combine(directory, "log-timestamps")),
                     new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "Player" }, null,
                     path => Task.FromResult(ValidDirectory(path)), new FakeDesktopInteraction()))
                 {
                     RunTask(model.ValidationTask);
-                    var earliest = DateTime.Now.AddSeconds(-1);
                     RunTask(model.CheckCommand.ExecuteAsync(null));
                     var latest = DateTime.Now;
                     var lines = model.NativeLogText.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
@@ -126,18 +126,20 @@ namespace T7.ManagedHarness
                     for (var index = 4; index < 7; index++)
                         Assert(target.Logs[index].EndsWith("|" + nativeLines[index] + " ", StringComparison.Ordinal),
                             "unrecognized native log text was discarded or changed");
-                    Assert(model.NativeLogText.EndsWith(string.Join(Environment.NewLine, nativeLines), StringComparison.Ordinal),
-                        "desktop log formatting changed the original UI log text");
+                    Assert(model.NativeLogText.Contains(timestamp + "  错误  [NativeBridge] 原生错误")
+                        && model.NativeLogText.Contains(timestamp + "  信息  [NativeBridge] 原生信息 | [detail] {value}")
+                        && model.NativeLogText.Contains(timestamp + "  警告  [Journal] WIRE COVERAGE INCOMPLETE"),
+                        "UI log localization lost severity, timestamp, source or body");
 
                     RunTask(model.StartCommand.ExecuteAsync(null));
                     var launcherLines = model.NativeLogText.Split(new[] { Environment.NewLine }, StringSplitOptions.None)
                         .Where(line => line.Contains("  [Launcher] ") && !line.Contains("客户端版本：")).ToArray();
-                    Assert(launcherLines.Length == 2 && launcherLines.Any(line => line.Contains("  ERROR  ")),
+                    Assert(launcherLines.Length == 2 && launcherLines.Any(line => line.Contains("  错误  ")),
                         "launcher fixture did not produce info and error records");
                     foreach (var line in launcherLines)
                     {
-                        var expected = line.Replace("  INFO  [Launcher] ", "|INFO|Launcher|")
-                            .Replace("  ERROR  [Launcher] ", "|ERROR|Launcher|") + " ";
+                        var expected = line.Replace("  信息  [Launcher] ", "|INFO|Launcher|")
+                            .Replace("  错误  [Launcher] ", "|ERROR|Launcher|") + " ";
                         Assert(target.Logs.Contains(expected), "launcher log was double-formatted or lost its severity");
                     }
                 }
@@ -172,13 +174,15 @@ namespace T7.ManagedHarness
                     }, new FakeDesktopInteraction()))
                 {
                     RunTask(model.ValidationTask);
+                    // Startup diagnostics are independent of the operation exception below.
+                    target.Logs.Clear();
                     RunTask(model.StartCommand.ExecuteAsync(null));
-                    Assert(target.Logs.Count == 1, "one operation exception produced duplicate error records");
+                    Assert(target.Logs.Count == 1, "one operation exception produced duplicate error records: " + string.Join("\n", target.Logs));
                     Assert(target.Logs[0].StartsWith("Error|Launcher|", StringComparison.Ordinal)
                         && target.Logs[0].Contains("System.InvalidOperationException: fixture inspection failure")
                         && target.Logs[0].Contains(nameof(TestSingleExceptionRecord)),
                         "operation error lost its source, exception type or stack trace");
-                    Assert(model.NativeLogText.Contains("  ERROR  [Launcher] 启动失败：fixture inspection failure"),
+                    Assert(model.NativeLogText.Contains("  错误  [Launcher] 启动失败：fixture inspection failure"),
                         "deduplicating the file log removed the UI error");
                 }
             }

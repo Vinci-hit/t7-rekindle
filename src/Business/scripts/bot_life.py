@@ -57,7 +57,7 @@ def announceKill(flow, attacker, target):
     combat.publishScore(flow, attacker, previous=previousWinner)
     combat.publishScore(flow, target, previous=previousVictim)
     combat.publishCampScore(flow)
-    flow.result['logs'].append(f"combat-kill attacker={attacker} target={target} streak={streak} "
+    flow.log("INFO", f"combat-kill attacker={attacker} target={target} streak={streak} "
                               f"kills={winner['kills']} points={winner['battlePoints']} target-deaths={victim['deaths']}")
 
 
@@ -78,7 +78,7 @@ def die(flow, actorId, attacker, position):
     battle.syncState(flow, DEATH_STATE, actorId, targetId=attacker)
     notifyDeath(flow, actorId)
     flow.later(actors.timerName(RESPAWN_TIMER, actorId), RESPAWN_MS)
-    flow.result['logs'].append(f"bot-death actor={actorId} attacker={attacker} respawn-at={flow.now + RESPAWN_MS}")
+    flow.log("INFO", f"bot-death actor={actorId} attacker={attacker} respawn-at={flow.now + RESPAWN_MS}")
 
 
 def chooseSpawn(flow, actorId, snapshot):
@@ -111,7 +111,7 @@ def chooseSpawn(flow, actorId, snapshot):
                 if battlefield:
                     reference = references[index][0]
                     distance = math.dist(position[:2], reference[:2])
-                    flow.result['logs'].append(f'bot-respawn-point actor={actorId} reference={list(reference)} '
+                    flow.log("DEBUG", f'bot-respawn-point actor={actorId} reference={list(reference)} '
                                               f'position={list(position)} horizontal-distance={distance:.3f}')
                 return position, heading
     bot.status(flow, 'respawn-occupied', actorId)
@@ -151,7 +151,7 @@ def respawn(flow, actorId):
     flow.send(0xE, bot.vision(value, actorId), 'bot-respawn-add')
     battle.syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
     flow.later(actors.timerName(bot.THINK_TIMER, actorId), bot.THINK_MS)
-    flow.result['logs'].append(f"bot-respawn actor={actorId} camp={value['camp']} position={list(position)}")
+    flow.log("INFO", f"bot-respawn actor={actorId} camp={value['camp']} position={list(position)}")
 
 
 def ready(flow, actorId):

@@ -118,9 +118,9 @@ def test_failed_native_movement_retries_a_different_nearby_entry(edge):
     assert value['meshRecovery']['attempt'] == 2
     assert value['meshRecovery']['goal'] != goal
     assert value['position'] == [2.02, 0, .2]
-    attempts = [line for line in edge.result['logs'] if line.startswith('bot-mesh-recovery ')]
+    attempts = [line for line in edge.result['logs'] if line["message"].startswith('bot-mesh-recovery ')]
     assert len(attempts) == 2
-    assert all('position=' in line and 'goal=' in line for line in attempts)
+    assert all('position=' in line["message"] and 'goal=' in line["message"] for line in attempts)
 
 
 def test_progress_toward_a_distant_mesh_does_not_rotate_the_entry(edge):

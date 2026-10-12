@@ -11,7 +11,7 @@ bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, boo
     const bool skipStartupAnimation = !normalExit;
     t7::Bootstrap::TestAdapter adapter;
     adapter.launch = [namePassed, alive, skipStartupAnimation](const t7::fs::path&, const t7::Config& config,
-        const std::function<void(std::string)>&, const std::function<bool()>&, const std::function<void()>&) {
+        const t7::DiagnosticLogCallback&, const std::function<bool()>&, const std::function<void()>&) {
         *namePassed = config.playerName == u8"重燃玩家" && config.skipStartupAnimation == skipStartupAnimation;
         *alive = true;
     };
@@ -55,7 +55,7 @@ bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel) {
     auto state = std::make_shared<State>();
     t7::Bootstrap::TestAdapter adapter;
     adapter.launch = [state, cancel](const t7::fs::path&, const t7::Config&,
-        const std::function<void(std::string)>&, const std::function<bool()>&, const std::function<void()>&) {
+        const t7::DiagnosticLogCallback&, const std::function<bool()>&, const std::function<void()>&) {
         state->launched = true;
         if (cancel) {
             auto session = state->session.lock();
@@ -108,7 +108,7 @@ bool verifyWindowCloseCleanup(const t7::fs::path& packageRoot, bool failCleanup)
     auto stopping = state->stopping.get_future();
     t7::Bootstrap::TestAdapter adapter;
     adapter.launch = [state](const t7::fs::path&, const t7::Config&,
-        const std::function<void(std::string)>&, const std::function<bool()>&, const std::function<void()>&) {
+        const t7::DiagnosticLogCallback&, const std::function<bool()>&, const std::function<void()>&) {
         state->alive = true;
     };
     adapter.running = [state] { return state->alive.load(); };

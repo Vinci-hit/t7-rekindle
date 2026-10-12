@@ -149,8 +149,8 @@ def test_clear_native_blade_does_not_hit_even_when_actor_is_close(arena):
     while combat.hitTimer(1) in arena.session["pending"]:
         advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
-    misses = [log for log in arena.result["logs"] if log.startswith("combat-miss")]
-    assert len(misses) == 1 and "reason=blade-clear" in misses[0]
+    misses = [log for log in arena.result["logs"] if log["message"].startswith("combat-miss")]
+    assert len(misses) == 1 and "reason=blade-clear" in misses[0]["message"]
 
 
 @pytest.mark.parametrize("value", [None, math.nan, math.inf, 181.])
@@ -160,4 +160,4 @@ def test_missing_or_invalid_facing_is_not_replaced_with_zero(arena, value):
     while combat.hitTimer(1) in arena.session["pending"]:
         advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
-    assert any("reason=blade-unavailable" in log for log in arena.result["logs"])
+    assert any("reason=blade-unavailable" in log["message"] for log in arena.result["logs"])

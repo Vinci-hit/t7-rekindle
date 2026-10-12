@@ -225,7 +225,7 @@ def test_bot_starts_counterattack_without_changing_weapon_timing(nearBot):
     assert value["status"] == "counterattack"
     assert value["attackCount"] == 1 and value["lastAttack"] == value["action"]["intent"]
     assert flow.session["pending"][bot.ACTION_TIMER] - flow.now == battle.phaseMs(value["lastAttack"], 0)
-    assert any("reason=counterattack" in line for line in flow.result["logs"])
+    assert any("reason=counterattack" in line["message"] for line in flow.result["logs"])
 
 
 @pytest.mark.parametrize("timerName", [bot.THINK_TIMER, bot.MOVE_TIMER])

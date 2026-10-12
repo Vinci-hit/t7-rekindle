@@ -30,6 +30,7 @@ namespace T7.ManagedHarness
             TestGameSettingsPersistence(directory);
             TestDialogs(output);
             DiagnosticLogTests.Run(directory, output);
+            LogLevelTests.Run(directory, output);
         }
 
         private static void TestConstructionNavigation(string directory, string output)

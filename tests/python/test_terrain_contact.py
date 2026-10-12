@@ -89,7 +89,7 @@ def test_wall_takes_priority_over_enemy_parry(arena, attacker, attack, defence, 
     assert states(arena)[-1] == (attacker, rebound)
     assert battle.actionState(arena, defender).get("reaction") is None
     assert hp(arena, 1) == hp(arena, 2) == combat.MAX_HEALTH
-    assert not any("combat-parry" in line for line in arena.result["logs"])
+    assert not any("combat-parry" in line["message"] for line in arena.result["logs"])
 
 
 @pytest.mark.parametrize("failure", ["missing", "unready", "nan", "stale", "epoch", "pre-swing"])

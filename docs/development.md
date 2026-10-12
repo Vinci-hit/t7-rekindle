@@ -81,6 +81,8 @@ SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包�
 
 账号定向测试：`T7.ManagedHarness.exe --account-tests`。服务端迁移、接口、SSE 代理设置及 QQ 实机验证见 [认证服务说明](../server/README.md#qq-扫码登录)。
 
+日志定向测试：`T7.ManagedHarness.exe --log-tests artifacts/ui-log-levels`，覆盖等级过滤、中文显示、配置兼容、保存失败回滚及三种主题；省略输出目录时仅执行断言。
+
 合成集成测试依赖 `native-tests` 的输出，并生成 JSON 报告。`realClient=false` 表示未启动真实客户端；它验证所覆盖的合成流程，不代替进图、移动、AI 或完整对局验收。真实客户端与界面验收项目见[实施计划](planning/implementation-plan.md)。
 
 界面截图可通过 `T7.ManagedHarness.exe --render-ui artifacts/ui-v11-final` 生成；`--native-ui artifacts/ui-v11-final` 另行检查当前显示器的真实窗口边界、弹窗位置与托盘恢复。两者均使用测试数据，不启动真实游戏或修改自启动项。覆盖范围、截图索引及待实机验收项见 [UI 1.1 实施与验收](planning/ui-handoff-v1.1.md)。

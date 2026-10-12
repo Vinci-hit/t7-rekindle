@@ -57,10 +57,10 @@ bool verifyJobAssignmentOrder() {
 bool verifyFakeBootstrapAdapter() {
     bool checked = false, launched = false, stopped = false, adapted = false;
     t7::Bootstrap::TestAdapter adapter;
-    adapter.check = [&checked](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>&) {
+    adapter.check = [&checked](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&) {
         checked = true;
     };
-    adapter.launch = [&launched](const t7::fs::path&, const t7::Config&, const std::function<void(std::string)>&,
+    adapter.launch = [&launched](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&,
                                  const std::function<bool()>&, const std::function<void()>& adapting) {
         launched = true;
         if (adapting) adapting();
@@ -248,7 +248,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
     t7::Bootstrap::TestAdapter adapter;
     adapter.launch = [state](
         const t7::fs::path&, const t7::Config& config,
-        const std::function<void(std::string)>& log,
+        const t7::DiagnosticLogCallback& log,
         const std::function<bool()>& cancelled,
         const std::function<void()>& adapting) {
         if (!config.ports[0] || !config.ports[1] || !config.ports[2])
@@ -257,7 +257,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
         state->launched = true;
         state->clientRunning = true;
         if (adapting) adapting();
-        if (log) log("synthetic client adapter launched");
+        if (log) log(t7::DiagnosticLogLevel::Info, "synthetic client adapter launched");
     };
     adapter.running = [state] { return state->clientRunning; };
     adapter.stop = [state] {
@@ -537,7 +537,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::Journal journal(journalRoot);
             for (int i = 0; i != 1100; ++i)
-                journal.add("TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
+                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
             if (journal.lines().size() > 1000) result = 13;
         }
         std::ifstream index(journalRoot / "frames-1.jsonl");
@@ -551,7 +551,7 @@ int wmain(int argc, wchar_t** argv) {
         {
             t7::Journal journal(rotationRoot, 1024, 2);
             for (int i = 0; i != 5; ++i)
-                journal.add("TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7::Bytes(700, 7));
+                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7::Bytes(700, 7));
         }
         if (t7::fs::exists(rotationRoot / "frames-1.bin")
             || !t7::fs::exists(rotationRoot / "frames-4.bin")

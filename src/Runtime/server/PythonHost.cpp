@@ -327,7 +327,11 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
     if (!PyList_Check(logs)) throw std::runtime_error("invalid transition log list");
     auto logCount = PyList_Size(logs);
     if (logCount < 0) throw std::runtime_error(error());
-    for (Py_ssize_t i = 0; i < logCount; ++i) result.logs.push_back(string(PyList_GetItem(logs, i)));
+    for (Py_ssize_t i = 0; i < logCount; ++i) {
+        auto item = PyList_GetItem(logs, i);
+        if (!item || !PyDict_Check(item)) throw std::runtime_error("invalid transition log item");
+        result.logs.push_back({parseDiagnosticLevel(string(field(item, "level"))), string(field(item, "message"))});
+    }
     if (PyErr_Occurred()) throw std::runtime_error(error());
     return result;
 }

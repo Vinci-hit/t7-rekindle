@@ -29,7 +29,7 @@ bool verifyOperationPublication(const t7::fs::path& packageRoot, uint32_t expect
     auto reached = gate->reached.get_future();
     t7::Bootstrap::TestAdapter adapter;
     adapter.check = [gate, expectedStatus](const t7::fs::path&, const t7::Config&,
-                                          const std::function<void(std::string)>&) {
+                                          const t7::DiagnosticLogCallback&) {
         if (!gate->firstCheck) return;
         gate->firstCheck = false;
         if (expectedStatus == T7NB_OPERATION_FAILED)

@@ -75,6 +75,13 @@ extern "C" int32_t T7NB_CALL t7_native_set_output_device(T7NativeSessionHandle h
     });
 }
 
+extern "C" int32_t T7NB_CALL t7_native_set_log_level(T7NativeSessionHandle handle, uint32_t level) {
+    return guard([&]() -> int32_t {
+        std::shared_ptr<Session> session; auto status = checkSession(handle, session); if (status != T7NB_OK) return status;
+        return session->setLogLevel(level);
+    });
+}
+
 extern "C" int32_t T7NB_CALL t7_native_get_graphics(T7NativeSessionHandle handle, T7NativeGraphicsSnapshot* output) {
     return guard([&]() -> int32_t {
         if (!output) return T7NB_INVALID_ARGUMENT;

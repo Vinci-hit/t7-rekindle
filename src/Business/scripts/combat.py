@@ -91,7 +91,7 @@ def cancelSwing(flow, actorId, *, reason=None):
         return
     if swing is not None and reason and not swing.get("hits"):
         detail = swing.get("miss", "expired") if flow.now >= swing["until"] else reason
-        flow.result["logs"].append(f"combat-miss attacker={actorId} reason={detail}")
+        flow.log("DEBUG", f"combat-miss attacker={actorId} reason={detail}")
 
 
 def contactEndMs(intent):
@@ -176,7 +176,7 @@ def hitTerrain(flow, attacker, contact, *, intent=None):
         attacker_mid=attacker, target_mid=0, attacker_weapon_id=wire.WEAPON_ID,
         target_weapon_id=0, server_time_ms=int(getattr(flow, 'contactAt', flow.now))), "combat-terrain-hit")
     point = ",".join(f"{v:.2f}" for v in contact["position"])
-    flow.result["logs"].append(
+    flow.log("DEBUG",
         f"combat-terrain attacker={attacker} material={contact['material']} point={point}")
 
 
@@ -239,7 +239,7 @@ def parry(flow, attacker, defender, snapshot, *, attackIntent=None, defenceInten
     battle.parryReaction(flow, defender, attacker, success=True, intent=defence['intent'])
     if defender != wire.ACTOR_ID:
         bot.parrySucceeded(flow, defender)
-    flow.result["logs"].append(
+    flow.log("DEBUG",
         f"combat-parry attacker={attacker} target={defender} attack={attack['intent']} defence={defence['intent']}")
     return True
 
@@ -299,7 +299,7 @@ def applyHit(flow, attacker, target, snapshot, *, contact=None, intent=None):
             target_life_state=battle_flow.LIFE_STATE_KILL if data['health'] == 0 else battle_flow.LIFE_STATE_NONE,
             attack_weapon_id=wire.WEAPON_ID, target_result_type=battle_flow.RESULT_DATA_DELTA_HP,
             target_result_data=data['health'] - previousHealth), 'combat-damage')
-    flow.result["logs"].append(f"combat-hit attacker={attacker} target={target} hp={data['health']}")
+    flow.log("DEBUG", f"combat-hit attacker={attacker} target={target} hp={data['health']}")
     if data['health'] == 0:
         if target == wire.ACTOR_ID:
             player_life.die(flow, attacker, position)

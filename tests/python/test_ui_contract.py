@@ -499,4 +499,5 @@ def test_native_bridge_exports_are_explicit_and_versioned():
         "t7_native_get_audio",
         "t7_native_apply_audio",
         "t7_native_set_output_device",
+        "t7_native_set_log_level",
     ]

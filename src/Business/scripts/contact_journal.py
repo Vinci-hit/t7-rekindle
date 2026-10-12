@@ -58,7 +58,7 @@ def settle(flow):
         return
     flow.session['contactCursor'] = cursor
     if journal.get('dropped', 0):
-        flow.result['logs'].append(f"combat-contact-overflow dropped={journal['dropped']} batch={batchId}")
+        flow.log("WARN", f"combat-contact-overflow dropped={journal['dropped']} batch={batchId}")
     actorIds = set(actors.ids(flow.session))
     settled, unmatched = 0, 0
     events = sorted(journal['events'], key=lambda item: (item['occurredAt'], item['along'], item['actorId'], item['targetId']))
@@ -114,12 +114,12 @@ def settle(flow):
         for value in data.get('contactSwings', []):
             if value not in pending and not value['hits'] and not value.get('stopped'):
                 reason = 'interrupted' if 'cutoff' in value else 'native-no-contact'
-                flow.result['logs'].append(f'combat-miss attacker={rid} reason={reason}')
+                flow.log("DEBUG", f'combat-miss attacker={rid} reason={reason}')
         if pending:
             data['contactSwings'] = pending
         else:
             data.pop('contactSwings', None)
     if settled or unmatched:
         delay = max((flow.now - event['occurredAt'] for event in events), default=0)
-        flow.result['logs'].append(f'combat-contact batch={batchId} frames={journal.get("frames", 0)} '
+        flow.log("DEBUG", f'combat-contact batch={batchId} frames={journal.get("frames", 0)} '
                                   f'events={len(events)} settled={settled} unmatched={unmatched} deliveryMs={delay:.1f}')

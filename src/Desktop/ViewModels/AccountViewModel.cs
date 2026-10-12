@@ -1,4 +1,5 @@
 using System;
+using T7.Rekindle.Core;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,7 +45,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             if (!string.IsNullOrWhiteSpace(address))
             {
                 try { api = new AccountApi(address); }
-                catch (ArgumentException error) { Record("账号服务配置错误", error); }
+                catch (ArgumentException error) { Record(DiagnosticLogLevel.Error, "账号服务配置错误", error); }
             }
             var dispatcher = Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
             return new AccountViewModel(api, new AccountSessionStore(address), AccountSessionStore.ReadMachineId,
@@ -102,7 +103,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                         || error is Newtonsoft.Json.JsonException || error is FormatException)
                         ClearSession("登录记录已失效，请重新扫码");
                     else SetStatus(_signedIn ? "已登录 · 上线失败，请重试" : "登录验证暂未完成，请重试");
-                    Record("恢复账号登录失败", error);
+                    Record(DiagnosticLogLevel.Error, "恢复账号登录失败", error);
                 }
             }
             finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
@@ -143,7 +144,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     SetStatus(problem?.Code == "QQ_ACCOUNT_CONFLICT" ? "QQ 号与已有账号重名，请联系管理员"
                         : problem?.Status == 429 ? "登录过于频繁，请稍后重试"
                         : _signedIn ? "已登录 · 上线失败，请重试" : "登录失败，请稍后重试");
-                    Record("QQ 扫码登录失败", error);
+                    Record(DiagnosticLogLevel.Error, "QQ 扫码登录失败", error);
                 }
             }
             finally { if (IsCurrent(generation)) { _busy = _waitingForServer = false; Changed(); } }
@@ -154,7 +155,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _session = session;
             _signedIn = true;
             try { _store.Save(session); }
-            catch (Exception error) { Record("保存账号登录状态失败", error); }
+            catch (Exception error) { Record(DiagnosticLogLevel.Error, "保存账号登录状态失败", error); }
             Changed();
         }
 
@@ -164,7 +165,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             ClearSession("未登录");
             if (previous == null || _api == null) return;
             try { await _api.LogoutAsync(previous, CancellationToken.None).ConfigureAwait(true); }
-            catch (Exception error) { Record("账号注销请求未完成", error); }
+            catch (Exception error) { Record(DiagnosticLogLevel.Warn, "账号注销请求未完成", error); }
         }
 
         public async Task SuspendAsync()
@@ -176,7 +177,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             Changed();
             if (previous == null || connection == null) return;
             try { await _api.OfflineAsync(previous, connection.ConnectionId, CancellationToken.None).ConfigureAwait(true); }
-            catch (Exception error) { Record("账号下线请求未完成", error); }
+            catch (Exception error) { Record(DiagnosticLogLevel.Warn, "账号下线请求未完成", error); }
         }
 
         private int Begin()
@@ -202,7 +203,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _session = null;
             _signedIn = _busy = false;
             try { _store.Clear(); }
-            catch (Exception error) { Record("清理本机登录记录失败", error); }
+            catch (Exception error) { Record(DiagnosticLogLevel.Error, "清理本机登录记录失败", error); }
             SetStatus(message);
         }
         private bool HandleTerminal(Exception error)
@@ -230,8 +231,8 @@ namespace T7.Rekindle.Desktop.ViewModels
             OnPropertyChanged(string.Empty);
             LoginCommand.NotifyCanExecuteChanged(); LogoutCommand.NotifyCanExecuteChanged(); ReconnectCommand.NotifyCanExecuteChanged();
         }
-        private static void Record(string operation, Exception error) =>
-            new LogService().Info(operation + "（" + error.GetType().Name + "）");
+        private static void Record(DiagnosticLogLevel level, string operation, Exception error) =>
+            new LogService().Write(level, operation + "（" + error.GetType().Name + "）", source: typeof(LogService).FullName);
         public void Dispose()
         {
             if (_disposed) return;
