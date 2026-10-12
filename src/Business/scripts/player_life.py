@@ -41,7 +41,7 @@ def canChoose(flow):
 
 
 def die(flow, attacker, position):
-    from . import combat
+    from . import combat, scene
     if not actors.active(flow, wire.ACTOR_ID) or not battle.enabled(flow):
         return
     battle.resetAction(flow)
@@ -60,6 +60,8 @@ def die(flow, attacker, position):
     controls.activate(flow)
     flow.send(4, battle_flow.encode_battle_dead_notify(entity_rid=wire.ACTOR_ID, server_time_ms=flow.now),
               'player-dead')
+    if scene.checkKillTarget(flow, actors.data(flow, attacker).get('camp', 1)):
+        return
     # Native DEATH owns the camera delay, friend cycling and free mouse-look.
     flow.send(0x36, wire.actorState(flow.now, 9), 'player-observer')
     flow.later(SELECT_TIMER, RESPAWN_MS)

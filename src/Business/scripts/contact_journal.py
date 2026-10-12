@@ -42,6 +42,8 @@ def pair(raw, event):
 
 def settle(flow):
     from . import combat
+    if not battle.enabled(flow):
+        return
     raw = flow.context['botWorld']
     journal = raw['contactJournal']
     epoch = flow.session.get('instanceStartedAt')
@@ -63,6 +65,8 @@ def settle(flow):
     settled, unmatched = 0, 0
     events = sorted(journal['events'], key=lambda item: (item['occurredAt'], item['along'], item['actorId'], item['targetId']))
     for event in events:
+        if flow.session.get('roundEnded'):
+            break
         attacker, target, occurredAt = event['actorId'], event['targetId'], event['occurredAt']
         if attacker not in actorIds or not actors.active(flow, attacker):
             continue

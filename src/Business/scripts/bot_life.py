@@ -74,8 +74,8 @@ def announceKill(flow, attacker, target):
 
 
 def die(flow, actorId, attacker, position):
-    from . import bot, combat
-    if actorId == wire.ACTOR_ID or not actors.active(flow, actorId):
+    from . import bot, combat, scene
+    if actorId == wire.ACTOR_ID or flow.session.get('roundEnded') or not actors.active(flow, actorId):
         return
     value = actors.data(flow, actorId)
     value['position'] = list(position)
@@ -89,6 +89,8 @@ def die(flow, actorId, attacker, position):
     announceKill(flow, attacker, actorId)
     battle.syncState(flow, DEATH_STATE, actorId, targetId=attacker)
     notifyDeath(flow, actorId)
+    if scene.checkKillTarget(flow, actors.data(flow, attacker).get('camp', 1)):
+        return
     flow.later(actors.timerName(RESPAWN_TIMER, actorId), RESPAWN_MS)
     flow.log("INFO", f"bot-death actor={actorId} attacker={attacker} respawn-at={flow.now + RESPAWN_MS}")
 

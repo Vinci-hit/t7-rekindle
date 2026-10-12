@@ -28,6 +28,7 @@ PREPARE_MS = 30000
 # Just under six seconds gives 5..1 without showing 6 at the exact start boundary.
 START_MS = 5999
 GAME_MS = 1200000
+KILL_TARGET = 60
 GROUND_STEP_DISTANCE = 0.25
 GROUND_STEP_MS = 50
 

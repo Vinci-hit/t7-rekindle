@@ -4,11 +4,11 @@ import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
 from . import battle_clock, settlement
-from .codec import login_flow, protocol, room_flow
+from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 13
+STATE_VERSION = 14
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -41,13 +41,14 @@ def validateState(state):
                and combat.validState(session)
                and player_life.validState(session)
                and battle_clock.validState(session)
+               and ('killTarget' not in session or kill_flow.valid_kill_target(session['killTarget']))
                and ("bot" not in session or combat.validState(session["bot"]))
                and (not session.get("initialized") or controls.validMoveClock(session))
                for key, session in state["sessions"].items())
 
 
 def migrateState(fromVersion, state):
-    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, STATE_VERSION) or not validateState(state):
+    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, STATE_VERSION) or not validateState(state):
         raise ValueError("no migration for this state version")
     result = deepcopy(state)
     if fromVersion < 12:

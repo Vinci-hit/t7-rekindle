@@ -4,6 +4,7 @@ import struct
 INSTANCE_COMMAND, KILL_EVENT = 10, 6
 SCRIPT_COMMAND, SCRIPT_UPDATE_ITEM_MSG = 23, 1
 BLUE_KILLS_KEY, RED_KILLS_KEY = 7346418, 206159  # Client script-name keys: blue, red.
+KILL_TARGET_KEY = -1610395699  # kill_total: 0xA0034FCD as int32, not table ordinal 7.
 CONTINUOUS_KILL_COMMAND, CONTINUOUS_KILL_EVENT = 19, 1
 SCORE_COMMAND, SCORE_UPDATE_EVENT, SCORE_STAT_MSG = 12, 1, 2
 MAX_STREAK = MAX_SCORE = 0x7FFFFFFF
@@ -25,12 +26,19 @@ def encode_kill_event(*, server_time_ms, source_rid, target_rid, weapon_tid, hit
     return pack('>HQQQii', KILL_EVENT, server_time_ms, source_rid, target_rid, weapon_tid, hit_part)
 
 
-def encode_camp_kill_update(*, server_time_ms, instance_id, blue_kills, red_kills):
+def valid_kill_target(value):
+    return type(value) is int and 0 < value <= MAX_SCORE
+
+
+def encode_camp_kill_update(*, server_time_ms, instance_id, blue_kills, red_kills, kill_target=None):
     if any(type(value) is not int or not 0 <= value <= MAX_SCORE for value in (blue_kills, red_kills)):
         raise ValueError('camp score values must fit a nonnegative int32')
+    if kill_target is not None and not valid_kill_target(kill_target):
+        raise ValueError('kill target must fit a positive int32')
     # SCRIPT items use int32 name keys and int64 absolute values, not ordinal IDs.
-    return pack('>HQQiiqiq', SCRIPT_UPDATE_ITEM_MSG, server_time_ms, instance_id, 2,
+    body = pack('>HQQiiqiq', SCRIPT_UPDATE_ITEM_MSG, server_time_ms, instance_id, 2 + (kill_target is not None),
                 BLUE_KILLS_KEY, blue_kills, RED_KILLS_KEY, red_kills)
+    return body if kill_target is None else body + pack('>iq', KILL_TARGET_KEY, kill_target)
 
 
 def encode_continuous_kill_event(*, entity_rid, count):

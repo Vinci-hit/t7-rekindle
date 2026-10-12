@@ -3,7 +3,7 @@ import struct
 import pytest
 
 from Business.runtime import host_runtime
-from Business.scripts import actors, app, bot, bot_life, combat, player_life, roster, scene
+from Business.scripts import actors, app, bot, bot_life, combat, contracts as wire, player_life, roster, scene
 from Business.scripts.codec import kill_flow
 from test_bot_player import flowAt
 from test_bot_respawn import kill, respawnTimer, tick
@@ -17,12 +17,14 @@ def updates(flow):
             if packet['command'] == 23 and packet['body'][:2] == b'\0\1']
 
 
-def totals(packet):
+def totals(packet, *, target=None):
     body = packet['body']
-    assert len(body) == 46
+    assert len(body) == 46 + 12 * (target is not None)
     selector, now, instanceId, count = struct.unpack_from('>HQQi', body)
-    assert (selector, instanceId, count) == (1, 1, 2)
+    assert (selector, instanceId, count) == (1, 1, 2 + (target is not None))
     items = dict(struct.iter_unpack('>iq', body[22:]))
+    if target is not None:
+        assert items.pop(-1610395699) == target  # kill_total
     # The client binds hashed variable names, not the table's ordinal IDs 1/2.
     assert set(items) == {7346418, 206159}  # blue, red
     return items[206159], items[7346418]
@@ -131,7 +133,7 @@ def test_new_instance_starts_both_camps_at_zero(multi):
     multi.result['send'].clear()
     scene.message(multi, 10, 106, b'\0\x6a')
     packet, = updates(multi)
-    assert totals(packet) == (0, 0)
+    assert totals(packet, target=wire.KILL_TARGET) == (0, 0)
 
 
 def test_legacy_single_bot_state_uses_existing_kills_not_streak_or_points():

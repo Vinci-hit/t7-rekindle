@@ -3,8 +3,11 @@ from . import actors, battle_clock, bot, combat, contracts as wire
 from .codec import kill_flow, settlement_flow
 
 
-def freeze(flow):
-    reason = 'timeout' if battle_clock.expired(flow) else 'quit'
+def freeze(flow, *, reason=None, winnerCamp=None):
+    if reason is None:
+        reason = 'timeout' if battle_clock.expired(flow) else 'quit'
+    if reason not in ('quit', 'timeout', 'kill-target'):
+        raise ValueError('unknown settlement reason')
     members = []
     for rid in actors.ids(flow.session):
         data = actors.data(flow, rid)
@@ -13,9 +16,16 @@ def freeze(flow):
                         'name': flow.playerName.decode('gbk') if rid == wire.ACTOR_ID else data.get('name', bot.NAME.decode('gbk')),
                         'camp': data.get('camp', 1), 'heroId': data.get('heroId', wire.HERO_ID),
                         'kills': kills, 'deaths': deaths, 'points': points})
-    campKills = {str(camp): sum(m['kills'] for m in members if m['camp'] == camp) for camp in (1, 2)}
-    result = (0 if reason == 'quit' else 3 if campKills['1'] == campKills['2']
-              else 1 if campKills['1'] > campKills['2'] else 2)
+    campKills = {str(camp): kills for camp, kills in combat.campKills(flow).items()}
+    if reason == 'kill-target':
+        if (type(winnerCamp) is not int or winnerCamp not in (1, 2)
+                or not kill_flow.valid_kill_target(flow.session.get('killTarget'))
+                or campKills[str(winnerCamp)] < flow.session['killTarget']):
+            raise ValueError('kill target settlement requires a camp that reached its target')
+        result = winnerCamp
+    else:
+        result = (0 if reason == 'quit' else 3 if campKills['1'] == campKills['2']
+                  else 1 if campKills['1'] > campKills['2'] else 2)
     ranked = []
     for camp in (1, 2):
         team = sorted((m for m in members if m['camp'] == camp),
@@ -26,6 +36,8 @@ def freeze(flow):
     snapshot = {'instanceStartedAt': flow.session.get('instanceStartedAt', flow.now),
                 'startedAt': clock['startedAt'], 'durationMs': clock['durationMs'], 'endedAt': flow.now,
                 'reason': reason, 'result': result, 'campKills': campKills, 'members': ranked}
+    if 'killTarget' in flow.session:
+        snapshot['killTarget'] = flow.session['killTarget']
     flow.state['settlement'] = snapshot
     return snapshot
 
@@ -48,7 +60,8 @@ def validState(state):
         return True
     value = state['settlement']
     if (type(value) is not dict or not battle_clock.validState({'battleClock': value})
-            or value.get('reason') not in ('quit', 'timeout')
+            or value.get('reason') not in ('quit', 'timeout', 'kill-target')
+            or ('killTarget' in value and not kill_flow.valid_kill_target(value['killTarget']))
             or type(value.get('result')) is not int or value['result'] not in (0, 1, 2, 3)
             or (value['reason'] == 'quit') != (value['result'] == 0)
             or any(type(value.get(key)) is not int or value[key] < 0 for key in ('instanceStartedAt', 'endedAt'))
@@ -74,4 +87,6 @@ def validState(state):
                 or value['campKills'][str(camp)] != sum(m['kills'] for m in team)
                 or [m['rank'] for m in team] != list(range(1, len(team) + 1))):
             return False
-    return True
+    return (value['reason'] != 'kill-target' or value['result'] in (1, 2)
+            and kill_flow.valid_kill_target(value.get('killTarget'))
+            and value.get('startedAt') is not None and value['campKills'][str(value['result'])] >= value['killTarget'])

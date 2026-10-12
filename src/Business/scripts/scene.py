@@ -3,11 +3,14 @@ import struct
 
 from . import actors, roster, contracts as wire, controls, battle, bot, combat, player_life
 from . import battle_clock, settlement
-from .codec import battle_flow, leave_flow, login_flow, room_flow, vision_flow
+from .codec import battle_flow, kill_flow, leave_flow, login_flow, room_flow, vision_flow
 
 
 def begin(flow):
+    if not kill_flow.valid_kill_target(wire.KILL_TARGET):
+        raise ValueError('kill target must fit a positive int32')
     battle_clock.initialize(flow)
+    flow.session['killTarget'] = wire.KILL_TARGET
     flow.state.pop('settlement', None)
     bot.stopAll(flow, publish=False)
     flow.cancelTimers()
@@ -137,10 +140,21 @@ def expire(flow):
     return False
 
 
-def finishRound(flow):
+def checkKillTarget(flow, winnerCamp):
+    target = flow.session.get('killTarget')
+    # Old live rounds retain their announced rules until the next instance.
+    if target is None or flow.session.get('roundEnded') or not battle.enabled(flow):
+        return False
+    if combat.campKills(flow)[winnerCamp] < target:
+        return False
+    finishRound(flow, reason='kill-target', winnerCamp=winnerCamp)
+    return True
+
+
+def finishRound(flow, *, reason=None, winnerCamp=None):
     if flow.session["role"] != "instance" or flow.session.get("roundEnded"):
         return
-    snapshot = settlement.freeze(flow)
+    snapshot = settlement.freeze(flow, reason=reason, winnerCamp=winnerCamp)
     flow.session["roundEnded"] = True
     bot.stopAll(flow)
     flow.cancelTimers()

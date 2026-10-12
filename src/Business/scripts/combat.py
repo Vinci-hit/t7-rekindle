@@ -210,13 +210,19 @@ def publishScore(flow, actorId, *, previous=None, statMessageId=0):
         previous_points=previous[2], points=current[2], stat_message_id=statMessageId), 'combat-score')
 
 
-def publishCampScore(flow):
+def campKills(flow):
     members = tuple(actors.data(flow, actorId) for actorId in actors.ids(flow.session))
+    return {camp: sum(value.get('kills', 0) for value in members if value.get('camp', 1) == camp)
+            for camp in (1, 2)}
+
+
+def publishCampScore(flow):
     # The deathmatch HUD's kill counters are script variables, not combat points.
-    totals = {camp: min(kill_flow.MAX_SCORE, sum(value.get('kills', 0) for value in members
-                                               if value.get('camp', 1) == camp)) for camp in (1, 2)}
+    totals = campKills(flow)
     flow.send(kill_flow.SCRIPT_COMMAND, kill_flow.encode_camp_kill_update(
-        server_time_ms=flow.now, instance_id=1, blue_kills=totals[1], red_kills=totals[2]), 'combat-camp-score')
+        server_time_ms=flow.now, instance_id=1,
+        blue_kills=min(kill_flow.MAX_SCORE, totals[1]), red_kills=min(kill_flow.MAX_SCORE, totals[2]),
+        kill_target=flow.session.get('killTarget')), 'combat-camp-score')
 
 
 def parry(flow, attacker, defender, snapshot, *, attackIntent=None, defenceIntent=None):
@@ -278,7 +284,7 @@ def bodyContact(snapshot, attacker, target):
 
 
 def applyHit(flow, attacker, target, snapshot, *, contact=None, intent=None):
-    if not actors.active(flow, attacker) or not actors.active(flow, target):
+    if flow.session.get('roundEnded') or not actors.active(flow, attacker) or not actors.active(flow, target):
         return
     hitPosition, hitDirection, hitNormal = (bodyContact(snapshot, attacker, target) if contact is None
                                           else tuple(tuple(contact[key]) for key in ("position", "direction", "normal")))
@@ -352,6 +358,8 @@ def checkHit(flow, attacker):
             return
         swing["hits"] = [*swing.get("hits", []), target]
         applyHit(flow, attacker, target, snapshot, contact=contact)
+        if flow.session.get('roundEnded'):
+            return
     hits = swing.get("hits", [])
     camp = data.get("camp", 1)
     remaining = any(rid not in hits and actors.active(flow, rid)
@@ -379,6 +387,8 @@ def worldUpdated(flow):
         # A fresh native frame is damage evidence; the legacy retry deadline is not a hit gate.
         flow.cancel(hitTimer(actorId))
         checkHit(flow, actorId)
+        if flow.session.get('roundEnded'):
+            return
 
 
 def finishHurt(flow, actorId):
