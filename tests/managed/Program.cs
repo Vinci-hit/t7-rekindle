@@ -14,6 +14,41 @@ namespace T7.ManagedHarness
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length >= 1 && args[0] == "--announcement-tests")
+            {
+                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-announcement-tests-" + Guid.NewGuid().ToString("N"));
+                var app = new T7.Rekindle.Desktop.App(false);
+                app.InitializeComponent();
+                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+                var previousContext = SynchronizationContext.Current;
+                SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
+                try
+                {
+                    RemoteAnnouncementTests.Run(directory);
+                    var output = args.Length == 2 ? args[1] : null;
+                    AnnouncementTests.Run(directory, output);
+                    foreach (var theme in new[] { "Dark", "HighContrast" })
+                    {
+                        var resources = new System.Windows.ResourceDictionary
+                        {
+                            Source = new Uri("/T7-Rekindle;component/Resources/Theme." + theme + ".xaml", UriKind.Relative)
+                        };
+                        app.Resources.MergedDictionaries.Add(resources);
+                        try { AnnouncementTests.Run(System.IO.Path.Combine(directory, theme), output == null ? null : System.IO.Path.Combine(output, theme)); }
+                        finally { app.Resources.MergedDictionaries.Remove(resources); }
+                    }
+                    Console.WriteLine("announcement API, refresh, fallback and UI checks passed");
+                    return 0;
+                }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+                finally
+                {
+                    NLog.LogManager.Shutdown();
+                    app.Shutdown();
+                    SynchronizationContext.SetSynchronizationContext(previousContext);
+                    if (System.IO.Directory.Exists(directory)) System.IO.Directory.Delete(directory, true);
+                }
+            }
             if (args.Length >= 1 && args[0] == "--log-tests")
             {
                 var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-log-tests-" + Guid.NewGuid().ToString("N"));

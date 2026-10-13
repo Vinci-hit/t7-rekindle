@@ -58,7 +58,9 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<IReadOnlyList<string>> readGraphicsResolutions = null,
             Func<IReadOnlyList<OutputDeviceOption>> readOutputDevices = null,
             Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null,
-            Func<string, Task<ClientVersionResult>> readClientVersion = null)
+            Func<string, Task<ClientVersionResult>> readClientVersion = null,
+            Func<CancellationToken, Task<LauncherAnnouncement>> fetchAnnouncement = null,
+            Func<DateTime> announcementUtcNow = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -66,6 +68,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _readClientVersion = readClientVersion ?? (path => Task.Run(() => ClientVersionService.Read(path)));
             _locateDirectory = locateDirectory ?? ((path, token) => Task.Run(() => ClientDirectoryService.Locate(path, token), token));
             _interaction = interaction;
+            InitializeAnnouncements(fetchAnnouncement, announcementUtcNow);
             _isClientRunning = isClientRunning ?? GameSettingsFileService.IsClientRunning;
             _readGraphicsResolutions = readOutputDeviceResolutions ?? (readGraphicsResolutions == null
                 ? new Func<Guid, IReadOnlyList<string>>(Direct3DEnvironment.ReadResolutions) : _ => readGraphicsResolutions());
@@ -181,6 +184,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 OnPropertyChanged(nameof(IsAboutSelected));
                 OnPropertyChanged(nameof(IsMultiplayerSelected));
                 OnPropertyChanged(nameof(IsUpdateSelected));
+                if (IsHomeSelected && _announcementChecksStarted) _ = RefreshAnnouncementAsync();
             }
         }
         public bool IsHomeSelected { get => SelectedPage == 0; set { if (value) SelectedPage = 0; } }
@@ -330,6 +334,9 @@ namespace T7.Rekindle.Desktop.ViewModels
         {
             if (_disposed) return;
             _disposed = true;
+            _announcementCancellation.Cancel();
+            _announcementApi?.Dispose();
+            _announcementCancellation.Dispose();
             _poller.Stop();
             About.PropertyChanged -= OnUpdateActivityChanged;
             About.Dispose();

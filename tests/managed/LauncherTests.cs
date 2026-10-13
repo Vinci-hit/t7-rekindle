@@ -43,6 +43,7 @@ namespace T7.ManagedHarness
                 TestNoticeSeverity(directory);
                 TestUpdates();
                 AutomaticUpdateTests.Run(directory);
+                RemoteAnnouncementTests.Run(directory);
             }
             finally
             {

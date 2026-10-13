@@ -28,9 +28,13 @@ namespace T7.ManagedHarness
         {
             var bridge = new FakeLauncherBridge();
             var interaction = new FakeDesktopInteraction();
+            var remote = new LauncherAnnouncement("12345678-1234-1234-1234-123456789abc",
+                string.Concat(Enumerable.Repeat("开发进展公告", 20)),
+                string.Concat(Enumerable.Repeat("本次更新完善本地对战体验。启动器获取最新公告，离线仍可阅读内置说明。", 10)),
+                "## 开发进展\n\n- 本地对战体验\n- 启动器公告\n\n**感谢参与测试。**", DateTimeOffset.UtcNow);
             using (var model = new MainWindowViewModel(bridge, new SettingsService(Path.Combine(directory, "announcement")),
                 new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "玩家" }, null,
-                path => Task.FromResult(ValidDirectory(path)), interaction))
+                path => Task.FromResult(ValidDirectory(path)), interaction, fetchAnnouncement: token => Task.FromResult(remote)))
             {
                 RunTask(model.ValidationTask);
                 var window = new MainWindow { DataContext = model };
@@ -76,6 +80,19 @@ namespace T7.ManagedHarness
                     Assert(position.Y >= -1 && position.Y + button.ActualHeight <= scroll.ViewportHeight + 1,
                         "announcement action is not reachable in a small work area");
                     TestDialog(markdown, output);
+                    model.Notices.Resolve("打开公告失败，请重试");
+                    model.StartAnnouncementChecks();
+                    RunTask(model.AnnouncementTask);
+                    Invoke(button);
+                    Assert(title.Text == remote.Title && summary.Text == remote.Summary && interaction.Text == remote.BodyMarkdown,
+                        "online announcement did not refresh the WPF bindings and full-text action together");
+                    LauncherLayoutTests.Render(root, window, output, "home-announcement-online", 1200, 900);
+                    LauncherLayoutTests.Render(root, window, null, "announcement-online-small-work-area", 928, 460);
+                    button.BringIntoView();
+                    Pump();
+                    position = button.TranslatePoint(new Point(), scroll);
+                    Assert(position.Y >= -1 && position.Y + button.ActualHeight <= scroll.ViewportHeight + 1,
+                        "long remote announcement made its reading action unreachable");
                 }
                 finally
                 {

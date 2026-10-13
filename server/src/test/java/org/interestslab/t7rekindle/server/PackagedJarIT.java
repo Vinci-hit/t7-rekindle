@@ -55,6 +55,7 @@ class PackagedJarIT {
             Process server = start(firstLog, "--server.port=" + port);
             String bearer;
             String accountPassword;
+            String announcementPath;
             try {
                 String initial = awaitPassword(firstLog, server);
                 var loginPage = awaitPage("/admin/login", server);
@@ -70,6 +71,16 @@ class PackagedJarIT {
                         "confirmation", "JAR_TEST_PASSWORD", "_csrf", csrf));
                 assertThat(changed.statusCode()).isEqualTo(302);
                 login("JAR_TEST_PASSWORD");
+                assertThat(api("GET", "/api/v1/announcements/latest", null, "").statusCode()).isEqualTo(204);
+                var announcement = post("/admin/announcements", Map.of("title", "发布标题", "summary", "发布摘要",
+                        "bodyMarkdown", "发布正文", "_csrf", csrf(get("/admin/announcements/new").body())));
+                assertThat(announcement.statusCode()).isEqualTo(302);
+                announcementPath = URI.create(announcement.headers().firstValue("location").orElseThrow()).getPath();
+                assertThat(post(announcementPath + "/publish", Map.of("title", "发布标题", "summary", "发布摘要",
+                        "bodyMarkdown", "发布正文", "_csrf", csrf(get(announcementPath).body()))).statusCode()).isEqualTo(302);
+                assertThat(post(announcementPath, Map.of("title", "未发布修改", "summary", "草稿摘要",
+                        "bodyMarkdown", "草稿正文", "_csrf", csrf(get(announcementPath).body()))).statusCode()).isEqualTo(302);
+                assertThat(api("GET", "/api/v1/announcements/latest", null, "").body()).contains("发布标题").doesNotContain("未发布修改");
                 String accounts = get("/admin/accounts").body();
                 assertThat(accounts).contains("创建普通账户");
                 var created = post("/admin/accounts", Map.of("loginName", "jar-user", "_csrf", csrf(accounts)));
@@ -90,6 +101,8 @@ class PackagedJarIT {
                 assertThat(get("/admin/accounts").headers().firstValue("location").map(location -> URI.create(location).getPath())).contains("/admin/login");
                 login("JAR_TEST_PASSWORD");
                 assertThat(Files.readString(restartLog)).doesNotContain("One-time password:");
+                assertThat(get(announcementPath).body()).contains("未发布修改");
+                assertThat(api("GET", "/api/v1/announcements/latest", null, "").body()).contains("发布标题").doesNotContain("未发布修改");
                 Path recoveryLog = Path.of("target/jar-recovery.log");
                 assertThat(command(recoveryLog, "--reset-admin")).isNotZero();
                 assertThat(get("/admin/accounts").statusCode()).isEqualTo(200);
@@ -103,11 +116,13 @@ class PackagedJarIT {
                 assertThat(online.statusCode()).isEqualTo(200);
                 String connection = JsonMapper.builder().build().readTree(online.body()).get("connectionId").asString();
                 cache.stop();
+                assertThat(api("GET", "/api/v1/announcements/latest", null, "").statusCode()).isEqualTo(200);
                 assertThat(api("GET", "/api/v1/auth/session", bearer, "").statusCode()).isEqualTo(200);
                 assertThat(api("POST", "/api/v1/auth/online/" + connection + "/heartbeat", bearer, "").statusCode()).isEqualTo(200);
                 assertThat(api("POST", "/api/v1/auth/sessions", null,
                         "{\"loginName\":\"jar-user\",\"password\":\"" + accountPassword + "\"}").statusCode()).isEqualTo(503);
                 database.stop();
+                assertThat(api("GET", "/api/v1/announcements/latest", null, "").statusCode()).isEqualTo(503);
                 assertThat(api("GET", "/api/v1/auth/session", bearer, "").statusCode()).isEqualTo(503);
             } finally { stop(server); }
         }

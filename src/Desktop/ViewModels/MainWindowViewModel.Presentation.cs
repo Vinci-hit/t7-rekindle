@@ -23,20 +23,10 @@ namespace T7.Rekindle.Desktop.ViewModels
         public string NameFieldError => ShowPlayerNameError ? PlayerNameError : _nameSaveError;
         public string DirectoryFieldError => HasDirectoryError ? _directoryResult.Message : _directorySaveError;
         public string DirectoryProgressText => _isValidating ? DirectoryMessage : string.Empty;
-        public string AnnouncementTitle => "关于「铁骑·重燃」";
-        public string AnnouncementSummary => "从大学时光里的热爱，到停服后的不舍，我开始尝试自己动手，让《刀锋铁骑》重新运行起来。"
-            + "「铁骑·重燃」是一个独立、非营利的开源项目，目前仍在开发，将先推进本地人机对战，再逐步支持局域网联机。"
-            + "想和大家聊聊它的起点，以及接下来的打算。";
         public RelayCommand ShowRecentNoticesCommand { get; }
         public RelayCommand ShowDiagnosticsCommand { get; }
         public RelayCommand ShowAnnouncementCommand { get; }
         public RelayCommand CopyDirectoryCommand { get; }
-
-        private void ShowAnnouncement()
-        {
-            try { _interaction.ShowMarkdown(AnnouncementTitle, Services.LauncherInformation.ReadDocument("ANNOUNCEMENT.md")); }
-            catch (Exception error) { ReportUiError("打开公告失败", error); }
-        }
 
         private void ShowRecentNotices()
         {

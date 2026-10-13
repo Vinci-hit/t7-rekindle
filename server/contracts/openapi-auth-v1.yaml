@@ -1,8 +1,9 @@
 openapi: 3.1.0
 info:
-  title: T7 Rekindle Authentication API
+  title: T7 Rekindle Launcher API
   version: 1.0.0
   description: |
+    首页公告匿名读取，仅返回最新已发布快照；没有已发布公告时返回 204。
     普通账户的凭证与在线资格分离。Session 创建后固定有效 30 天，无 refresh 接口。
     登录不占用在线资格；显式上线接管当前连接。被接管的 session 仍可鉴权。
     QQ 登录会撤销该账号其他机器上的 session，loginName 为 QQ 号字符串。
@@ -18,6 +19,29 @@ servers:
 security:
   - sessionBearer: []
 paths:
+  /api/v1/announcements/latest:
+    get:
+      operationId: getLatestAnnouncement
+      summary: 获取启动器首页最新已发布公告
+      description: |
+        无需 Bearer、Cookie 或 X-Machine-Id。按发布时间倒序、announcementId 倒序选择一条。
+        保存草稿不影响返回内容；发布更新全部内容与发布时间，下线后选择其他仍已发布的公告。
+        启动器启动及返回首页时获取，两次请求至少间隔 60 秒，超时 8 秒。
+        204、请求失败或响应无效时使用启动器内置公告；不持久化远端缓存。
+      security: []
+      responses:
+        '200':
+          description: 完整发布快照，不包含编辑稿及管理状态
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Announcement'}
+        '204':
+          description: 没有已发布公告，无响应正文
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/qq/sessions:
     post:
       operationId: createQqSession
@@ -184,6 +208,15 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    Announcement:
+      type: object
+      required: [announcementId, title, summary, bodyMarkdown, publishedAt]
+      properties:
+        announcementId: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 120, description: 纯文本标题；长度限制按 UTF-16 代码单元计数}
+        summary: {type: string, minLength: 1, maxLength: 500, description: 纯文本摘要；长度限制按 UTF-16 代码单元计数}
+        bodyMarkdown: {type: string, minLength: 1, maxLength: 65536, description: Markdown 正文；长度限制按 UTF-16 代码单元计数，支持标题、段落、列表、粗体、斜体及行内代码}
+        publishedAt: {type: string, format: date-time, description: 最近一次发布的 UTC 时间}
     SessionCredentials:
       type: object
       required: [sessionId, sessionToken, expiresAt]

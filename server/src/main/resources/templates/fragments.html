@@ -12,6 +12,7 @@
   <a class="brand" th:href="@{/admin/accounts}"><span class="brand-seal" aria-hidden="true">T7</span><span>REKINDLE<small>服务管理</small></span></a>
   <nav aria-label="管理导航">
     <a th:href="@{/admin/accounts}" th:attr="aria-current=${section == 'accounts' ? 'page' : null}">账户与会话</a>
+    <a th:href="@{/admin/announcements}" th:attr="aria-current=${section == 'announcements' ? 'page' : null}">公告管理</a>
     <a th:href="@{/admin/audit}" th:attr="aria-current=${section == 'audit' ? 'page' : null}">操作记录</a>
     <a th:href="@{/admin/qq-group}" th:attr="aria-current=${section == 'qq-group' ? 'page' : null}">QQ 群校验</a>
     <a th:href="@{/admin/password}" th:attr="aria-current=${section == 'password' ? 'page' : null}">管理员密码</a>

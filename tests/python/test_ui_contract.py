@@ -276,7 +276,7 @@ def test_project_information_uses_the_public_repository():
     assert metadata["BuildsUrl"] == "$(RepositoryUrl)/actions/workflows/ci.yml"
     assert metadata["IssuesUrl"] == "$(RepositoryUrl)/issues"
     assert metadata["UpdateBaseUrl"] == "$(T7_UPDATE_BASE_URL)"
-    assert metadata["AuthBaseUrl"] == "$(T7_AUTH_BASE_URL)"
+    assert metadata["AuthBaseUrl"] == "$(T7R_SERVER_BASE_URL)"
     assert metadata["BuildChannel"] == "$(T7_BUILD_CHANNEL)"
     assert metadata["PreviewRunId"] == "$(T7_PREVIEW_RUN_ID)"
     assert metadata["PreviewRunNumber"] == "$(T7_PREVIEW_RUN_NUMBER)"
