@@ -39,6 +39,7 @@
     <ClCompile Include="ClientImportsTests.cpp" />
     <ClCompile Include="ClientAdaptationTests.cpp" />
     <ClCompile Include="CameraInputTests.cpp" />
+    <ClCompile Include="DefenseAssistTests.cpp" />
     <ClCompile Include="RemoteImageTests.cpp" />
     <ClCompile Include="DebugClientTests.cpp" />
     <ClCompile Include="ClientWindowMonitorTests.cpp" />

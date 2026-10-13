@@ -40,7 +40,7 @@ bool verifyClientAdaptation() {
         const t7::Bytes nodeName{'G','e','S','t','a','t','e','G','e','t','T','C','L','S','S','e','r','v','e','r'};
         std::copy(nodeName.begin(), nodeName.end(), client.begin() + 0x2000);
         const auto plan = t7::clientMemoryPatches(client);
-        require(plan.size() == 16, "main adaptation coverage");
+        require(plan.size() == 18, "main adaptation coverage");
         for (const auto& patch : plan) std::copy(patch.expected.begin(), patch.expected.end(), client.begin() + patch.rva);
         t7::applyMemoryPatches(client, plan);
         const auto startup = std::find_if(plan.begin(), plan.end(), [](const auto& patch) { return patch.rva == 0x890B1; });
