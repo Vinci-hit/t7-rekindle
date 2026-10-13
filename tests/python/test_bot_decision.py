@@ -85,9 +85,10 @@ def test_observation_survives_phase_progression_but_not_new_swings(duel):
     assert choose(duel).reason == "observe-threat"
 
 
-@pytest.mark.parametrize("remaining,reason", [(99, "late-threat"), (100, "late-threat"),
+@pytest.mark.parametrize("remaining,reason", [(-1, "late-threat"), (0, "late-threat"),
+                                             (1, "parry"), (99, "parry"), (100, "parry"),
                                              (101, "parry"), (150, "parry")])
-def test_zero_prepare_guard_uses_only_the_contact_end_margin(duel, remaining, reason):
+def test_zero_prepare_guard_remains_available_until_the_strike_ends(duel, remaining, reason):
     battle.startAction(duel, 300560, released=True)
     observe(duel)
     duel.now = duel.session["pending"][battle.ACTION_TIMER]

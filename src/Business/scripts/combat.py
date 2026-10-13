@@ -8,7 +8,7 @@ from .codec import attr_flow, battle_flow, kill_flow
 MAX_HEALTH, DAMAGE = 100, 20
 DASH_DAMAGE = 40  # Offline tuning, independent of the original damage formula.
 HURT_STATE, HURT_MS = 35, 400
-CONTACT_MS, CONTACT_END_MARGIN_MS = 50, 100
+CONTACT_MS = 50
 REACH, HEIGHT_LIMIT, FACING_COS = 2.2, 1.0, 0.5
 HIT_HEIGHT = 1.0
 
@@ -107,7 +107,7 @@ def cancelSwing(flow, actorId, *, reason=None):
 def contactEndMs(intent, *, dash=None, weaponId=None):
     if intent == battle.DASH_ATTACK:
         return dash['contactEndMs'] if dash is not None else battle.missingDash()
-    return battle.phaseMs(intent, battle.strikeIndex(intent), weaponId=weaponId) - CONTACT_END_MARGIN_MS
+    return battle.phaseMs(intent, battle.strikeIndex(intent), weaponId=weaponId)
 
 
 def contactWindow(swing):

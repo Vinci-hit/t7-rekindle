@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from Business.scripts import actors, app, battle, bot, combat
+from Business.scripts import actors, app, battle, bot, combat, contracts as wire, weapons
 from Business.scripts.codec import battle_flow
 from blade_fixture import contact, publish
 from test_bot_roster import multi, sample
@@ -44,6 +44,28 @@ def test_native_contact_survives_late_business_dispatch_and_visual_start_delay(m
     assert battle_flow.decode_battle_hit_point_notify(hit['body']).server_time_ms == event['occurredAt']
     combat.worldUpdated(multi)
     assert hp(multi, 1) == 100 - (40 if intent == battle.DASH_ATTACK else 20)
+
+
+@pytest.mark.parametrize('weaponId', [wire.WEAPON_ID, weapons.FIST_ID])
+@pytest.mark.parametrize('intent', battle.ATTACK_CHAINS)
+@pytest.mark.parametrize('offset,hit', [(-99, True), (0, True), (1, False)])
+@pytest.mark.parametrize('journal', [False, True])
+def test_normal_contact_window_covers_the_full_strike(multi, weaponId, intent, offset, hit, journal):
+    actors.data(multi, 2)['weaponId'] = weaponId
+    raw = sample(multi)
+    attack(multi, 2, intent)
+    startedAt = multi.now
+    duration = battle.phaseMs(intent, 2, weaponId=weaponId)
+    occurredAt = startedAt + duration + offset
+    if journal:
+        native(multi, phaseAt=startedAt, occurredAt=occurredAt)
+        multi.now = startedAt + duration + 100
+        app.handleTimer(multi, battle.actionTimer(2))
+    else:
+        multi.now = raw['sampledAt'] = occurredAt
+        publish(multi, 2, [contact(1)])
+    combat.worldUpdated(multi)
+    assert hp(multi, 1) == (100 - combat.DAMAGE if hit else 100)
 
 
 @pytest.mark.parametrize('nextIntent', [None, 300550, 300580])
@@ -93,7 +115,7 @@ def test_journal_never_turns_stale_or_outside_window_contacts_into_hits(multi, i
     attack(multi, 2)
     event = native(multi)
     if invalid == 'before-strike': event['occurredAt'] = event['phaseAt'] - 1
-    elif invalid == 'after-window': event['occurredAt'] = event['phaseAt'] + 541
+    elif invalid == 'after-window': event['occurredAt'] = event['phaseAt'] + 641
     elif invalid == 'wrong-seq': event['seq'] += 1
     elif invalid == 'respawn': multi.context['botWorld']['actors']['1']['entity'] += 1
     elif invalid == 'epoch': multi.context['botWorld']['instanceStartedAt'] += 1
