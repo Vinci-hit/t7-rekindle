@@ -71,13 +71,41 @@ def test_runtime_entry_initializes_idle_once_without_position_stop(playing):
                         instanceStartedAt=100, moveClock=controls.MOVE_CLOCK)
     scene.battleEntry(flow)
     sends = list(flow.result["send"])
-    commands = [0x36, 0xE, 0xE] + ([] if playing else [0x36]) + [4]
+    commands = [0x36, 0xE, 0xE] + ([] if playing else [0x36, 2]) + [4]
     assert [item["command"] for item in sends] == commands
     assert sends[0]["body"] == wire.actorState(flow.now, 6)
     if not playing:
-        assert sends[-2]["body"] == wire.actorState(flow.now, 8)
+        assert sends[-3]["body"] == wire.actorState(flow.now, 8)
+        active = move_flow.decode_move_notify_active(sends[-2]["body"])
+        assert (active.server_tick, active.target_instance_id, active.active) == (900, 1, 0)
     assert struct.unpack(">HHHHIH", sends[-1]["body"]) == (3, 1, 1, 2, 900, 0)
     scene.battleEntry(flow)
+    assert flow.result["send"] == sends
+
+
+@pytest.mark.parametrize("mask", range(16))
+def test_runtime_preparation_to_game_only_toggles_native_active(mask):
+    flow = make_runtime_flow(playing=False)
+    flow.session.update(battleEntered=False, heroChosen=True, heroId=110001)
+    scene.battleEntry(flow)
+    active = [move_flow.decode_move_notify_active(item["body"])
+              for item in flow.result["send"] if item["command"] == 2]
+    assert len(active) == 1 and active[0].active == 0
+
+    flow.result["send"].clear()
+    keys = [(mask >> index) & 1 for index in range(4)] + [0, 0]
+    body = struct.pack(">Hi6Bfff", 52, 1, *keys, 10., 20., 30.)
+    assert controls.message(flow, 2, 52, body)
+    assert flow.result["send"] == []
+
+    flow.now += wire.START_MS
+    assert scene.timer(flow, "round-game")
+    movement = [item["body"] for item in flow.result["send"] if item["command"] == 2]
+    assert movement == [move_flow.encode_move_notify_active(
+        server_tick=flow.now, target_instance_id=1, active=1)]
+    assert controls.groundState(flow)["position"] is None
+    sends = list(flow.result["send"])
+    assert scene.timer(flow, "round-game")
     assert flow.result["send"] == sends
 
 
@@ -94,11 +122,12 @@ def test_runtime_battle_confirmation_closes_selection_and_starts_full_countdown_
     assert scene.message(flow, 0x36, 0x64, struct.pack(">HHb", 0x64, 1, 0))
 
     sends = flow.result["send"]
-    # IN_SCENE completes the selection UI transition; READY_PLAY keeps input locked.
+    # IN_SCENE closes selection; READY_PLAY and native Active keep preparation stationary.
     states = [item["body"] for item in sends
               if item["command"] == 0x36 and item["body"][:2] == b"\0\1"]
     assert states == [wire.actorState(flow.now, 6), wire.actorState(flow.now, 8)]
-    assert [item["command"] for item in sends] == [0x36, 0x36, 0xE, 0xE, 0x36, 4, 0xA]
+    assert [item["command"] for item in sends] == [0x36, 0x36, 0xE, 0xE, 0x36, 2, 4, 0xA]
+    assert move_flow.decode_move_notify_active(sends[5]["body"]).active == 0
     assert sends[-1]["body"] == wire.roundState(flow.now, 3, wire.START_MS)
     assert not controls.groundEnabled(flow)
     assert flow.session["phase"] == "start-sent"

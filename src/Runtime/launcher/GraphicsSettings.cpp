@@ -2,6 +2,8 @@
 #include "RemoteImage.h"
 #include "RoundEndHookCode.h"
 #include "MovementAnimationHookCode.h"
+#include "MovementCommandHookCode.h"
+#include "SprintHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -33,6 +35,10 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     bool patched = false;
     bool roundEndPatched = false;
     bool animationPatched = false;
+    bool posePatched = false;
+    bool defenseExitPatched = false;
+    bool jumpPhysicsPatched = false;
+    bool movementCommandPatched = false;
     try {
         if (pointer > UINT32_MAX - size) throw std::runtime_error("settings mailbox outside x86 range");
         const auto base = static_cast<uint32_t>(pointer);
@@ -59,7 +65,15 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         if (animation.enabled) {
             animationPatched = true;
             writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, movementAnimationJump(base + worldOffset, imageBase));
+            posePatched = true;
+            writeClientMemory(process, imageBase + MOVEMENT_POSE_RVA, movementPoseJump(base + worldOffset, imageBase));
+            defenseExitPatched = true;
+            writeClientMemory(process, imageBase + DEFENSE_EXIT_RVA, defenseExitJump(base + worldOffset, imageBase));
         }
+        jumpPhysicsPatched = true;
+        writeClientMemory(process, imageBase + JUMP_PHYSICS_RVA, jumpPhysicsJump(base + worldOffset, imageBase));
+        movementCommandPatched = true;
+        writeClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, movementCommandJump(base + worldOffset, imageBase));
         patched = true; writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, jump);
         process_ = process; remote_ = base; imageBase_ = imageBase;
         audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase);
@@ -68,6 +82,10 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         // install() runs before the first ResumeThread, so rollback cannot race execution.
         if (patched) writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL);
         if (animationPatched) writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, MOVEMENT_ANIMATION_ORIGINAL);
+        if (posePatched) writeClientMemory(process, imageBase + MOVEMENT_POSE_RVA, MOVEMENT_POSE_ORIGINAL);
+        if (defenseExitPatched) writeClientMemory(process, imageBase + DEFENSE_EXIT_RVA, DEFENSE_EXIT_ORIGINAL);
+        if (jumpPhysicsPatched) writeClientMemory(process, imageBase + JUMP_PHYSICS_RVA, JUMP_PHYSICS_ORIGINAL);
+        if (movementCommandPatched) writeClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL);
         if (roundEndPatched)
             for (const auto& entry : roundEndOriginals(imageBase))
                 writeClientMemory(process, imageBase + entry.first, entry.second);

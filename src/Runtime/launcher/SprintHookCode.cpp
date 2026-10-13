@@ -5,7 +5,7 @@
 
 namespace t7 {
 namespace {
-constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = 0x380;
+constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = SPRINT_STATES_OFFSET;
 constexpr uint32_t JUMP_EVENT_OFFSET = 0x180, END_JUMP_EVENT_OFFSET = 0x198;
 constexpr uint32_t SPEED_RVA = 0x3D2550, RUNNING_RVA = 0x3D2E20, STATE_RVA = 0x3D2570;
 constexpr uint32_t LINE_MOVE_RVA = 0x75D140, STOP_MOVE_RVA = 0x75D3B0;
@@ -22,6 +22,10 @@ void verifySprintFunctions(HANDLE process, uint32_t imageBase) {
         {LINE_MOVE_RVA, {0x55,0x8B,0xEC,0x6A,0xFF,0x68}},
         {STOP_MOVE_RVA, {0x55,0x8B,0xEC,0x6A,0xFF,0x68}},
         {ANIMATION_EVENT_RVA, {0x55,0x8B,0xEC,0x56,0x57,0xFF,0x75,8,0x8B,0xF9,0x8B,0x37}},
+        {JUMP_PHYSICS_RVA, JUMP_PHYSICS_ORIGINAL},
+        {JUMP_PHYSICS_RVA + 6, {0x5F,0x5E,0x5D,0xC2,4,0}},
+        {0x29B200, {0x56,0x8B,0xF1,0x8B,0x06,0x8B,0x40,0x2C,0xFF,0xD0}},
+        {0x29B217, {0x66,0x0F,0x6E,0x86,0xEC,0,0,0}},
         {0x4C6E70, {0x55,0x8B,0xEC,0x83,0xEC,0x10,0x8B,0xC1,0x8B,0x4D,8}},
         {0x4971B0, {0x8B,0x01,0xC3}}
     }) {
@@ -58,7 +62,6 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     const auto jumping = data + 48, animationIdentity = data + 52;
     const auto phaseTick = data + 56, dashMoving = data + 60;
     const auto sequence = data + 64, lastSequence = data + 68;
-    const auto jumpSequence = data + 72;
     WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
@@ -173,12 +176,19 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(lastSequence);
     c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed);
     c.bind(sameDash); c.bind(warming); c.bind(armed); c.bind(resetDone);
-    // Reapply only when the native key tree or a phase change altered the actual velocity.
+    // Native infantry turning checks command speed, not velocity. Preserve the
+    // stop command's zero speed so the original TurnDir updater can select Turn.
+    c.emit({0x83,0x3D}); c.word(game); c.emit({4}); const auto outsideGame = c.branch(0x85);
+    c.emit({0x83,0x3D}); c.word(lastDash); c.emit({0}); const auto dashSpeedSelected = c.branch(0x85);
+    c.emit({0x8B,0xC7,0x83,0xE0,0x0F,0x83,0x3C,0x85}); c.word(address + STATES_OFFSET);
+    c.emit({1}); const auto moving = c.branch(0x85);
+    c.store(speed, 0); c.bind(moving); c.bind(dashSpeedSelected); c.bind(outsideGame);
+    // Reapply only when the native key tree or a phase change altered the commanded speed.
     c.emit({0x8B,0x4B,0x38,0xA1}); c.word(speed); c.emit({0x3B,0x41,0x24});
     const auto sameSpeed = c.branch(0x84);
     c.emit({0x50,0x8B,0xCB}); c.call(imageBase + SPEED_RVA); c.bind(sameSpeed);
-    // Offline commands leave the move state at zero. Restore the same state the
-    // native animation writer consumes, rather than writing MoveDir behind its cache.
+    // Keep the frame-selected gait in the state consumed by the native animation
+    // writer, rather than writing MoveDir behind its cache.
     c.emit({0x8B,0xC7,0x83,0xE0,0x0F});
     c.emit({0x83,0x3D}); c.word(lastDash); c.emit({0}); const auto ordinary = c.branch(0x84);
     c.emit({0xA1}); c.word(dashMoving);
@@ -215,21 +225,8 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
         c.emit({0x80,0x7B,flag,0}); grounded.push_back(c.branch(0x84));
     }
     c.emit({0x42}); for (auto branch : grounded) c.bind(branch);
-    c.emit({0x3B,0x15}); c.word(jumping); const auto jumpChanged = c.branch(0x85);
-    c.emit({0x85,0xD2}); noAnimation.push_back(c.branch(0x84));
-    c.emit({0xA1}); c.word(sequence); c.emit({0x3B,0x05}); c.word(jumpSequence);
-    noAnimation.push_back(c.branch(0x84));
-    // Combat can replace the lower-body pose without a physical landing edge.
-    // Reassert Jump once per melee phase/recovery; the native graph has no Jump self-transition.
-    std::vector<size_t> refreshJump;
-    for (uint32_t state : {2u,235u,237u,238u,239u,241u,243u,244u,245u,
-                           247u,249u,250u,251u,253u,255u,256u,257u}) {
-        c.emit({0x81,0xFE}); c.word(state); refreshJump.push_back(c.branch(0x84));
-    }
-    noAnimation.push_back(c.jump());
-    c.bind(jumpChanged); for (auto branch : refreshJump) c.bind(branch);
+    c.emit({0x3B,0x15}); c.word(jumping); noAnimation.push_back(c.branch(0x84));
     c.emit({0x89,0x15}); c.word(jumping);
-    c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(jumpSequence);
     c.emit({0x85,0xD2,0xB8}); c.word(address + END_JUMP_EVENT_OFFSET);
     c.emit({0xBA}); c.word(address + JUMP_EVENT_OFFSET);
     c.emit({0x0F,0x45,0xC2,0x50}); c.call(imageBase + ANIMATION_EVENT_RVA);
@@ -241,7 +238,50 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.store(jumping, 0); c.store(animationIdentity, 0);
     c.bind(done);
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D,0xC3});
-    if (c.bytes.size() > 0x1000) throw std::runtime_error("sprint hook overflow");
+    if (c.bytes.size() > JUMP_PHYSICS_CODE_OFFSET - SPRINT_CODE_OFFSET)
+        throw std::runtime_error("sprint hook overflow");
+    return c.bytes;
+}
+Bytes jumpPhysicsJump(uint32_t address, uint32_t imageBase) {
+    WorldHookCode c; c.emit({0xE9});
+    c.word(address + JUMP_PHYSICS_CODE_OFFSET - (imageBase + JUMP_PHYSICS_RVA + 5));
+    c.emit({0x90}); return c.bytes;
+}
+Bytes buildJumpPhysicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
+    const auto code = address + JUMP_PHYSICS_CODE_OFFSET;
+    WorldHookCode c;
+    auto resume = [&] {
+        c.emit({0xE9});
+        c.word(imageBase + JUMP_PHYSICS_RVA + 6 - (code + static_cast<uint32_t>(c.bytes.size()) + 4));
+    };
+    c.emit({0x9C,0x60});
+    std::vector<size_t> native;
+    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
+    // ESI is GeMovable, EDI the applied composite command, ECX its controller.
+    c.emit({0x8B,0x46,8,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x3B,0x05}); c.word(address + SPRINT_DATA_OFFSET + 8); native.push_back(c.branch(0x85));
+    c.emit({0xA1}); c.word(imageBase + 0x2E405F8); c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x83,0x78,0x38,4}); native.push_back(c.branch(0x85));
+    for (unsigned char flag : std::array<unsigned char, 2>{0x20,0x22}) {
+        c.emit({0x80,0x7E,flag,0}); native.push_back(c.branch(0x84));
+    }
+    c.emit({0x80,0x79,0x0A,0}); native.push_back(c.branch(0x85)); // Preserve a newly queued takeoff.
+    c.emit({0x8B,0x01,0x81,0xB8}); c.word(0xD0); c.word(imageBase + 0x29B200);
+    native.push_back(c.branch(0x85));
+    c.emit({0x81,0x3F}); c.word(imageBase + 0x17782A4); native.push_back(c.branch(0x85));
+    c.emit({0x8B,0x47,0x10,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x8D,0x50,4,0x3B,0x57,0x14}); native.push_back(c.branch(0x85));
+    c.emit({0x8B,0x00,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x81,0x38}); c.word(imageBase + 0x17782C8); native.push_back(c.branch(0x85));
+    // Heading is already applied. The frame loop owns elapsed-time physics;
+    // this command-only flush would add a full gravity step and erase its remainder.
+    // Position, jump, activation and mixed command groups retain the native path.
+    c.emit({0x61,0x9D}); resume();
+    for (auto branch : native) c.bind(branch);
+    c.emit({0x61,0x9D});
+    c.bytes.insert(c.bytes.end(), JUMP_PHYSICS_ORIGINAL.begin(), JUMP_PHYSICS_ORIGINAL.end());
+    resume();
+    if (c.bytes.size() > 0x400) throw std::runtime_error("jump physics hook overflow");
     return c.bytes;
 }
 }

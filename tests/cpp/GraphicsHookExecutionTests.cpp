@@ -6,6 +6,9 @@
 #include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
 #include "MovementAnimationFixture.h"
+#include "MovementPoseFixture.h"
+#include "MovementCommandFixture.h"
+#include "JumpPhysicsFixture.h"
 #include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
 #include "RoundEndHookFixture.h"
@@ -86,6 +89,7 @@ void fixture(const t7::fs::path& path) {
     code.insert(code.end(), {0x89, 0x25}); word(code, STATS); // original ESP
     const auto loop = static_cast<uint32_t>(code.size());
     code.insert(code.end(), {0x6A,10,0xFF,0x15}); word(code, BASE + 0x1904);
+    imm(0xB8, jumpPhysicsFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(1);
     const auto paused = branch(code, 0x84);
     imm(0xB8, roundEndFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
@@ -97,7 +101,10 @@ void fixture(const t7::fs::path& path) {
     }
     code.insert(code.end(), {0xD9, 0x1D}); word(code, STATS + 24);
     code.insert(code.end(), {0x66, 0x0F, 0x7E, 0x05}); word(code, STATS + 28);
+    imm(0xB8, movementCommandFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     imm(0xB8, movementAnimationFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
+    imm(0xB8, movementPoseFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
+    imm(0xB8, movementPoseFixture::defenseExit::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(2);
     const auto running = branch(code, 0x85);
     code.insert(code.end(), {0xC7,0x05}); word(code, worldFixture::FRAME_GATE); word(code, 1);
@@ -112,6 +119,9 @@ void prepare(HANDLE process) {
     terrainFixture::prepare(process);
     sprintFixture::prepare(process);
     movementAnimationFixture::prepare(process);
+    movementPoseFixture::prepare(process);
+    movementCommandFixture::prepare(process);
+    jumpPhysicsFixture::prepare(process);
     chatInputFixture::prepare(process);
     roundEndFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
@@ -223,6 +233,11 @@ bool verifyGraphicsHookExecution() {
             try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
             require(rejected, "world accepted an unknown life-state getter");
             t7::writeClientMemory(process, BASE + 0x64C9D0, {0x83});
+            t7::writeClientMemory(process, BASE + movementCommandFixture::HOOK_RVA, {0xCC});
+            rejected = false;
+            try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "movement command accepted an unknown native executor");
+            t7::writeClientMemory(process, BASE + movementCommandFixture::HOOK_RVA, {0x8B});
             for (const auto& anchor : std::vector<std::pair<uint32_t, uint32_t>>{
                 {0x3FF3D0,0x55}, {0x3FF3FB,0x80}, {0x4B2C70,0x80}, {0x4B450D,0x80}
             }) {
@@ -247,6 +262,25 @@ bool verifyGraphicsHookExecution() {
             catch (const std::runtime_error&) { rejected = true; }
             require(rejected, "animation hook accepted an unknown native writer");
             t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, {0xF3});
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_POSE_RVA, {0xCC});
+            rejected = false;
+            try { graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile()); }
+            catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "movement pose hook accepted an unknown native writer");
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_POSE_RVA, {0xFF});
+            for (const auto& anchor : std::vector<std::pair<uint32_t, unsigned char>>{
+                {t7::DEFENSE_EXIT_RVA,static_cast<unsigned char>(0xFF)},
+                {movementPoseFixture::defenseExit::VARIABLE_RVA,static_cast<unsigned char>(0x55)}
+            }) {
+                t7::writeClientMemory(process, BASE + anchor.first, {0xCC});
+                rejected = false;
+                try { graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile()); }
+                catch (const std::runtime_error&) { rejected = true; }
+                require(rejected, "defense exit accepted an unknown native event or variable writer");
+                t7::writeClientMemory(process, BASE + anchor.first, {anchor.second});
+                require(t7::readClientMemory(process, BASE + t7::DEFENSE_EXIT_RVA, t7::DEFENSE_EXIT_ORIGINAL.size())
+                    == t7::DEFENSE_EXIT_ORIGINAL, "failed defense exit installation changed the native event handler");
+            }
             graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile());
         }, [](t7::DiagnosticLogLevel, const std::string& line) {
             if (line.find("exception") != std::string::npos || line.find("fault") != std::string::npos
@@ -300,11 +334,21 @@ bool verifyGraphicsHookExecution() {
         const auto graphicsEntry = BASE + t7::GRAPHICS_TICK_RVA + 5
             + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
         const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;
+        jumpPhysicsFixture::verify(client.process());
+        std::cout << "x86 airborne heading preserves vertical velocity and native physics clock passed\n";
+        movementAnimationFixture::verifyTurn(client.process());
+        std::cout << "x86 stationary speed restores native turn animation and idle transitions passed\n";
         worldFixture::verify(client.process(), graphics.world(), worldMailbox);
         terrainFixture::verify(client.process(), graphics.world());
         try { movementAnimationFixture::verify(client.process(), worldMailbox); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("movement animation: ") + error.what()); }
         std::cout << "x86 movement animation gait/cache, defense release and unchanged physical speeds/timer passed\n";
+        movementPoseFixture::verify(client.process());
+        std::cout << "x86 defense exit restores locomotion selection without speed or animation events passed\n";
+        movementPoseFixture::defenseExit::verify(client.process());
+        std::cout << "x86 defense exit preserves native layer fade without intermediate Idle and clears pose immediately passed\n";
+        movementCommandFixture::verify(client.process(), worldMailbox);
+        std::cout << "x86 queued A/D commands preserve running animation and native movement state passed\n";
         bladeFixture::verify(client.process(), graphics.world(), worldMailbox);
         weaponTrailFixture::verify(client.process());
         try { sprintFixture::verify(client.process()); }

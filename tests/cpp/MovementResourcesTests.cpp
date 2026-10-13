@@ -134,11 +134,31 @@ bool verifyMovementResources() {
         require(router.find(lifecycle) != std::string::npos,
                 "router lifecycle selectors need GBK Description labels, not just IDs");
         for (const auto& key : {"W", "Space", "Ctrl"}) {
-            for (int state : {0, 1, 2, 3})
+            for (int state : {0, 1, 3})
                 require(inputActions(router, state, true, true, key, true).empty(),
-                        "movement input ran before the player entered combat");
+                        "movement input ran outside preparation or combat");
             require(inputActions(router, 4, false, true, key, true).empty(), "remote actor accepted local input");
             require(inputActions(router, 4, true, false, key, true).empty(), "non-battle actor accepted input");
+        }
+        for (const auto& key : {"Space", "Ctrl"})
+            require(inputActions(router, 2, true, true, key, true).empty(), "preparation accepted a non-movement key");
+        for (const auto& key : {"W", "A", "S", "D"}) {
+            auto keyTree = movement;
+            const std::string original = "Value=\"W\"", replacementKey = std::string("Value=\"") + key + "\"";
+            for (size_t pos = 0; (pos = keyTree.find(original, pos)) != keyTree.npos; pos += replacementKey.size())
+                keyTree.replace(pos, original.size(), replacementKey);
+            const auto routed = t7::transformMovementResource(Resource::Router, keyTree);
+            for (bool pressed : {false, true}) {
+                const std::vector<std::string> expected{pressed ? "fixture-move" : "fixture-stop"};
+                require(inputActions(routed, 2, true, true, key, pressed) == expected,
+                        "preparation discarded the native movement direction or release");
+                require(inputActions(routed, 4, true, true, key, pressed) == expected,
+                        "combat changed native movement key handling");
+                require(inputActions(routed, 2, false, true, key, pressed).empty(), "remote preparation accepted input");
+                require(inputActions(routed, 2, true, false, key, pressed).empty(), "non-battle preparation accepted input");
+            }
+            require(inputActions(routed, 4, true, true, "", false, "PLAYER_START_FIGHT").empty(),
+                    "battle entry replayed a movement command");
         }
         require(inputActions(router, 4, true, true, "W", true) == std::vector<std::string>{"fixture-move"},
                 "first combat movement input changed");

@@ -57,6 +57,8 @@ def battleEntry(flow):
               "actor-vision-add-after-battle-confirm")
     if not controls.groundEnabled(flow):
         flow.send(0x36, wire.actorState(flow.now, 8), "actor-ready-play-after-battle-confirm")
+        if controls.runtimeMovement(flow):
+            controls.activate(flow)
     if flow.session.get("controlBaseline") == wire.BASELINE_ID:
         if not controls.runtimeMovement(flow):
             ground = controls.groundState(flow)

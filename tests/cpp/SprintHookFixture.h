@@ -138,6 +138,41 @@ inline void expectDirection(HANDLE process, uint32_t direction, bool running) {
     if (state == 0 || state >= std::size(moveDirs) || moveDirs[state] != direction || (state >= 10) != running)
         throw std::runtime_error("native animation direction disagrees with held keys");
 }
+inline void verifyPreparation(HANDLE process) {
+    const auto axes = t7::readClientMemory(process, worldFixture::ANCHOR, 8);
+    const auto active = readWord(process, worldFixture::CONTROLLER + 8);
+    const auto position = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12);
+    const auto moves = readWord(process, MOVES), jumps = readWord(process, JUMP_COMMANDS);
+    for (uint32_t keys = 0; keys < 16; ++keys) {
+        writeWord(process, worldFixture::STATE + 0x38, 2);
+        writeWord(process, worldFixture::CONTROLLER + 8, 0);
+        writeWord(process, KEYS, keys);
+        // Native key commands update these axes even while Active suspends execution.
+        const float forward = static_cast<float>(((keys & 1) != 0) - ((keys & 2) != 0));
+        const float right = static_cast<float>(((keys & 8) != 0) - ((keys & 4) != 0));
+        const std::array<float, 2> direction{right, -forward};
+        t7::Bytes savedDirection(sizeof(direction));
+        std::memcpy(savedDirection.data(), direction.data(), savedDirection.size());
+        t7::writeClientMemory(process, worldFixture::ANCHOR, savedDirection);
+        expect(process, 3, false, "preparation armed running");
+        expectDirection(process, 0, false);
+        if (readWord(process, worldFixture::CONTROLLER + 8) != 0)
+            throw std::runtime_error("preparation frame reactivated the native controller");
+        writeWord(process, CLOCK, readWord(process, CLOCK) + 6000); pump(process);
+        // GAME restores the existing controller; there is no new key event or movement command.
+        writeWord(process, worldFixture::STATE + 0x38, 4);
+        writeWord(process, worldFixture::CONTROLLER + 8, 1);
+        expect(process, forward || right ? 3.f : 0.f, false, "preparation time counted toward running");
+        if (readWord(process, KEYS) != keys || readWord(process, MOVES) != moves
+            || readWord(process, JUMP_COMMANDS) != jumps || readWord(process, worldFixture::CONTROLLER + 8) != 1
+            || t7::readClientMemory(process, worldFixture::ANCHOR, 8) != savedDirection
+            || t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12) != position)
+            throw std::runtime_error("preparation handoff changed native input/axes/position or replayed a command");
+    }
+    t7::writeClientMemory(process, worldFixture::ANCHOR, axes);
+    writeWord(process, worldFixture::CONTROLLER + 8, active);
+    writeWord(process, KEYS, 0); pump(process);
+}
 inline void verifyJump(HANDLE process) {
     uint32_t count = readWord(process, ANIMATION_EVENTS);
     auto expectEvent = [&](const char* name) {
@@ -188,14 +223,14 @@ inline void verifyJumpAttack(HANDLE process) {
             writeWord(process, KEYS, 0); setFightState(process, 2); pump(process);
             writeWord(process, KEYS, keys); pump(process);
             writeWord(process, CLOCK, readWord(process, CLOCK) + 1000);
-            expect(process, keys ? 5.f : 3.f, keys != 0, "jump attack run setup");
+            expect(process, keys ? 5.f : 0.f, keys != 0, "jump attack run setup");
             const auto moves = readWord(process, MOVES);
             writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
             auto events = readWord(process, ANIMATION_EVENTS);
             for (auto state : chain) {
                 setFightState(process, state);
-                expect(process, 3, false, "airborne attack kept run eligibility");
-                if (readWord(process, ANIMATION_EVENTS) != ++events
+                expect(process, keys ? 3.f : 0.f, false, "airborne attack kept run eligibility");
+                if (readWord(process, ANIMATION_EVENTS) != events
                     || readWord(process, ANIMATION_NAME) != 0x706D754A
                     || readWord(process, worldFixture::MOVABLE + 0x20) != 0x00010001
                     || readWord(process, MOVES) != moves)
@@ -205,13 +240,13 @@ inline void verifyJumpAttack(HANDLE process) {
                     throw std::runtime_error("unchanged attack phase replayed the jump animation");
             }
             setFightState(process, 2); pump(process);
-            if (readWord(process, ANIMATION_EVENTS) != ++events
+            if (readWord(process, ANIMATION_EVENTS) != events
                 || readWord(process, ANIMATION_NAME) != 0x706D754A)
                 throw std::runtime_error("attack recovery ended the jump before landing");
             writeWord(process, CLOCK, readWord(process, CLOCK) + 2000);
-            expect(process, 3, false, "attack recovery rearmed running in midair");
+            expect(process, keys ? 3.f : 0.f, false, "attack recovery rearmed running in midair");
             writeWord(process, worldFixture::MOVABLE + 0x20, 0);
-            expect(process, 3, false, "jump attack did not land in walking state");
+            expect(process, keys ? 3.f : 0.f, false, "jump attack did not land in walking or idle state");
             const auto moveState = readWord(process, worldFixture::MOVABLE + 0x2C);
             if (readWord(process, ANIMATION_EVENTS) != ++events
                 || readWord(process, ANIMATION_NAME) != 0x4A646E45 || moveState < 1 || moveState > 9)
@@ -245,7 +280,8 @@ inline void verify(HANDLE process) {
     const float initialSpeed = static_cast<float>(config.speedMilli) / 1000.f;
     writeWord(process, CLOCK, 1000);
     writeWord(process, CLOCK_MODE, 1);
-    uint32_t tick = 1000;
+    verifyPreparation(process);
+    uint32_t tick = readWord(process, CLOCK);
     auto time = [&](uint32_t delta) { tick += delta; writeWord(process, CLOCK, tick); pump(process); };
     for (uint32_t mask = 0; mask < 16; ++mask) {
         writeWord(process, KEYS, mask); pump(process);
@@ -309,7 +345,7 @@ inline void verify(HANDLE process) {
         writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
         if (keys == 1) setFightState(process, 35);
         else writeWord(process, KEYS, keys);
-        expect(process, 3, false, "airborne interruption retained run eligibility");
+        expect(process, keys ? 3.f : 0.f, false, "airborne interruption retained run eligibility");
         setFightState(process, 2); writeWord(process, KEYS, 1); time(3000);
         expect(process, 3, false, "interrupted run rearmed in midair");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
@@ -390,12 +426,12 @@ inline void verify(HANDLE process) {
     setFightState(process, 2); pump(process);
     setFightState(process, 439, tick - config.moveMs); dash(false);
     if (readWord(process, JUMP_COMMANDS)) throw std::runtime_error("dash movement invoked the jump command");
-    setFightState(process, 2); expect(process, 3, false, "dash did not return to jog");
+    setFightState(process, 2); expect(process, 0, false, "released keys did not stop after dash");
     if (readWord(process, DIRECTION)) throw std::runtime_error("released keys resumed motion");
     expectDirection(process, 0, false);
     for (uint32_t keys : {0u, 2u, 4u, 8u, 3u, 17u, 33u}) {
         writeWord(process, KEYS, keys); pump(process); time(1000);
-        expect(process, 3, false, "stop/backward/strafe/crouch/jump armed running");
+        expect(process, keys == 0 || keys == 3 ? 0.f : 3.f, false, "stop/backward/strafe/crouch/jump armed running");
     }
     writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "run rearm");
     setFightState(process, 35); expect(process, 3, false, "hurt kept sprint ready");
