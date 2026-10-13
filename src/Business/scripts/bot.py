@@ -10,7 +10,7 @@ THINK_TIMER = "bot-think"
 MOVE_TIMER = "bot-move"
 ACTION_TIMER = "bot-action-phase"
 RELEASE_TIMER = "bot-release"
-THINK_MS, MOVE_MS, REPATH_MS = 100, 50, 500
+THINK_MS, STRATEGY_MS, MOVE_MS, REPATH_MS = 100, 500, 50, 500
 DECISION_TIMER = 'actors-decision'
 REACTION_MS, SNAPSHOT_MAX_AGE_MS = bot_profiles.PROFILES['balanced'].attackDelayMs, 250
 MELEE_RANGE, JOG_SPEED, RUN_SPEED = 2.0, 3.0, 5.0
@@ -207,7 +207,7 @@ def start(flow):
     for actorId in (int(key) for key in actors.bots(flow.session)):
         flow.later(actors.timerName(THINK_TIMER, actorId), THINK_MS + bot_profiles.rhythm(flow, actorId, 0, 350))
     if "bots" in flow.session:
-        flow.later(actors.PULSE_TIMER, MOVE_MS)
+        flow.later(actors.PULSE_TIMER, THINK_MS)
 
 
 def headingDelta(current, target):
@@ -254,7 +254,79 @@ def parrySucceeded(flow, actorId):
         flow.cancel(actors.timerName(RELEASE_TIMER, actorId))
 
 
-def think(flow, actorId=wire.BOT_ID):
+def combatThink(flow, actorId=wire.BOT_ID):
+    """Only the existing target: observe, turn and choose an action; never plan movement."""
+    value = actors.data(flow, actorId)
+    if not battle.enabled(flow) or not actors.active(flow, actorId) or not value['initialized']:
+        return
+    snapshot = actors.world(flow)
+    source = actors.pose(snapshot, actorId)
+    if source is None:
+        stopMotion(flow, actorId)
+        for key in ('observedPlayer', 'tactic', 'stepPlan', 'pressAt', 'pursuit'):
+            value.pop(key, None)
+        value['reactAt'] = None
+        if not battle.botInstanceMatches(flow):
+            battle.resetAction(flow, actorId)
+            flow.cancel(actors.timerName(RELEASE_TIMER, actorId))
+        status(flow, 'world-unavailable', actorId)
+        return
+    targetId = value.get('opponentId', wire.ACTOR_ID if 'bots' not in flow.session else None)
+    if targetId is None:
+        return
+    if (targetId not in actors.ids(flow.session) or not actors.active(flow, targetId)
+            or actors.data(flow, targetId).get('camp', 1) == value['camp']
+            or actors.pose(snapshot, targetId) is None):
+        stopMotion(flow, actorId)
+        for key in ('opponentId', 'observedPlayer', 'tactic', 'stepPlan', 'pressAt', 'pursuit'):
+            value.pop(key, None)
+        value.update(reactAt=None, senseAt=0)
+        flow.later(actors.timerName(THINK_TIMER, actorId), 0)
+        status(flow, 'search', actorId)
+        return
+    pair = actors.pair(snapshot, actorId, targetId)
+    value['position'] = list(source['position'])
+    decision.observe(flow, actorId)
+    if value['reactAt'] is None:
+        value['reactAt'] = flow.now + bot_profiles.vary(flow, actorId, bot_profiles.get(value).attackDelayMs, .65, 1.2)
+    locked = bot_footwork.lockReason(value)
+    if locked:
+        status(flow, locked, actorId)
+        return
+    if math.dist(pair['bot'], pair['player']) > MELEE_RANGE:
+        return
+    if not faceTarget(flow, pair['player'], actorId) and not decision.clearContact(flow, pair, actorId):
+        status(flow, 'turning', actorId)
+        return
+    choice = decision.choose(flow, pair, actorId)
+    if choice.kind == 'wait':
+        moving = value.get('footwork', value.get('tactic', {})).get('mode') if value['path'] else None
+        status(flow, moving if moving and choice.reason in ('ready', 'contact-unavailable') else choice.reason, actorId)
+        return
+    # Only a proposed new action needs the short melee reach check, not every combat tick.
+    try:
+        route = navigationFor(flow).findPath(pair['bot'], pair['player'])
+    except (ValueError, OSError) as error:
+        stopMotion(flow, actorId)
+        status(flow, 'navigation-invalid' if isinstance(error, ValueError) else 'navigation-unavailable', actorId)
+        return
+    if route.status != 'ready' or sum(math.dist(a, b) for a, b in zip(route.points, route.points[1:])) > MELEE_RANGE:
+        return
+    parry = choice.kind == 'parry'
+    battle.startAction(flow, choice.intent, released=not parry, actorId=actorId)
+    if parry:
+        flow.later(actors.timerName(RELEASE_TIMER, actorId),
+                   bot_profiles.vary(flow, actorId, bot_profiles.get(value).guardMs, .8, 1.2))
+    else:
+        value['attackCount'] += 1
+        value.update(lastAttack=choice.intent, decisionSeed=choice.seed)
+        value.pop('pressAt', None)
+    value['reactAt'] = None
+    flow.log('DEBUG', f'bot-decision actor={actorId} target={targetId} reason={choice.reason} intent={choice.intent}')
+    status(flow, choice.reason, actorId)
+
+
+def think(flow, actorId=wire.BOT_ID, *, combat=True):
     if not bot_life.ready(flow, actorId):
         return
     value = actors.data(flow, actorId)
@@ -330,17 +402,14 @@ def think(flow, actorId=wire.BOT_ID):
                 if follow(flow, nav, assistance.goal, '' if locked else 'assist', actorId, assistance.route) and locked:
                     status(flow, locked, actorId)
             else:
-                facing = bot_tactics.facingTarget(flow, actorId)
                 stopMotion(flow, actorId)
-                if facing is not None:
-                    faceTarget(flow, facing, actorId)
+                searchTurn(flow, actorId)
                 status(flow, locked or 'assist', actorId)
             return
         goal, mode = bot_roaming.goal(flow, nav, actorId)
         if goal is None:
             stopMotion(flow, actorId)
-            if mode == 'search':
-                searchTurn(flow, actorId)
+            searchTurn(flow, actorId)
             status(flow, locked or mode, actorId)
         else:
             following = follow(flow, nav, goal, '' if locked else mode, actorId)
@@ -362,14 +431,17 @@ def think(flow, actorId=wire.BOT_ID):
     distance = math.dist(value["position"], snapshot["player"])
     if distance <= MELEE_RANGE:
         value.setdefault('lastTurnAt', flow.now - THINK_MS)
+    value.pop('pressAt', None)
+    if value['reactAt'] is None:
+        # Prepare while closing or finishing the current action, not after arriving.
+        value['reactAt'] = flow.now + bot_profiles.vary(flow, actorId, bot_profiles.get(value).attackDelayMs, .65, 1.2)
     recovery = recoverMotion(flow, actorId, nav=nav)
     threat = distance <= MELEE_RANGE and decision.defend(flow, snapshot, actorId) is not None
-    pressing = bot_footwork.initiative(flow, snapshot, actorId) and not locked and not threat and recovery is None
-    pressureStep = bot_footwork.plan(flow, nav, snapshot, actorId) if pressing else None
-    pressing = pressureStep is not None
-    if pressing:
+    footwork = bot_footwork.plan(flow, nav, snapshot, actorId) if recovery is None else None
+    engaging = footwork is not None or distance <= MELEE_RANGE and decision.clearContact(flow, snapshot, actorId)
+    if engaging:
         value.pop('tactic', None)
-    tactic = bot_tactics.plan(flow, nav, snapshot, actorId) if not pressing and recovery is None and locked not in (
+    tactic = bot_tactics.plan(flow, nav, snapshot, actorId) if not engaging and recovery is None and locked not in (
         'hurt', 'parried', 'parry-success', 'terrain-rebound') else None
     positioning, motionMode = False, recovery
     if tactic is not None and not threat:
@@ -385,7 +457,6 @@ def think(flow, actorId=wire.BOT_ID):
             status(flow, locked or 'support', actorId)
             return
     if not positioning and recovery is None:
-        footwork = pressureStep or bot_footwork.plan(flow, nav, snapshot, actorId)
         if footwork is not None:
             value['repathAt'] = 0
             if not follow(flow, nav, footwork.goal, '', actorId, footwork.route):
@@ -393,47 +464,22 @@ def think(flow, actorId=wire.BOT_ID):
             value['footwork'] = dict(targetId=snapshot.get('targetId', wire.ACTOR_ID), mode=footwork.mode)
             motionMode = footwork.mode
         elif distance <= MELEE_RANGE:
-            stopMotion(flow, actorId)
+            route = nav.findPath(value['position'], snapshot['player'])
+            if route.status == 'ready' and sum(math.dist(a, b) for a, b in zip(route.points, route.points[1:])) <= MELEE_RANGE:
+                stopMotion(flow, actorId)
+            elif follow(flow, nav, snapshot['player'], '', actorId, route):
+                motionMode = 'approach'
+            else:
+                return
         else:
             value.pop('footwork', None)
             if not follow(flow, nav, snapshot['player'], '', actorId):
                 return
             motionMode = 'approach'
-    if locked:
-        status(flow, locked, actorId)
-        return
-    route = None
-    if distance <= MELEE_RANGE:
-        route = nav.findPath(value["position"], snapshot["player"])
-        routeLength = sum(math.dist(a, b) for a, b in zip(route.points, route.points[1:]))
-        if route.status == "ready" and routeLength <= MELEE_RANGE:
-            if not faceTarget(flow, target, actorId) and not decision.clearContact(flow, snapshot, actorId):
-                status(flow, "turning", actorId)
-                return
-            if value["reactAt"] is None:
-                value["reactAt"] = flow.now + bot_profiles.vary(flow, actorId, bot_profiles.get(value).attackDelayMs, .65, 1.2)
-            choice = decision.choose(flow, snapshot, actorId)
-            if choice.kind == "wait":
-                status(flow, motionMode if positioning and choice.reason in ('ready', 'contact-unavailable') else choice.reason, actorId)
-                return
-            parry = choice.kind == "parry"
-            battle.startAction(flow, choice.intent, released=not parry, actorId=actorId)
-            if parry:
-                flow.later(actors.timerName(RELEASE_TIMER, actorId),
-                           bot_profiles.vary(flow, actorId, bot_profiles.get(value).guardMs, .8, 1.2))
-            else:
-                value["attackCount"] += 1
-                value.update(lastAttack=choice.intent, decisionSeed=choice.seed)
-                value.pop('pressAt', None)
-            value["reactAt"] = None
-            flow.log("DEBUG", f"bot-decision actor={actorId} target={snapshot.get('targetId', 1)} reason={choice.reason} intent={choice.intent}")
-            status(flow, choice.reason, actorId)
-            return
-    value["reactAt"] = None
-    if motionMode is not None:
-        status(flow, motionMode, actorId)
-    else:
-        follow(flow, nav, snapshot['player'], 'approach', actorId, route)
+    if locked or motionMode:
+        status(flow, locked or motionMode, actorId)
+    if combat:
+        combatThink(flow, actorId)
 
 
 def follow(flow, nav, goal, mode, actorId, route=None):
@@ -609,7 +655,10 @@ def timer(flow, name):
         if not battle.enabled(flow):
             stopAll(flow)
             return True
-        # Decisions/lifecycle only. Action, guard release and hurt have independent native timers.
+        if name == actors.PULSE_TIMER:
+            for key in actors.bots(flow.session):
+                combatThink(flow, int(key))
+        # Strategy/lifecycle only. Weapon phases and movement have separate clocks.
         due = sorted((deadline, key) for key, deadline in flow.session.get("pending", {}).items()
                      if deadline <= flow.now and key.startswith((THINK_TIMER, bot_life.RESPAWN_TIMER)))
         if name == DECISION_TIMER and due:
@@ -619,7 +668,7 @@ def timer(flow, name):
         if due and DECISION_TIMER not in flow.session.get('pending', {}):
             flow.later(DECISION_TIMER, 0)
         if name == actors.PULSE_TIMER:
-            flow.later(name, MOVE_MS)
+            flow.later(name, THINK_MS)
         return True
     for key in actors.bots(flow.session):
         actorId = int(key)
@@ -629,9 +678,11 @@ def timer(flow, name):
         if not battle.enabled(flow):
             stop(flow, actorId)
         elif name == names[0]:
-            think(flow, actorId)
-            if actors.data(flow, actorId).get('life', {}).get('state') != 'dead':
-                flow.later(name, THINK_MS)
+            legacy = 'bots' not in flow.session
+            think(flow, actorId, combat=legacy)
+            value = actors.data(flow, actorId)
+            if value.get('life', {}).get('state') != 'dead':
+                flow.later(name, THINK_MS if legacy or not value['initialized'] else STRATEGY_MS)
         elif name == names[1]:
             move(flow, actorId)
         elif battle.botInstanceMatches(flow) and actors.active(flow, actorId):

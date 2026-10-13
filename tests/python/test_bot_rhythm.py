@@ -19,6 +19,7 @@ def arena(flow, actorId=2, *, position=(0, 0, .2), enemy=(1.2, 0, .2), heading=0
 
 
 def stepPlan(flow, actorId=2, **kwargs):
+    kwargs.setdefault('enemy', (1.8, 0, .2))
     return bot_footwork.plan(flow, bot.navigationFor(flow), arena(flow, actorId, **kwargs), actorId)
 
 
@@ -47,25 +48,26 @@ def test_opening_departures_do_not_collapse_into_two_shared_pulses(multi):
     bot.start(multi)
     delays = [multi.session['pending'][actors.timerName(bot.THINK_TIMER, rid)] - multi.now for rid in range(2, 21)]
     assert all(100 <= delay <= 450 for delay in delays)
-    assert len({math.ceil(delay / 50) for delay in delays}) >= 5
+    assert len({math.ceil(delay / bot.THINK_MS) for delay in delays}) >= 4
 
 
-def test_identical_bots_have_different_footwork_and_independent_change_times(multi):
+def test_identical_bots_press_with_independent_replan_times(multi):
     changes = {rid: [] for rid in range(2, 21)}
-    goals, firstGoals = {}, []
+    deadlines, firstDeadlines = {}, []
     for tick in range(25):
         for rid in changes:
             choice = stepPlan(multi, rid)
-            assert choice is not None and choice.mode == 'circle'
+            assert choice is not None and choice.mode == 'press'
+            assert choice.goal == pytest.approx((.6, 0, 0))
+            deadline = actors.data(multi, rid)['stepPlan']['until']
             if tick == 0:
-                firstGoals.append(choice.goal)
-                assert actors.data(multi, rid)['stepPlan']['side'] == (-1 if choice.goal[1] > 0 else 1)
-            if goals.get(rid) != choice.goal:
+                firstDeadlines.append(deadline - multi.now)
+            if deadlines.get(rid) != deadline:
                 changes[rid].append(tick)
-                goals[rid] = choice.goal
+                deadlines[rid] = deadline
         multi.now += 100
-    assert len(set(firstGoals)) >= 10
-    assert {1 if goal[1] > 0 else -1 for goal in firstGoals} == {-1, 1}
+    assert len(set(firstDeadlines)) >= 10
+    assert all(350 <= delay <= 900 for delay in firstDeadlines)
     assert len({tuple(times) for times in changes.values()}) >= 8
 
 
@@ -74,35 +76,34 @@ def test_small_target_motion_keeps_the_committed_step_and_does_not_reroll(multi)
     previous = deepcopy(actors.data(multi, 2))
     for elapsed in (50, 50, 50):
         multi.now += elapsed
-        choice = stepPlan(multi, enemy=(1.2, .05, .2))
+        choice = stepPlan(multi, enemy=(1.8, .05, .2))
         assert choice.goal == first.goal
         assert actors.data(multi, 2)['stepPlan'] == previous['stepPlan']
         assert actors.data(multi, 2)['rhythmSeed'] == previous['rhythmSeed']
 
 
-def test_arrival_holds_the_step_but_does_not_delay_an_available_attack(multi):
+def test_arrival_stops_footwork_but_does_not_delay_an_available_attack(multi):
     choice = stepPlan(multi)
     value = actors.data(multi, 2)
-    saved = deepcopy(value['stepPlan'])
     position = (*choice.goal[:2], .2)
-    heading = round(math.degrees(math.atan2(position[1], 1.2 - position[0])))
+    heading = round(math.degrees(math.atan2(position[1], 1.8 - position[0])))
     multi.now += 50
-    arena(multi, position=position, heading=heading)
+    arena(multi, position=position, enemy=(1.8, 0, .2), heading=heading)
     bot.think(multi, 2)
     assert not value['moving'] and not value['path']
-    assert value['stepPlan'] == saved
+    assert 'stepPlan' not in value
     multi.now = value['reactAt']
-    arena(multi, position=position, heading=value['heading'])
+    arena(multi, position=position, enemy=(1.8, 0, .2), heading=value['heading'])
     bot.think(multi, 2)
     assert value['attackCount'] == 1
 
 
 @pytest.mark.parametrize('reason', ['pursuit', 'hurt', 'blocked'])
 def test_a_committed_step_yields_immediately_to_changed_combat_conditions(multi, reason):
-    first = stepPlan(multi)
+    first = stepPlan(multi, enemy=(3 if reason == 'blocked' else 1.8, 0, .2))
     value = actors.data(multi, 2)
     multi.now += 50
-    pair = arena(multi, enemy=(4, 0, .2) if reason == 'pursuit' else (1.2, 0, .2))
+    pair = arena(multi, enemy=({'pursuit': 4, 'hurt': 1.2, 'blocked': 3}[reason], 0, .2))
     if reason == 'hurt':
         value['hurtUntil'] = multi.now + 400
     elif reason == 'blocked':
@@ -113,17 +114,18 @@ def test_a_committed_step_yields_immediately_to_changed_combat_conditions(multi,
         assert choice.mode == ('press' if reason == 'pursuit' else 'retreat')
 
 
-def test_pressure_deadlines_differ_even_with_the_same_personal_tempo(multi):
+def test_approach_readiness_varies_without_rerolling_each_decision(multi):
     delays = []
     for rid in range(2, 21):
-        pair = arena(multi, rid, enemy=(3, 0, .2))
-        bot_footwork.initiative(multi, pair, rid)
+        arena(multi, rid, enemy=(3, 0, .2))
+        bot.think(multi, rid)
         value = actors.data(multi, rid)
-        delays.append(value['pressAt'] - multi.now)
-        state = deepcopy(value)
-        bot_footwork.initiative(multi, pair, rid)
-        assert value == state
-    assert all(1400 <= delay <= 2200 for delay in delays)
+        readyAt = value['reactAt']
+        delays.append(readyAt - multi.now)
+        bot.think(multi, rid)
+        assert value['reactAt'] == readyAt
+        assert 'pressAt' not in value
+    assert all(143 <= delay <= 264 for delay in delays)
     assert len(set(delays)) >= 12
 
 
@@ -179,7 +181,7 @@ def test_guard_release_varies_per_exchange_but_keeps_its_committed_deadline(mult
     assert all(round(baseline * .8) <= wait <= round(baseline * 1.2) for wait in waits)
 
 
-def test_sensing_and_tactical_replans_are_not_shared_constant_deadlines(multi):
+def test_sensing_uses_slow_cadence_while_tactical_commitments_keep_individual_deadlines(multi):
     sensing, replanning, formations = [], [], []
     for rid in (2, 3, 4, 5, 6, 7, 8):
         arena(multi, rid, enemy=(3, 0, .2))
@@ -195,7 +197,7 @@ def test_sensing_and_tactical_replans_are_not_shared_constant_deadlines(multi):
         choice = bot_tactics.plan(multi, bot.navigationFor(multi), actors.pair(world, rid, 1), rid)
         assert choice is not None
         formations.append(value['tactic']['until'] - multi.now)
-    assert len(set(sensing)) >= 4 and all(240 <= delay <= 360 for delay in sensing)
+    assert set(sensing) == {bot.STRATEGY_MS}
     assert len(set(replanning)) >= 4 and all(350 <= delay <= 650 for delay in replanning)
     assert len(set(formations)) >= 4 and all(800 <= delay <= 1600 for delay in formations)
 

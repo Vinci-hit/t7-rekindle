@@ -82,7 +82,7 @@ def test_an_ongoing_weapon_action_finishes_before_retargeting(engaged):
     assert sense(engaged)['targetId'] == 1
     assert value['action'] == action and engaged.session['pending'][bot.ACTION_TIMER] == deadline
     battle.resetAction(engaged, 2)
-    scene(engaged, elapsed=300)
+    scene(engaged, elapsed=bot_roaming.PERCEPTION_MS)
     assert sense(engaged)['targetId'] == 12
 
 

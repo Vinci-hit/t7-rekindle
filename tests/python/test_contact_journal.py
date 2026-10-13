@@ -157,7 +157,7 @@ def test_ai_pulse_never_consumes_fresh_native_animation_timers(multi, kind):
 def test_ai_decisions_yield_between_actors_and_leave_overdue_action_deadline_alone(multi, monkeypatch):
     sample(multi)
     calls = []
-    monkeypatch.setattr(bot, 'think', lambda flow, actorId: calls.append(actorId))
+    monkeypatch.setattr(bot, 'think', lambda flow, actorId, *, combat: calls.append(actorId))
     for rid in (2, 3, 4):
         multi.later(actors.timerName(bot.THINK_TIMER, rid), 0)
     battle.startAction(multi, 300580, actorId=20)

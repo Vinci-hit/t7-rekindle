@@ -56,6 +56,20 @@ def test_assistance_uses_ally_report_not_hidden_enemy_live_position(multi, monke
     assert bot_tactics.facingTarget(multi, 2) == known == [3, 4, .2]
 
 
+def test_arriving_at_assistance_keeps_searching_when_enemy_is_not_visible(multi, monkeypatch):
+    nav, world, value = cornerFight(multi, monkeypatch)
+    choice = bot_tactics.assist(multi, nav, 2)
+    world['actors']['2']['position'] = [*choice.goal[:2], .2]
+    value.update(position=list(world['actors']['2']['position']), lastTurnAt=multi.now)
+    world['actors']['1']['position'] = [90, 90, .2]
+    multi.now += 100
+    world['sampledAt'] = multi.now
+    bot.think(multi, 2)
+    assert value['opponentId'] is None and value['status'] == 'assist'
+    assert not value['path'] and not value['moving']
+    assert value['heading'] != 0
+
+
 @pytest.mark.parametrize('condition', ['idle', 'dead', 'far', 'missing', 'enemy-dead', 'stale-report'])
 def test_invalid_or_inactive_allies_do_not_attract_assistance(multi, monkeypatch, condition):
     nav, world, value = cornerFight(multi, monkeypatch)
