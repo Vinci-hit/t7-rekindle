@@ -5,7 +5,7 @@ import pytest
 
 from Business.runtime import host_runtime
 from Business.scripts import actors, app, contracts as wire, scene
-from test_round_timeout import game, finish, clear
+from test_round_timeout import game, finish, clear, settle
 
 
 def start(duration):
@@ -75,6 +75,9 @@ def test_settlement_freezes_all_members_with_camp_and_personal_results(game, cam
     for member in snapshot['members']:
         expected = 3 if result == 3 else 1 if member['camp'] == result else 2
         assert member['result'] == expected
+    roundBody = next(p['body'] for p in game.result['send'] if p['reason'] == 'instance-round-result')
+    assert roundBody == struct.pack('>HQQii', 0x68, game.now, 1, result, 1)
+    settle(game)
     finishBody = next(p['body'] for p in game.result['send'] if p['reason'] == 'instance-finish-game')
     assert struct.unpack_from('>i', finishBody, 18)[0] == result
     settleBody = next(p['body'] for p in game.result['send'] if p['reason'] == 'instance-settlement')
@@ -131,6 +134,7 @@ def test_leave_at_deadline_has_one_result_and_duplicate_leave_does_not_delay_ack
 def test_settlement_survives_instance_close_until_return_to_lobby():
     flow = start(3000)
     finish(flow)
+    settle(flow)
     flow.state['sessions']['2'] = {'role': 'logic', 'hydration': [], 'pending': {}}
     result = app.handleEvent({'type': 'closed', 'connection': 1}, flow.state, {'nowMs': flow.now})
     state = result['state']
@@ -164,9 +168,10 @@ def test_expiry_precedes_a_late_world_timer_or_gameplay_event(event):
                              {'nowMs': deadline, 'connections': [1]})
     state = result['state']
     assert state['phase'] == 'settlement' and state['settlement']['reason'] == 'timeout'
-    assert not state['sessions']['1']['pending']
-    assert [p['reason'] for p in result['send']][-3:] == [
-        'instance-round-state-end', 'instance-settlement', 'instance-finish-game']
+    assert state['sessions']['1']['pending'] == {'round-finish': deadline + 5000}
+    assert [p['reason'] for p in result['send']][-2:] == [
+        'instance-round-result', 'instance-round-state-end']
+    assert not any(p['reason'] in ('instance-settlement', 'instance-finish-game') for p in result['send'])
 
 
 def test_frozen_settlement_survives_reload_and_logic_hydration():
@@ -190,6 +195,7 @@ def test_frozen_settlement_survives_reload_and_logic_hydration():
 def test_old_finished_state_migration_does_not_replay_or_invent_a_settlement():
     flow = start(wire.GAME_MS)
     finish(flow)
+    settle(flow)
     flow.state.pop('settlement')
     flow.session.pop('battleClock')
     restored = app.migrateState(12, flow.state)

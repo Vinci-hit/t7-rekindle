@@ -39,6 +39,11 @@ def finish(flow, delay=0):
     app.handleTimer(flow, "round-end")
 
 
+def settle(flow):
+    flow.now = flow.session["pending"]["round-finish"]
+    app.handleTimer(flow, "round-finish")
+
+
 def test_game_schedules_timeout_for_the_announced_duration_once(game):
     assert game.session["pending"]["round-end"] == game.now + wire.GAME_MS
     assert next(packet["body"] for packet in game.result["send"]
@@ -66,8 +71,8 @@ def test_timeout_ends_the_round_once_and_waits_for_client_logout(game, delay):
 
     finish(game, delay)
     assert [packet["body"] for packet in game.result["send"] if packet["command"] == 0xA] == [
-        wire.roundState(deadline + delay, 5, 0),
-        leave_flow.encode_si_finish_game(server_time_ms=deadline + delay, game_result=3, local_user_id=wire.USER_ID),
+        wire.roundResult(deadline + delay, 3),
+        wire.roundState(deadline + delay, 5, 5000),
     ]
     active = [move_flow.decode_move_notify_active(packet["body"]).active
               for packet in game.result["send"]
@@ -75,7 +80,8 @@ def test_timeout_ends_the_round_once_and_waits_for_client_logout(game, delay):
     assert active == [0]
     assert game.session["roundEnded"] is True and not battle.enabled(game)
     assert game.session["phase"] == game.state["phase"] == "settlement"
-    assert game.session["pending"] == {} and not game.session.get("leaving")
+    assert game.session["pending"] == {'round-finish': deadline + delay + 5000}
+    assert not game.session.get("leaving")
     assert not any(packet["command"] == 0x2C for packet in game.result["send"])
     assert app.validateState(game.state)
 
@@ -83,9 +89,15 @@ def test_timeout_ends_the_round_once_and_waits_for_client_logout(game, delay):
     clear(game)
     app.handleTimer(game, "round-end")
     assert game.state == state and not game.result["send"] and not game.result["timers"]
+    settle(game)
+    assert [packet['reason'] for packet in game.result['send']] == [
+        'instance-settlement', 'instance-finish-game']
+    assert game.result['send'][-1]['body'] == leave_flow.encode_si_finish_game(
+        server_time_ms=deadline + delay + 5000, game_result=3, local_user_id=wire.USER_ID)
+    assert not game.session['pending']
 
 
-def test_timeout_stops_actions_movement_and_all_pending_timers(game):
+def test_timeout_stops_actions_movement_and_all_pending_gameplay_timers(game):
     game.context["botWorld"] = {"instanceStartedAt": game.session["instanceStartedAt"]}
     for rid in actors.ids(game.session):
         battle.startAction(game, 300550, actorId=rid)
@@ -97,7 +109,7 @@ def test_timeout_stops_actions_movement_and_all_pending_timers(game):
     pending = dict(game.session["pending"])
 
     finish(game)
-    assert game.session["pending"] == {}
+    assert game.session["pending"] == {'round-finish': game.now + 5000}
     assert all(battle.actionState(game, rid)["index"] == -1
                and "buffered" not in battle.actionState(game, rid) for rid in actors.ids(game.session))
     assert all(not value["moving"] and value["status"] == "stopped"
@@ -107,7 +119,8 @@ def test_timeout_stops_actions_movement_and_all_pending_timers(game):
     expected = {f"1:{name}" for name in pending
                 if name != "round-end" and not actors.localTimer(game.session, name)}
     assert {timer["id"] for timer in game.result["timers"] if timer["delayMs"] == -1} == expected
-    assert not any(timer["delayMs"] >= 0 for timer in game.result["timers"])
+    assert [(t['id'], t['delayMs']) for t in game.result['timers'] if t['delayMs'] >= 0] == [
+        ('1:round-finish', 5000)]
     clear(game)
     for name in pending:
         app.handleTimer(game, name)
@@ -124,6 +137,7 @@ def test_timeout_cancels_player_and_bot_respawns_without_changing_scores(game, r
               actors.data(game, actorId).get("battlePoints", 0)) for actorId in actors.ids(game.session)]
     pending = dict(game.session["pending"])
     finish(game)
+    settle(game)
     clear(game)
     game.now += 10000
     for name in pending:
@@ -140,6 +154,7 @@ def test_leave_before_or_after_timeout_finishes_only_once_and_preserves_logout(g
     deadline = game.session["pending"]["round-end"]
     if expired:
         finish(game)
+        settle(game)
     clear(game)
     scene.leave(game, struct.pack(">Hb", 2, -1))
     reasons = [packet["reason"] for packet in game.result["send"]]
@@ -158,8 +173,11 @@ def test_leave_before_or_after_timeout_finishes_only_once_and_preserves_logout(g
     assert game.session["phase"] == "settlement" and not game.session["pending"]
 
 
-def test_late_gameplay_requests_do_not_restart_a_finished_round(game):
+@pytest.mark.parametrize('completed', [False, True])
+def test_late_gameplay_requests_do_not_restart_a_finished_round(game, completed):
     finish(game)
+    if completed:
+        settle(game)
     state = deepcopy(game.state)
     clear(game)
     for command, body in [
@@ -179,7 +197,8 @@ def test_reload_preserves_the_deadline_and_finished_state(game):
     flow = app.Flow({"connection": 1}, restored, {"nowMs": deadline})
     assert flow.session["pending"]["round-end"] == deadline
     finish(flow)
+    settle(flow)
     restored = app.migrateState(app.STATE_VERSION, host_runtime.decode(host_runtime.encode(flow.state)))
-    flow = app.Flow({"connection": 1}, restored, {"nowMs": deadline + 1})
+    flow = app.Flow({"connection": 1}, restored, {"nowMs": deadline + 5001})
     app.handleTimer(flow, "round-end")
     assert flow.session["roundEnded"] and not flow.result["send"] and not flow.result["timers"]

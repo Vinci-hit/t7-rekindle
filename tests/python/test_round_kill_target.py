@@ -10,7 +10,7 @@ from test_bot_roster import multi, sample
 from test_contact_journal import native
 from test_melee_combat import advance
 from test_melee_multi_hit import attack, cluster
-from test_round_timeout import clear, finish
+from test_round_timeout import clear, finish, settle
 
 
 KILL_TARGET_KEY = -1610395699  # int32 representation of the kill_total name key.
@@ -110,13 +110,20 @@ def test_sixtieth_camp_kill_finishes_after_death_before_respawn(targetGame, camp
     reasons = [p['reason'] for p in flow.result['send']]
     death = 'player-dead' if target == 1 else 'bot-dead'
     assert reasons.index('combat-camp-score') < reasons.index(death) < reasons.index('settlement-score')
-    assert reasons[-3:] == ['instance-round-state-end', 'instance-settlement', 'instance-finish-game']
+    assert reasons[-2:] == ['instance-round-result', 'instance-round-state-end']
     assert 'player-observer' not in reasons
+    assert 'instance-settlement' not in reasons and 'instance-finish-game' not in reasons
+    assert flow.result['send'][-2]['body'] == struct.pack('>HQQii', 0x68, flow.now, 1, winner, 1)
+    assert flow.session['roundEnded'] and not flow.session['groundEnabled']
+    assert flow.session['pending'] == {'round-finish': flow.now + 5000}
+    assert [(t['id'], t['delayMs']) for t in flow.result['timers'] if t['delayMs'] >= 0] == [
+        ('1:round-finish', 5000)]
+    settle(flow)
+    assert [p['reason'] for p in flow.result['send']][-2:] == ['instance-settlement', 'instance-finish-game']
     assert struct.unpack_from('>i', flow.result['send'][-1]['body'], 18)[0] == winner
     assert struct.unpack_from('>i', flow.result['send'][-2]['body'], len(flow.result['send'][-2]['body']) - 4)[0] == (
         1 if winner == camp else 2)
-    assert flow.session['roundEnded'] and not flow.session['groundEnabled'] and not flow.session['pending']
-    assert all(t['delayMs'] < 0 for t in flow.result['timers'])
+    assert not flow.session['pending']
     assert app.validateState(flow.state)
 
 
@@ -138,8 +145,11 @@ def test_friendly_bot_can_win_while_player_is_waiting_to_respawn(targetGame):
     clear(targetGame)
     lethalHit(targetGame, 12, 3)
     assert targetGame.state['settlement']['result'] == 1
-    assert targetGame.session['life'] == life and not targetGame.session['pending']
+    assert targetGame.session['life'] == life
+    assert targetGame.session['pending'] == {'round-finish': targetGame.now + 5000}
     assert targetGame.state['phase'] == 'settlement'
+    settle(targetGame)
+    assert targetGame.session['life'] == life and not targetGame.session['pending']
     assert app.validateState(targetGame.state)
 
 
@@ -155,7 +165,9 @@ def test_legacy_contact_sweep_stops_at_first_winning_kill(targetGame, attacker):
     advance(flow, combat.hitTimer(attacker))
     assert [actors.data(flow, rid)['health'] for rid in targets] == [0, combat.DAMAGE, combat.DAMAGE]
     assert actors.data(flow, attacker)['kills'] == 60
-    assert not flow.session['pending'] and all(t['delayMs'] < 0 for t in flow.result['timers'])
+    assert flow.session['pending'] == {'round-finish': flow.now + 5000}
+    assert [(t['id'], t['delayMs']) for t in flow.result['timers'] if t['delayMs'] >= 0] == [
+        ('1:round-finish', 5000)]
     assert sum(p['reason'] == 'combat-kill' for p in flow.result['send']) == 1
 
 
@@ -178,7 +190,8 @@ def test_native_batch_freezes_first_winner_in_existing_contact_order(targetGame,
     assert flow.state['settlement']['campKills'] == {str(firstCamp): 60, str(3 - firstCamp): 59}
     assert actors.data(flow, 12 if firstCamp == 1 else 2)['health'] == combat.DAMAGE
     assert sum(p['reason'] == 'combat-kill' for p in flow.result['send']) == 1
-    assert not flow.session['pending'] and not hasattr(flow, 'contactAt')
+    assert flow.session['pending'] == {'round-finish': flow.now + 5000}
+    assert not hasattr(flow, 'contactAt')
     assert app.validateState(flow.state)
 
 
@@ -197,7 +210,7 @@ def test_deadline_precedes_even_an_earlier_but_late_delivered_winning_contact(ta
     assert outcome['state']['settlement']['reason'] == reason
     assert outcome['state']['settlement']['result'] == result
     assert outcome['state']['settlement']['campKills']['1'] == (60 if delay < 0 else 59)
-    assert not outcome['state']['sessions']['1']['pending']
+    assert outcome['state']['sessions']['1']['pending'] == {'round-finish': deadline + delay + 5000}
 
 
 def test_finished_target_round_rejects_late_damage_death_and_timers(targetGame):
@@ -221,7 +234,8 @@ def test_finished_target_round_rejects_late_damage_death_and_timers(targetGame):
     assert restored == before
     scene.leave(flow, b'\0\2\0')
     assert flow.state['settlement'] == before['settlement']
-    assert not any(p['reason'] == 'instance-finish-game' for p in flow.result['send'])
+    assert sum(p['reason'] == 'instance-finish-game' for p in flow.result['send']) == 1
+    assert flow.session['pending'] == {'logout': flow.now + 250}
 
 
 def test_old_live_round_keeps_time_only_rule_until_new_instance(multi):
@@ -237,6 +251,7 @@ def test_old_live_round_keeps_time_only_rule_until_new_instance(multi):
     assert not flow.session.get('roundEnded') and KILL_TARGET_KEY not in scriptItems(flow)
     assert flow.session['pending']['round-end'] == deadline
     finish(flow)
+    settle(flow)
     assert flow.state['settlement']['reason'] == 'timeout' and 'killTarget' not in flow.state['settlement']
     oldFinished = deepcopy(flow.state)
     assert app.migrateState(13, oldFinished) == oldFinished

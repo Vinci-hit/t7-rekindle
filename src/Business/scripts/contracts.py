@@ -64,6 +64,10 @@ def roundInfo(now, duration=GAME_MS):
             + struct.pack(">iQiQi", 3, 0, 4, duration, 0))
 
 
+def roundResult(now, result):
+    return struct.pack(">HQQii", 0x68, now, 1, result, 1)
+
+
 def instanceInfo(now, startedAt=None):
     return room_flow.encode_minimal_instance_update(
         server_time_ms=now, instance_id=1,

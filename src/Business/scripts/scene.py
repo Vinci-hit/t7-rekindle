@@ -5,6 +5,8 @@ from . import actors, roster, contracts as wire, controls, battle, bot, combat, 
 from . import battle_clock, settlement
 from .codec import battle_flow, kill_flow, leave_flow, login_flow, room_flow, vision_flow
 
+END_HOLD_MS = 5000
+
 
 def begin(flow):
     if not kill_flow.valid_kill_target(wire.KILL_TARGET):
@@ -120,6 +122,8 @@ def timer(flow, name):
         flow.later("round-end", battle_clock.deadline(flow.session) - flow.now)
     elif name == "round-end":
         finishRound(flow)
+    elif name == "round-finish":
+        publishFinish(flow)
     elif name == "time-sync":
         flow.send(8, struct.pack(">HQQB", 11, flow.now, 0, 1), "instance-periodic-time-sync")
         flow.later("time-sync", 2000)
@@ -163,13 +167,25 @@ def finishRound(flow, *, reason=None, winnerCamp=None):
     if flow.session.get("battleEntered"):
         controls.activate(flow)
     settlement.publishScores(flow, snapshot)
-    flow.send(0xA, wire.roundState(flow.now, 5, 0), "instance-round-state-end")
-    settlement.publishResult(flow, snapshot)
-    flow.send(0xA, leave_flow.encode_si_finish_game(
-        server_time_ms=flow.now, game_result=snapshot['result'], local_user_id=wire.USER_ID), "instance-finish-game")
+    holdMs = 0 if snapshot['reason'] == 'quit' else END_HOLD_MS
+    if holdMs:
+        # END's native victory banner reads the round result, not FINISH_GAME.
+        flow.send(0xA, wire.roundResult(flow.now, snapshot['result']), "instance-round-result")
+    flow.send(0xA, wire.roundState(flow.now, 5, holdMs), "instance-round-state-end")
+    if holdMs:
+        flow.later("round-finish", holdMs)
+    else:
+        publishFinish(flow)
     flow.phase("settlement")
     flow.log("INFO", f"settlement reason={snapshot['reason']} result={snapshot['result']} "
                                f"campKills={snapshot['campKills']} members={len(snapshot['members'])}")
+
+
+def publishFinish(flow):
+    snapshot = flow.state['settlement']
+    settlement.publishResult(flow, snapshot)
+    flow.send(0xA, leave_flow.encode_si_finish_game(
+        server_time_ms=flow.now, game_result=snapshot['result'], local_user_id=wire.USER_ID), "instance-finish-game")
 
 
 def leave(flow, body):
@@ -177,6 +193,8 @@ def leave(flow, body):
     if flow.session.get('leaving'):
         return
     finishRound(flow)
+    if "round-finish" in flow.session.get("pending", {}):
+        publishFinish(flow)
     flow.cancelTimers()
     if flow.session["role"] == "instance":
         flow.send(0xA, leave_flow.encode_instance_leave_instance(
