@@ -8,6 +8,7 @@ from blade_fixture import contact, publish
 from test_bot_roster import multi, sample
 from test_melee_combat import hp
 from test_melee_multi_hit import attack
+from dash_fixture import profile
 
 
 def native(flow, attacker=2, target=1, *, phaseAt=None, occurredAt=None):
@@ -34,7 +35,8 @@ def test_native_contact_survives_late_business_dispatch_and_visual_start_delay(m
     sample(multi)
     attack(multi, 2, intent=intent)
     start = multi.now + 230
-    event = native(multi, phaseAt=start, occurredAt=start + combat.contactEndMs(intent) - 5)
+    end = combat.contactEndMs(intent, dash=battle.actionState(multi, 2).get('dash'))
+    event = native(multi, phaseAt=start, occurredAt=start + end - 5)
     multi.now = event['occurredAt'] + 350
     combat.worldUpdated(multi)
     assert hp(multi, 1) == 100 - (40 if intent == battle.DASH_ATTACK else 20)
@@ -44,15 +46,45 @@ def test_native_contact_survives_late_business_dispatch_and_visual_start_delay(m
     assert hp(multi, 1) == 100 - (40 if intent == battle.DASH_ATTACK else 20)
 
 
-def test_recovery_transition_does_not_erase_a_contact_waiting_in_native_journal(multi):
+@pytest.mark.parametrize('nextIntent', [None, 300550, 300580])
+def test_recovery_transition_or_buffered_followup_keeps_contacts_waiting_in_native_journal(multi, nextIntent):
     sample(multi)
     attack(multi, 2)
     native(multi, occurredAt=multi.now + 400)
+    if nextIntent is not None:
+        battle.bufferActionInput(battle.actionState(multi, 2), nextIntent)
     multi.now += 650
     app.handleTimer(multi, battle.actionTimer(2))
-    assert battle.actionState(multi, 2)['index'] == 3
+    assert battle.actionState(multi, 2)['index'] == (3 if nextIntent is None else 0)
     combat.worldUpdated(multi)
     assert hp(multi, 1) == 80
+
+
+@pytest.mark.parametrize('elapsed,hit', [(199, False), (200, True), (800, True), (801, False)])
+def test_delayed_dash_uses_original_contact_window_after_profile_change(multi, elapsed, hit):
+    sample(multi)
+    multi.context['dashAttack'] = profile(durationMs=1500, moveMs=700, contactStartMs=200, contactEndMs=800)
+    attack(multi, 2, battle.DASH_ATTACK)
+    event = native(multi, phaseAt=multi.now + 230, occurredAt=multi.now + 230 + elapsed)
+    multi.now += 1600
+    app.handleTimer(multi, battle.actionTimer(2))
+    multi.context['dashAttack'] = profile(contactEndMs=100)
+    combat.worldUpdated(multi)
+    assert hp(multi, 1) == (60 if hit else 100)
+    assert event['seq'] != battle.actionState(multi, 2)['seq']
+
+
+@pytest.mark.parametrize('elapsed,hit', [(199, False), (200, True), (800, True), (801, False)])
+def test_single_frame_dash_contact_uses_native_phase_clock(multi, elapsed, hit):
+    raw = sample(multi)
+    multi.context['dashAttack'] = profile(durationMs=1500, moveMs=700, contactStartMs=200, contactEndMs=800)
+    attack(multi, 2, battle.DASH_ATTACK)
+    phaseAt = multi.now + 230
+    raw['actors']['2'].update(state=439, seq=battle.actionState(multi, 2)['seq'], phaseAt=phaseAt)
+    multi.now = raw['sampledAt'] = phaseAt + elapsed
+    publish(multi, 2, [contact(1)])
+    combat.worldUpdated(multi)
+    assert hp(multi, 1) == (60 if hit else 100)
 
 
 @pytest.mark.parametrize('invalid', ['before-strike', 'after-window', 'wrong-seq', 'respawn', 'epoch', 'after-interrupt'])

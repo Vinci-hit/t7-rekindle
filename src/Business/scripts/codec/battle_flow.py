@@ -12,6 +12,8 @@ STATE_SYNC_SIMPLE = 0x0003
 STATE_SYNC = 0x0004
 ACT_STATE_IDLE = 2
 HIT_POINT_NOTIFY = 0x001B
+DEFENSE_NOTIFY = 0x0028
+DEFENCE_TYPE_WEAPON = 2
 BATTLE_RESULT = 0x0009
 DEAD_NOTIFY = 0x000A
 DATA_UPDATE_NOTIFY = 0x000B
@@ -175,6 +177,19 @@ def encode_battle_hit_point_notify(
         )
     except struct.error as error:
         raise ValueError("battle hit-point field is outside its TDR wire range") from error
+
+
+def encode_battle_defense_notify(
+    *, attacker_mid: int, defender_mid: int, attacker_weapon_id: int,
+    target_weapon_id: int, server_time_ms: int,
+) -> bytes:
+    """武器格挡碰撞声使用独立通知，不由命中点或动作状态消息触发。"""
+    try:
+        return struct.pack(
+            ">HqqbiiQ", DEFENSE_NOTIFY, attacker_mid, defender_mid, DEFENCE_TYPE_WEAPON,
+            attacker_weapon_id, target_weapon_id, server_time_ms)
+    except struct.error as error:
+        raise ValueError("battle defense-notify field is outside its TDR wire range") from error
 
 
 def decode_battle_hit_point_notify(body: bytes) -> BattleHitPointNotify:

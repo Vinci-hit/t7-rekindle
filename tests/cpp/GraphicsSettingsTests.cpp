@@ -52,7 +52,7 @@ bool verifyGraphicsSettings() {
         require(word(map, 0x610) == 9 && word(map, 0x614) == 15, "resolution variant must own an x86 std::string, not a C string");
         const auto hook = t7::buildGraphicsHook(BASE, 0x400000, 123);
         require(hook.size() == t7::GRAPHICS_PAGE_SIZE && hook[t7::GRAPHICS_CODE_OFFSET] == 0x9C, "hook layout");
-        const auto worldHook = t7::buildWorldHook(BASE, 0x400000, 123);
+        const auto worldHook = t7::buildWorldHook(BASE, 0x400000, 123, {});
         require(worldHook.size() == t7::WORLD_PAGE_SIZE && worldHook[t7::WORLD_CODE_OFFSET] == 0x9C
             && offsetof(t7::WorldMailbox, instanceStartedAt) == 8 && offsetof(t7::WorldMailbox, player) == 16
             && offsetof(t7::WorldMailbox, bot) == 28 && offsetof(t7::WorldMailbox, playerYaw) == 40
@@ -62,7 +62,7 @@ bool verifyGraphicsSettings() {
             && worldHook[t7::CHAT_INPUT_CODE_OFFSET] == 0x9C, "world/terrain/chat input layout");
         for (auto address : {0u, UINT32_MAX}) {
             rejected = false;
-            try { t7::buildWorldHook(address, 0x400000, 123); } catch (const std::runtime_error&) { rejected = true; }
+            try { t7::buildWorldHook(address, 0x400000, 123, {}); } catch (const std::runtime_error&) { rejected = true; }
             require(rejected, "world accepted an invalid x86 mailbox address");
         }
         require(sizeof(T7NativeAudioSnapshot) == 40 && offsetof(T7NativeAudioSnapshot, values) == 20, "audio ABI");

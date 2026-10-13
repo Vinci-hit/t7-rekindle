@@ -32,9 +32,21 @@ bool verifyResourcePreflight(const t7::fs::path& packageRoot) {
         t7::fs::copy(packageRoot / "synthetic-client", root, t7::fs::copy_options::recursive);
         const auto directory = t7::utf8((root / "Bin").wstring());
         bool launched = false;
+        bool expectAnimation = false;
         t7::Bootstrap::TestAdapter adapter;
         adapter.check = [](const auto&, const auto&, const auto&) {};
-        adapter.launch = [&](const auto&, const auto&, const auto&, const auto&, const auto&) { launched = true; };
+        adapter.launch = [&](const auto&, const t7::Config& config, const auto&, const auto&, const auto&) {
+            require(!config.dashAttack.enabled && config.dashAttack.weaponId == 1030411,
+                "Bootstrap lost the disabled weapon resource profile");
+            require(config.movementAnimation.enabled == expectAnimation
+                && config.movementAnimation.weaponId == 1030411
+                && config.movementAnimation.forwardSlow == (expectAnimation ? 2.25f : 0.f)
+                && config.movementAnimation.lateralSlow == (expectAnimation ? 1.75f : 0.f)
+                && config.movementAnimation.backwardSlow == (expectAnimation ? .75f : 0.f)
+                && config.movementAnimation.forwardSprint == (expectAnimation ? 4.25f : 0.f),
+                "Bootstrap lost the selected movement animation profile");
+            launched = true;
+        };
         session = t7::bridge::Session::createForTest(t7::utf8(packageRoot.wstring()), adapter);
         auto submit = [&](uint32_t kind, uint32_t expected) {
             uint64_t id = 0;
@@ -54,6 +66,16 @@ bool verifyResourcePreflight(const t7::fs::path& packageRoot) {
         };
         submit(T7NB_OPERATION_CHECK, T7NB_OPERATION_SUCCEEDED);
         idle();
+        uint64_t cursor = 0;
+        uint32_t required = 0, flags = 0;
+        require(session->readLogs(cursor, nullptr, 0, required, flags) == T7NB_BUFFER_TOO_SMALL,
+            "resource diagnostics did not reach the existing log stream");
+        std::vector<uint8_t> buffer(required);
+        require(session->readLogs(cursor, buffer.data(), required, required, flags) == T7NB_OK,
+            "resource diagnostic read failed");
+        const std::string logs(buffer.begin(), buffer.end());
+        require(logs.find("[T7_RESOURCE:entry_missing]") != std::string::npos
+            && logs.find("dash-disabled") != std::string::npos, "recoverable dash errors were silent");
         const auto archive = root / "vfs/data1.vfs";
         const auto validArchive = t7::readFile(archive);
         write(archive, {0, 1, 2});
@@ -101,6 +123,22 @@ def checkResources(clientDirectory, playerName=''):
         submit(T7NB_OPERATION_START, T7NB_OPERATION_SUCCEEDED);
         require(launched, "check-to-start failed to transfer Python ownership");
         submit(T7NB_OPERATION_STOP, T7NB_OPERATION_SUCCEEDED);
+        const std::string animationHook = R"(
+_fixtureCheck = checkResources
+
+def checkResources(clientDirectory, playerName=''):
+    result = _fixtureCheck(clientDirectory, playerName)
+    return result | {'movementAnimation': dict(enabled=True, weaponId=1030411, forwardSlow=2.25,
+        lateralSlow=1.75, backwardSlow=0.75, forwardSprint=4.25)}
+)";
+        auto animationScript = originalScript;
+        animationScript.insert(animationScript.end(), animationHook.begin(), animationHook.end());
+        write(script, animationScript);
+        expectAnimation = true; launched = false;
+        submit(T7NB_OPERATION_START, T7NB_OPERATION_SUCCEEDED);
+        require(launched, "selected animation profile did not reach launch");
+        submit(T7NB_OPERATION_STOP, T7NB_OPERATION_SUCCEEDED);
+        write(script, originalScript);
         session->requestClose();
         require(session->waitForWorkerForTest(std::chrono::seconds(10)), "resource worker cleanup");
         std::cout << "Resource checks, direct start rejection, retry, cancellation and Python ownership passed\n";

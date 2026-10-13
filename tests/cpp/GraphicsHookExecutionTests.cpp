@@ -5,6 +5,7 @@
 #include "TerrainHookFixture.h"
 #include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
+#include "MovementAnimationFixture.h"
 #include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
 #include "RoundEndHookFixture.h"
@@ -96,6 +97,7 @@ void fixture(const t7::fs::path& path) {
     }
     code.insert(code.end(), {0xD9, 0x1D}); word(code, STATS + 24);
     code.insert(code.end(), {0x66, 0x0F, 0x7E, 0x05}); word(code, STATS + 28);
+    imm(0xB8, movementAnimationFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(2);
     const auto running = branch(code, 0x85);
     code.insert(code.end(), {0xC7,0x05}); word(code, worldFixture::FRAME_GATE); word(code, 1);
@@ -109,6 +111,7 @@ void prepare(HANDLE process) {
     worldFixture::prepare(process);
     terrainFixture::prepare(process);
     sprintFixture::prepare(process);
+    movementAnimationFixture::prepare(process);
     chatInputFixture::prepare(process);
     roundEndFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
@@ -206,7 +209,7 @@ bool verifyGraphicsHookExecution() {
         client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE thread) {
             prepare(process); bladeFixture::prepare(process); weaponTrailFixture::prepare(process);
             t7::installOutputDevice(process, BASE, selected);
-            const auto page = t7::buildWorldHook(0x10000000, BASE, GetThreadId(thread));
+            const auto page = t7::buildWorldHook(0x10000000, BASE, GetThreadId(thread), sprintFixture::profile());
             const auto sweep = t7::buildBladeSweepHook(0x10000000, BASE);
             require(std::equal(sweep.begin(), sweep.end(), page.begin() + t7::BLADE_SWEEP_CODE_OFFSET),
                 "weapon trail overwrote blade sweep code or constants");
@@ -238,7 +241,13 @@ bool verifyGraphicsHookExecution() {
                 require(rejected, "weapon trail accepted an unknown native function");
                 t7::writeClientMemory(process, BASE + anchor.first, {static_cast<unsigned char>(anchor.second)});
             }
-            graphics.install(process, BASE, GetThreadId(thread));
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, {0xCC});
+            rejected = false;
+            try { graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile()); }
+            catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "animation hook accepted an unknown native writer");
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, {0xF3});
+            graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile());
         }, [](t7::DiagnosticLogLevel, const std::string& line) {
             if (line.find("exception") != std::string::npos || line.find("fault") != std::string::npos
                 || line.find("violation") != std::string::npos) std::cerr << line << '\n';
@@ -293,6 +302,9 @@ bool verifyGraphicsHookExecution() {
         const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;
         worldFixture::verify(client.process(), graphics.world(), worldMailbox);
         terrainFixture::verify(client.process(), graphics.world());
+        try { movementAnimationFixture::verify(client.process(), worldMailbox); }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("movement animation: ") + error.what()); }
+        std::cout << "x86 movement animation gait/cache, defense release and unchanged physical speeds/timer passed\n";
         bladeFixture::verify(client.process(), graphics.world(), worldMailbox);
         weaponTrailFixture::verify(client.process());
         try { sprintFixture::verify(client.process()); }

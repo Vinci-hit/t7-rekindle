@@ -10,6 +10,7 @@ struct TerrainContact {
     std::array<float, 3> position{}, normal{}, direction{};
 };
 constexpr size_t MAX_WORLD_ACTORS = 20;
+constexpr size_t MAX_BLADE_CONTACTS = MAX_WORLD_ACTORS + 2; // Blocking scene, actor RIDs, non-blocking ground.
 struct BladeContact {
     TerrainContact contact{};
     uint32_t targetId = 0; // Zero is scene geometry; otherwise the actor RID.
@@ -20,7 +21,7 @@ struct BladeTrace {
     uint32_t spanMs = 0;
     float length = 0;
     std::array<float, 3> base{}, tip{};
-    std::array<BladeContact, MAX_WORLD_ACTORS + 1> contacts{};
+    std::array<BladeContact, MAX_BLADE_CONTACTS> contacts{};
 };
 struct ActorSnapshot {
     bool ready = false;

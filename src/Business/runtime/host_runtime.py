@@ -239,7 +239,7 @@ class Runtime:
 
     def checkResources(self, clientDirectory, playerName=''):
         module = importlib.import_module(self.active.name + '.client_resources')
-        module.checkResources(clientDirectory, playerName)
+        return module.checkResources(clientDirectory, playerName)
 
     def dispatch(self, event, state, context):
         contextValue = decode(context)

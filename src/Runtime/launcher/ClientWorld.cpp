@@ -52,7 +52,8 @@ BladeTrace bladeTrace(const BladeMailbox& raw) {
         hit.contact = terrainContact(source.contact);
         if (!hit.contact.ready || !hit.contact.hit || !std::isfinite(source.time) || !std::isfinite(source.along)
             || source.time < 0 || source.time > 1 || source.along < 0 || source.along > 1) return {};
-        hit.targetId = static_cast<uint32_t>(i); hit.time = source.time; hit.along = source.along;
+        hit.targetId = i <= MAX_WORLD_ACTORS ? static_cast<uint32_t>(i) : 0;
+        hit.time = source.time; hit.along = source.along;
     }
     return value;
 }

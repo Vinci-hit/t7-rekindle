@@ -32,7 +32,7 @@ struct BladeMailbox {
     uint32_t traceReady = 0, spanMs = 0, previousTick = 0, previousWeapon = 0;
     uint64_t previousEpoch = 0;
     std::array<float, 3> previousBase{}, previousTip{};
-    std::array<BladeContactMailbox, MAX_WORLD_ACTORS + 1> contacts{};
+    std::array<BladeContactMailbox, MAX_BLADE_CONTACTS> contacts{};
     uint32_t actorEntity = 0, state = 0, sequence = 0, phaseTick = 0;
     uint32_t previousSequence = 0, previousEntity = 0;
 };
@@ -79,7 +79,8 @@ static_assert(ACTORS_DATA_OFFSET + MAX_WORLD_ACTORS * sizeof(ActorMailbox) + 4 <
 void verifyWorldFunctions(HANDLE process, uint32_t imageBase);
 void verifyTerrainFunctions(HANDLE process, uint32_t imageBase);
 Bytes buildTerrainHook(uint32_t address, uint32_t imageBase);
-Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId);
+Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
+                     const MovementAnimationProfile& animation = {});
 Bytes buildBladePoseHook(uint32_t address, uint32_t imageBase);
 Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase);
 Bytes buildContactFrameHook(uint32_t address);

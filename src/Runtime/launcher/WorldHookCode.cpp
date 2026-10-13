@@ -5,6 +5,8 @@
 #include "ChatInputHookCode.h"
 #include "WeaponTrailHookCode.h"
 #include "RoundEndHookCode.h"
+#include "MovementAnimationHookCode.h"
+#include <algorithm>
 #include <cstring>
 
 namespace t7 {
@@ -37,7 +39,8 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
             throw std::runtime_error("world reader function signature mismatch");
     }
 }
-Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
+Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
+                     const MovementAnimationProfile& animation) {
     if (!address || address > UINT32_MAX - WORLD_PAGE_SIZE || !imageBase
         || imageBase > UINT32_MAX - LOCAL_ACTOR_RVA - 4 || !threadId)
         throw std::runtime_error("world hook outside x86 range");
@@ -208,7 +211,7 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     std::memcpy(page.data() + WORLD_CODE_OFFSET, c.bytes.data(), c.bytes.size());
     const auto terrain = buildTerrainHook(address, imageBase);
     std::memcpy(page.data() + TERRAIN_CODE_OFFSET, terrain.data(), terrain.size());
-    const auto sprint = buildSprintHook(address, imageBase);
+    const auto sprint = buildSprintHook(address, imageBase, dash);
     std::memcpy(page.data() + SPRINT_CODE_OFFSET, sprint.data(), sprint.size());
     const auto chatInput = buildChatInputHook(address, imageBase);
     std::memcpy(page.data() + CHAT_INPUT_CODE_OFFSET, chatInput.data(), chatInput.size());
@@ -217,9 +220,12 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     const auto bladeSweep = buildBladeSweepHook(address, imageBase);
     std::memcpy(page.data() + BLADE_SWEEP_CODE_OFFSET, bladeSweep.data(), bladeSweep.size());
     const auto contactFrame = buildContactFrameHook(address);
-    if (contactFrame.size() > ROUND_END_CODE_OFFSET - CONTACT_CODE_OFFSET)
-        throw std::runtime_error("contact journal overlaps round end hook");
+    if (contactFrame.size() > MOVEMENT_ANIMATION_CODE_OFFSET - CONTACT_CODE_OFFSET)
+        throw std::runtime_error("contact journal overlaps movement animation hook");
     std::memcpy(page.data() + CONTACT_CODE_OFFSET, contactFrame.data(), contactFrame.size());
+    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation);
+    static_assert(MOVEMENT_ANIMATION_CODE_OFFSET + 0x1000 <= ROUND_END_CODE_OFFSET, "movement animation code capacity");
+    std::copy(movementAnimation.begin(), movementAnimation.end(), page.begin() + MOVEMENT_ANIMATION_CODE_OFFSET);
     writeSprintDirections(page);
     const auto roundEnd = buildRoundEndHooks(address, imageBase);
     static_assert(ROUND_END_CODE_OFFSET + 0x1000 <= LIVE_ACTORS_OFFSET, "round end code capacity");

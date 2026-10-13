@@ -1,6 +1,7 @@
 #include "GraphicsSettings.h"
 #include "RemoteImage.h"
 #include "RoundEndHookCode.h"
+#include "MovementAnimationHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -13,7 +14,8 @@ void write(HANDLE process, uint32_t address, const void* data, size_t size) {
     if (std::memcmp(data, checked.data(), size)) throw std::runtime_error("graphics mailbox readback mismatch");
 }
 }
-void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadId) {
+void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash,
+                               const MovementAnimationProfile& animation) {
     if (process_ || !process) throw std::runtime_error("graphics bridge installation state");
     if (readClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL.size()) != GRAPHICS_TICK_ORIGINAL
         || readClientMemory(process, imageBase + 0x6EA040, 5) != Bytes{0x55, 0x8B, 0xEC, 0x6A, 0xFF})
@@ -22,6 +24,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         if (readClientMemory(process, imageBase + rva, 6) != Bytes{0x55, 0x8B, 0xEC, 0x8A, 0x45, 0x08})
             throw std::runtime_error("audio setter signature mismatch");
     verifyWorldFunctions(process, imageBase);
+    if (animation.enabled) verifyMovementAnimationFunction(process, imageBase);
     constexpr auto worldOffset = GRAPHICS_PAGE_SIZE + AUDIO_PAGE_SIZE;
     constexpr auto size = worldOffset + WORLD_PAGE_SIZE;
     const auto remote = VirtualAllocEx(process, nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -29,6 +32,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     const auto pointer = reinterpret_cast<uintptr_t>(remote);
     bool patched = false;
     bool roundEndPatched = false;
+    bool animationPatched = false;
     try {
         if (pointer > UINT32_MAX - size) throw std::runtime_error("settings mailbox outside x86 range");
         const auto base = static_cast<uint32_t>(pointer);
@@ -36,7 +40,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
                                        base + worldOffset + WORLD_CODE_OFFSET);
         const auto audioBytes = buildAudioHook(base + GRAPHICS_PAGE_SIZE, imageBase, threadId);
         bytes.insert(bytes.end(), audioBytes.begin(), audioBytes.end());
-        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId);
+        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId, dash, animation);
         bytes.insert(bytes.end(), worldBytes.begin(), worldBytes.end());
         write(process, base, bytes.data(), bytes.size());
         DWORD previous = 0;
@@ -52,6 +56,10 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         roundEndPatched = true;
         for (const auto& entry : roundEndJumps(base + worldOffset, imageBase))
             writeClientMemory(process, imageBase + entry.first, entry.second);
+        if (animation.enabled) {
+            animationPatched = true;
+            writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, movementAnimationJump(base + worldOffset, imageBase));
+        }
         patched = true; writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, jump);
         process_ = process; remote_ = base; imageBase_ = imageBase;
         audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase);
@@ -59,6 +67,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     } catch (...) {
         // install() runs before the first ResumeThread, so rollback cannot race execution.
         if (patched) writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL);
+        if (animationPatched) writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, MOVEMENT_ANIMATION_ORIGINAL);
         if (roundEndPatched)
             for (const auto& entry : roundEndOriginals(imageBase))
                 writeClientMemory(process, imageBase + entry.first, entry.second);

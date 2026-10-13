@@ -18,7 +18,8 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     const auto collector = data + 0x100, input = data + 0x200, material = data + 0x240;
     const auto constants = code + CONSTANTS_OFFSET, one = constants, epsilon = constants + 4;
     const auto minLength = constants + 8, maxLength = constants + 12, density = constants + 16;
-    const auto maxTravel = constants + 20, maxDistance = constants + 24, table = constants + 32;
+    const auto maxTravel = constants + 20, maxDistance = constants + 24, table = constants + 36;
+    const auto groundNormalZ = constants + 28, groundPlaneTolerance = constants + 32;
     const auto batch = address + LIVE_ACTORS_OFFSET, end = batch + static_cast<uint32_t>(MAX_WORLD_ACTORS) * STRIDE;
     WorldHookCode c;
     auto load = [&](unsigned char reg, uint32_t offset) { c.emit({0x8B,static_cast<unsigned char>(0x85 | reg << 3)}); c.word(offset); };
@@ -42,7 +43,7 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     const auto clearLoop = c.bytes.size();
     c.emit({0x8D,0xAF}); c.word(BO);
     store(offsetof(BladeMailbox, traceReady), 0); store(offsetof(BladeMailbox, spanMs), 0);
-    for (uint32_t i = 0; i <= MAX_WORLD_ACTORS; ++i) store(CONTACTS + i * HIT_STRIDE, 0);
+    for (uint32_t i = 0; i < MAX_BLADE_CONTACTS; ++i) store(CONTACTS + i * HIT_STRIDE, 0);
     c.emit({0x83,0x3F,1}); const auto alive = c.branch(0x84);
     store(offsetof(BladeMailbox, poseReady), 0); store(offsetof(BladeMailbox, previousWeapon), 0);
     c.bind(alive); c.emit({0x81,0xC7}); c.word(STRIDE); c.emit({0x81,0xFF}); c.word(end);
@@ -219,10 +220,6 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     c.emit({0xF3,0x0F,0x10,0x05}); c.word(one); const auto sectionOrder = c.jump();
     c.bind(moving); c.emit({0xF3,0x0F,0x10,0x0D}); c.word(along);
     c.bind(ordered); c.bind(sectionOrder);
-    c.emit({0x83,0x3F,2}); const auto empty = c.branch(0x85);
-    c.emit({0x0F,0x2F,0x47,48}); ignored.push_back(c.branch(0x87)); const auto earlier = c.branch(0x82);
-    c.emit({0x0F,0x2F,0x4F,52}); ignored.push_back(c.branch(0x83));
-    c.bind(earlier); c.bind(empty);
     c.emit({0xF3,0x0F,0x11,0x05}); c.word(candidateTime);
     c.emit({0xF3,0x0F,0x11,0x0D}); c.word(candidateAlong);
     c.store(collector + 0x20, 0x3F800000); c.store(collector + 0x60, 0);
@@ -231,6 +228,41 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     c.call(imageBase + 0x108BFA0);
     c.store(collector + 4, 0x3F800000); // Do not let one actor truncate queries for other bodies or walls.
     c.emit({0x83,0x3D}); c.word(collector + 0x60); c.emit({0}); ignored.push_back(c.branch(0x84));
+    // Ray-facing normals can flip when a blade exits the ground. Classify the plane, not its facing.
+    c.emit({0xA1}); c.word(collector + 0x60); c.emit({0x3B,0x05}); c.word(sceneRoot);
+    const auto bodyContact = c.branch(0x85);
+    c.emit({0xF3,0x0F,0x10,0x15}); c.word(collector + 0x18);
+    c.emit({0x66,0x0F,0x7E,0xD0,0x25}); c.word(0x7FFFFFFF); c.emit({0x66,0x0F,0x6E,0xD0});
+    c.emit({0x0F,0x57,0xC0,0x0F,0x2F,0xD0}); const auto degenerateNormal = c.branch(0x86);
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+        c.emit({0xF3,0x0F,0x10,0x0D}); c.word(collector + 0x10 + axis * 4);
+        c.emit({0xF3,0x0F,0x59,0xC9,0xF3,0x0F,0x58,0xC1});
+    }
+    c.emit({0xF3,0x0F,0x51,0xC0,0xF3,0x0F,0x59,0x05}); c.word(groundNormalZ);
+    c.emit({0x0F,0x2F,0xD0}); const auto steep = c.branch(0x82);
+    c.emit({0x8B,0x35}); c.word(source);
+    c.emit({0xF3,0x0F,0x10,0x15}); c.word(collector + 0x20);
+    c.emit({0x0F,0x57,0xC0});
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+        c.emit({0xF3,0x0F,0x10,0x0D}); c.word(input + 16 + axis * 4);
+        c.emit({0xF3,0x0F,0x5C,0x0D}); c.word(input + axis * 4);
+        c.emit({0xF3,0x0F,0x59,0xCA,0xF3,0x0F,0x58,0x0D}); c.word(input + axis * 4);
+        c.emit({0xF3,0x0F,0x5C,0x8E}); c.word(offsetof(ActorMailbox, position) + axis * 4);
+        c.emit({0xF3,0x0F,0x59,0x0D}); c.word(collector + 0x10 + axis * 4);
+        c.emit({0xF3,0x0F,0x58,0xC1});
+    }
+    c.emit({0xF3,0x0F,0x5E,0x05}); c.word(collector + 0x18);
+    compare(groundPlaneTolerance); const auto invalidHeight = c.branch(0x8A);
+    const auto overhead = c.branch(0x87);
+    // Keep ground feedback separate so it neither hides nor replaces a blocking scene contact.
+    c.emit({0x81,0xC7}); c.word((MAX_WORLD_ACTORS + 1) * HIT_STRIDE);
+    c.bind(overhead); c.bind(invalidHeight); c.bind(steep); c.bind(degenerateNormal); c.bind(bodyContact);
+    c.emit({0xF3,0x0F,0x10,0x05}); c.word(candidateTime);
+    c.emit({0xF3,0x0F,0x10,0x0D}); c.word(candidateAlong);
+    c.emit({0x83,0x3F,2}); const auto empty = c.branch(0x85);
+    c.emit({0x0F,0x2F,0x47,48}); ignored.push_back(c.branch(0x87)); const auto earlier = c.branch(0x82);
+    c.emit({0x0F,0x2F,0x4F,52}); ignored.push_back(c.branch(0x83));
+    c.bind(earlier); c.bind(empty);
     auto resultCopy = [&](uint32_t from, unsigned char offset) {
         c.emit({0xA1}); c.word(from); c.emit({0x89,0x47,offset});
     };
@@ -259,7 +291,7 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x61,0x9D,0xC2,8,0});
     if (c.bytes.size() > CONSTANTS_OFFSET) throw std::runtime_error("blade collector overflow");
     c.bytes.resize(CONSTANTS_OFFSET, 0);
-    for (float value : {1.f, .00000001f, .01f, 8.f, 25.f, 16.f, 256.f, 0.f}) {
+    for (float value : {1.f, .00000001f, .01f, 8.f, 25.f, 16.f, 256.f, .5f, .1f}) {
         uint32_t bits; std::memcpy(&bits, &value, 4); c.word(bits);
     }
     c.word(code + COLLECTOR_OFFSET);

@@ -1,7 +1,7 @@
 """Melee action phases shared by the local player and computer player."""
 import struct
 
-from . import actors, contracts as wire, controls
+from . import actors, contracts as wire, controls, dash_resources, weapons
 from .codec import battle_flow
 
 ACTION_TIMER = "battle-action-phase"
@@ -10,10 +10,6 @@ ATTACK_RELEASE = 300020
 BLOCK_RELEASE = 300620
 DASH_ATTACK = 700250
 DASH_CHAIN = (438, 439)
-# Strike duration: s_battle_param_cli group 6, weapon category 32, action 32, mode 2.
-# Enter the strike directly; only the reaction delay remains offline tuning.
-DASH_PHASES_MS = (0, 2033)
-DASH_REACTION_MS = 350
 ATTACK_CHAINS = {
     300560: (235, 237, 238, 239),  # up
     300550: (241, 243, 244, 245),  # right
@@ -21,11 +17,11 @@ ATTACK_CHAINS = {
     300540: (253, 255, 256, 257),  # left
 }
 BLOCK_CHAINS = {
-    # Prepare -> ParryHold -> ParryRelease. Release only follows the matching key-up.
-    300580: (305, 223, 227),  # up
-    300590: (308, 224, 228),  # right
-    300600: (307, 225, 229),  # down
-    300610: (306, 226, 230),  # left
+    # Prepare -> ParryHold. Matching key-up ends the action without ParryRelease.
+    300580: (305, 223),  # up
+    300590: (308, 224),  # right
+    300600: (307, 225),  # down
+    300610: (306, 226),  # left
 }
 PARRIED_STATES = {300560: 240, 300550: 246, 300570: 252, 300540: 258, DASH_ATTACK: 443}
 PARRY_SUCCESS_STATES = {300580: 231, 300590: 232, 300600: 233, 300610: 234}
@@ -39,15 +35,27 @@ WEAPON_ATTACK_PHASES_MS = {
         300570: (400, 0, 700, 400),
         300540: (360, 0, 640, 530),
     },
+    # s_battle_param_cli: group 2, category 104, mode 2 (native default fists).
+    weapons.FIST_ID: {
+        300560: (369, 0, 632, 369),
+        300550: (369, 0, 632, 264),
+        300570: (369, 0, 632, 264),
+        300540: (369, 0, 632, 264),
+    },
 }
+FIST_REACTIONS_MS = {300560: (520, 420), 300550: (450, 350), 300570: (560, 460), 300540: (450, 350)}
 
 
-def phaseMs(intent, index):
+def phaseMs(intent, index, *, dash=None, weaponId=None):
     if intent == DASH_ATTACK:
-        return DASH_PHASES_MS[index]
+        if index == 0:
+            return 0
+        if dash is None:
+            missingDash()
+        return (0, dash['durationMs'])[index]
     if intent not in ATTACK_CHAINS:
         return BLOCK_PHASE_MS
-    timings = WEAPON_ATTACK_PHASES_MS.get(wire.WEAPON_ID)
+    timings = WEAPON_ATTACK_PHASES_MS.get(wire.WEAPON_ID if weaponId is None else weaponId)
     if timings is None:
         raise ValueError("weapon has no verified attack timing")
     return timings[intent][index]
@@ -57,8 +65,38 @@ def attackChain(intent):
     return DASH_CHAIN if intent == DASH_ATTACK else ATTACK_CHAINS.get(intent)
 
 
-def reactionMs(intent):
-    return DASH_REACTION_MS if intent == DASH_ATTACK else phaseMs(intent, -1)
+def missingDash():
+    raise ValueError('dash timing requires the action profile; restart Runtime after upgrading')
+
+
+def dashProfile(flow):
+    value = flow.context.get('dashAttack')
+    if value is None:
+        if not flow.session.get('dashUnavailableLogged'):
+            flow.log('ERROR', 'dash-disabled: Runtime did not supply weapon resources; restart Runtime')
+            flow.session['dashUnavailableLogged'] = True
+        return None
+    if not dash_resources.validProfile(value):
+        raise ValueError('invalid Runtime dash profile')
+    if value['enabled'] and value['weaponId'] != wire.WEAPON_ID:
+        raise ValueError('dash profile does not match equipped weapon; restart Runtime')
+    return dict(value) if value['enabled'] else None
+
+
+def reactionMs(intent, *, dash=None, weaponId=None, terrain=False):
+    if intent == DASH_ATTACK:
+        if dash is None:
+            missingDash()
+        return dash['reboundMs']
+    if weaponId == weapons.FIST_ID:
+        return FIST_REACTIONS_MS[intent][int(terrain)]
+    return phaseMs(intent, -1, weaponId=weaponId)
+
+
+def validAction(data):
+    action = data.get('action', {})
+    return type(action) is dict and weapons.validState(action) and ('dash' not in action or (
+        dash_resources.validProfile(action['dash']) and action['dash']['enabled']))
 
 
 def strikeIndex(intent):
@@ -99,7 +137,10 @@ def syncState(flow, state, actorId=wire.ACTOR_ID, *, targetId=None):
     action = actionState(flow, actorId)
     sequence = action["seq"] % 0xFFFF + 1
     # DashAttack.enforcedDuration consumes the full state duration, not elapsed time.
-    duration = phaseMs(DASH_ATTACK, 1) if state == DASH_CHAIN[1] else 0
+    dash = action.get('dash')
+    duration = phaseMs(DASH_ATTACK, 1, dash=dash) if state == DASH_CHAIN[1] else 0
+    if state == 443 and action['intent'] == DASH_ATTACK:
+        duration = reactionMs(DASH_ATTACK, dash=dash)
     fields = dict(instance_id=actorId, seq_no=sequence, state=state,
                   state_change_ms=flow.now - startedAt, state_time_ms=duration)
     body = (battle_flow.encode_battle_state_sync_simple(**fields) if targetId is None
@@ -116,40 +157,69 @@ def syncState(flow, state, actorId=wire.ACTOR_ID, *, targetId=None):
     combat.actionChanged(flow, actorId, state)
 
 
-def resetAction(flow, actorId=wire.ACTOR_ID):
+def resetAction(flow, actorId=wire.ACTOR_ID, *, preserveBuffered=False):
     from . import combat
     combat.cancelSwing(flow, actorId, reason="interrupted")
     flow.cancel(actionTimer(actorId))
     data = actorData(flow, actorId)
     if "action" in data:
         data["action"].update(intent=0, index=-1, released=False)
-        data["action"].pop("buffered", None)
+        if not preserveBuffered or data["action"].get("buffered", {}).get("released", True):
+            data["action"].pop("buffered", None)
         data["action"].pop("reaction", None)
+        data["action"].pop("dash", None)
+        data['action'].pop('weaponChange', None)
+        data['action'].pop('weaponId', None)
 
 
 def startAction(flow, intent, released=False, *, actorId=wire.ACTOR_ID):
     data = actorData(flow, actorId)
-    if not actors.active(flow, actorId) or "hurtUntil" in data or data.get("action", {}).get("reaction"):
+    if (not actors.active(flow, actorId) or "hurtUntil" in data or data.get("action", {}).get("reaction")
+            or data.get('action', {}).get('weaponChange')):
+        return
+    weaponId = weapons.equipped(data)
+    if intent == DASH_ATTACK and weaponId != wire.WEAPON_ID:
+        return
+    dash = dashProfile(flow) if intent == DASH_ATTACK else None
+    if intent == DASH_ATTACK and dash is None:
         return
     index = strikeIndex(intent) if intent == DASH_ATTACK else 0
-    delay = phaseMs(intent, index)
+    delay = phaseMs(intent, index, dash=dash, weaponId=weaponId)
     chain = attackChain(intent) or BLOCK_CHAINS[intent]
     action = actionState(flow, actorId)
     action.update(intent=intent, index=index, released=released or intent == DASH_ATTACK)
+    action['weaponId'] = weaponId
+    action.pop('dash', None)
+    if dash is not None:
+        action['dash'] = dash
     action.pop("buffered", None)
     syncState(flow, chain[index], actorId)
     flow.later(actionTimer(actorId), delay)
 
 
-def parryReaction(flow, actorId, targetId, *, success, intent=None):
+def startBufferedAction(flow, actorId=wire.ACTOR_ID):
+    buffered = actionState(flow, actorId).get("buffered")
+    if buffered is None or buffered["released"]:
+        return False
+    startAction(flow, buffered["intent"], actorId=actorId)
+    return True
+
+
+def parryReaction(flow, actorId, targetId, *, success, intent=None, dash=None, weaponId=None):
     action = actionState(flow, actorId)
+    weaponId = weapons.equipped(actorData(flow, actorId)) if weaponId is None else weaponId
     intent = action['intent'] if intent is None else intent
-    resetAction(flow, actorId)
+    dash = action.get('dash') if dash is None else dash
+    resetAction(flow, actorId, preserveBuffered=not success)
     action.update(intent=intent, released=not success,
-                  reaction="parry-success" if success else "parried")
+                  reaction="parry-success" if success else "parried", weaponId=weaponId)
+    if intent == DASH_ATTACK:
+        if dash is None:
+            missingDash()
+        action['dash'] = dict(dash)
     state = PARRY_SUCCESS_STATES[intent] if success else PARRIED_STATES[intent]
     syncState(flow, state, actorId, targetId=targetId)
-    flow.later(actionTimer(actorId), BLOCK_PHASE_MS if success else reactionMs(intent))
+    flow.later(actionTimer(actorId), BLOCK_PHASE_MS if success else reactionMs(intent, dash=dash, weaponId=weaponId))
 
 
 def finishReaction(flow, actorId):
@@ -161,26 +231,32 @@ def finishReaction(flow, actorId):
         action["index"] = 1
         syncState(flow, BLOCK_CHAINS[action["intent"]][1], actorId)
     else:
-        syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
-        resetAction(flow, actorId)
+        action.pop("reaction")
+        if not startBufferedAction(flow, actorId):
+            syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
+            resetAction(flow, actorId)
 
 
-def terrainReaction(flow, actorId, *, intent=None):
+def terrainReaction(flow, actorId, *, intent=None, dash=None, weaponId=None):
     action = actionState(flow, actorId)
+    weaponId = weapons.equipped(actorData(flow, actorId)) if weaponId is None else weaponId
     intent = action['intent'] if intent is None else intent
-    resetAction(flow, actorId)
-    action.update(intent=intent, released=True, reaction="terrain-rebound")
+    dash = action.get('dash') if dash is None else dash
+    resetAction(flow, actorId, preserveBuffered=True)
+    action.update(intent=intent, released=True, reaction="terrain-rebound", weaponId=weaponId)
+    if intent == DASH_ATTACK:
+        if dash is None:
+            missingDash()
+        action['dash'] = dict(dash)
     syncState(flow, TERRAIN_REBOUND_STATES[intent], actorId, targetId=0)
-    flow.later(actionTimer(actorId), reactionMs(intent))
+    flow.later(actionTimer(actorId), reactionMs(intent, dash=dash, weaponId=weaponId, terrain=True))
 
 
-def bufferActionInput(action, intent):
+def bufferActionInput(action, intent, *, locked=False):
     chain = attackChain(action["intent"]) or BLOCK_CHAINS.get(action["intent"])
-    if chain is None or action["index"] < 0:
-        return False
-    if action["intent"] in BLOCK_CHAINS and (
-            not action["released"] or action["index"] != len(chain) - 1):
-        return False
+    if not locked:
+        if chain is None or action["index"] < 0 or action["intent"] in BLOCK_CHAINS:
+            return False
     if intent in ATTACK_CHAINS or intent in BLOCK_CHAINS:
         action["buffered"] = {"intent": intent, "released": False}
         return True
@@ -206,6 +282,10 @@ def timer(flow, name):
     if not enabled(flow) or action is None:
         resetAction(flow, actorId)
         return True
+    if action.get('weaponChange'):
+        syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
+        resetAction(flow, actorId)
+        return True
     if action.get("reaction"):
         finishReaction(flow, actorId)
         return True
@@ -222,18 +302,17 @@ def timer(flow, name):
     holdIndex = 1
     if not action["released"] and nextIndex > holdIndex:
         return True
-    if nextIndex == len(chain):
-        buffered = action.get("buffered")
-        if buffered is not None and not buffered["released"]:
-            startAction(flow, buffered["intent"], buffered["released"], actorId=actorId)
-        else:
+    if intent in ATTACK_CHAINS and nextIndex == len(chain) - 1 and startBufferedAction(flow, actorId):
+        return True
+    if nextIndex >= len(chain):
+        if not startBufferedAction(flow, actorId):
             syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
             resetAction(flow, actorId)
         return True
     action["index"] = nextIndex
     syncState(flow, chain[nextIndex], actorId)
     if action["released"] or nextIndex < holdIndex:
-        flow.later(name, phaseMs(intent, nextIndex))
+        flow.later(name, phaseMs(intent, nextIndex, weaponId=action.get('weaponId')))
     return True
 
 
@@ -255,11 +334,14 @@ def message(flow, command, selector, body):
     if not enabled(flow) or not actors.active(flow, wire.ACTOR_ID):
         resetAction(flow)
         return True
-    if "hurtUntil" in flow.session:
-        return True
     if chain is not None:
-        phaseMs(intent, 0)
+        phaseMs(intent, 0, weaponId=weapons.equipped(flow.session))
     action = actionState(flow)
+    if action.get('weaponChange'):
+        return True
+    if "hurtUntil" in flow.session:
+        bufferActionInput(action, intent, locked=True)
+        return True
     if intent == DASH_ATTACK:
         # Movement keys use a separate cache; the native hook checks them before arming RUN.
         if (keys & (1 << 26)
@@ -268,13 +350,17 @@ def message(flow, command, selector, body):
             startAction(flow, intent)
         return True
     if action.get("reaction"):
+        if action["reaction"] in ("parried", "terrain-rebound"):
+            bufferActionInput(action, intent, locked=True)
         releaseAction(flow, intent)
         return True
     interruptsAttack = (intent in BLOCK_CHAINS and action["intent"] in ATTACK_CHAINS
                         and action["index"] in (0, 1))
     interruptsParry = (intent in ATTACK_CHAINS and action["intent"] in BLOCK_CHAINS
                        and action["index"] in (0, 1))
-    if interruptsAttack or (interruptsParry and not action["released"]):
+    interruptsRecovery = (action["intent"] in ATTACK_CHAINS and action["index"] == 3
+                          and (intent in ATTACK_CHAINS or intent in BLOCK_CHAINS))
+    if interruptsAttack or interruptsRecovery or (interruptsParry and not action["released"]):
         resetAction(flow)
         startAction(flow, intent)
         return True
@@ -302,8 +388,13 @@ def releaseAction(flow, intent, actorId=wire.ACTOR_ID):
         action["released"] = True
         return True
     flow.cancel(actionTimer(actorId))
+    if intent == BLOCK_RELEASE:
+        if not startBufferedAction(flow, actorId):
+            syncState(flow, battle_flow.ACT_STATE_IDLE, actorId)
+            resetAction(flow, actorId)
+        return True
     action.update(index=2, released=True)
-    chain = ATTACK_CHAINS.get(action["intent"]) or BLOCK_CHAINS[action["intent"]]
+    chain = ATTACK_CHAINS[action["intent"]]
     syncState(flow, chain[2], actorId)
-    flow.later(actionTimer(actorId), phaseMs(action["intent"], 2))
+    flow.later(actionTimer(actorId), phaseMs(action["intent"], 2, weaponId=action.get('weaponId')))
     return True

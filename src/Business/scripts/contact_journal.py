@@ -1,7 +1,7 @@
 """Settle retained native contacts by event time, independently of AI and delivery latency."""
 import math
 
-from . import actors, battle
+from . import actors, battle, blade_contacts
 
 
 def available(flow):
@@ -77,18 +77,23 @@ def settle(flow):
             unmatched += 1
             continue
         intent = swing['intent']
+        contactStart, contactEnd = combat.contactWindow(swing)
         source = raw.get('actors', {}).get(str(attacker), {})
         if (swing.get('stopped') or event['entity'] != source.get('entity')
                 or occurredAt < data.get('contactLifeAt', 0)
-                or not event['phaseAt'] <= occurredAt <= event['phaseAt'] + combat.contactEndMs(intent)
+                or not event['phaseAt'] + contactStart <= occurredAt <= event['phaseAt'] + contactEnd
                 or occurredAt > swing.get('cutoff', math.inf)):
             continue
-        swing['nativeUntil'] = event['phaseAt'] + combat.contactEndMs(intent)
         flow.contactAt = occurredAt
         try:
+            if blade_contacts.isGround(event, event['sourcePosition']):
+                settled += combat.hitGround(flow, attacker, event, swing)
+                continue
+            swing['nativeUntil'] = event['phaseAt'] + contactEnd
             if target == 0:
                 swing['stopped'] = True
-                combat.hitTerrain(flow, attacker, event, intent=intent)
+                combat.hitTerrain(flow, attacker, event, intent=intent, dash=swing.get('dash'),
+                                  weaponId=swing.get('weaponId'))
                 settled += 1
                 continue
             if target not in actorIds or not actors.active(flow, target) or target in swing['hits']:
@@ -100,12 +105,14 @@ def settle(flow):
                 continue
             snapshot = pair(raw, event)
             guard = next((key for key, chain in battle.BLOCK_CHAINS.items() if chain[1] == event['targetState']), None)
-            if guard is not None and combat.parry(flow, attacker, target, snapshot,
-                                                 attackIntent=intent, defenceIntent=guard):
+            if guard is not None and combat.parry(flow, attacker, target, snapshot, contact=event,
+                                                 attackIntent=intent, defenceIntent=guard, dash=swing.get('dash'),
+                                                 weaponId=swing.get('weaponId')):
                 swing['stopped'] = True
             else:
                 swing['hits'] = [*swing['hits'], target]
-                combat.applyHit(flow, attacker, target, snapshot, contact=event, intent=intent)
+                combat.applyHit(flow, attacker, target, snapshot, contact=event, intent=intent,
+                                weaponId=swing.get('weaponId'))
             settled += 1
         finally:
             del flow.contactAt

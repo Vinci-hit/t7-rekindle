@@ -3,12 +3,12 @@ from copy import deepcopy
 import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
-from . import battle_clock, settlement
+from . import battle_clock, settlement, weapons
 from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 14
+STATE_VERSION = 16
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -39,6 +39,8 @@ def validateState(state):
                and ("bot" not in session or bot.validState(session["bot"]))
                and roster.validState(session)
                and combat.validState(session)
+               and weapons.validState(session)
+               and all(battle.validAction(data) for data in (session, *actors.bots(session).values()))
                and player_life.validState(session)
                and battle_clock.validState(session)
                and ('killTarget' not in session or kill_flow.valid_kill_target(session['killTarget']))
@@ -48,9 +50,14 @@ def validateState(state):
 
 
 def migrateState(fromVersion, state):
-    if fromVersion not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, STATE_VERSION) or not validateState(state):
+    if fromVersion not in range(1, STATE_VERSION + 1) or not validateState(state):
         raise ValueError("no migration for this state version")
     result = deepcopy(state)
+    for session in result['sessions'].values():
+        for data in (session, *actors.bots(session).values()):
+            snapshots = (data.get('action', {}), data.get('swing') or {}, *data.get('contactSwings', []))
+            if any(value.get('intent') == battle.DASH_ATTACK and 'dash' not in value for value in snapshots):
+                battle.missingDash()
     if fromVersion < 12:
         for session in result['sessions'].values():
             if any(name.startswith(('battle-action-phase', 'bot-action-phase', 'bot-release', 'combat-hurt-'))
@@ -62,7 +69,7 @@ def migrateState(fromVersion, state):
                 chain = battle.attackChain(intent)
                 if swing is not None and chain is not None:
                     swing.update(intent=intent, state=chain[battle.strikeIndex(intent)],
-                                 beganAt=swing['until'] - combat.contactEndMs(intent))
+                                 beganAt=swing['until'] - combat.contactEndMs(intent, dash=action.get('dash')))
     if fromVersion < 13:
         for session in result['sessions'].values():
             battle_clock.migrate(session)
@@ -221,6 +228,8 @@ def handleMessage(flow, event):
     if scene.message(flow, command, selector, body):
         return
     if controls.message(flow, command, selector, body):
+        return
+    if weapons.message(flow, command, selector, body):
         return
     if battle.message(flow, command, selector, body):
         return

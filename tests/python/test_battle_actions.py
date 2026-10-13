@@ -7,6 +7,7 @@ import pytest
 
 from Business.scripts import app, contracts as wire, controls, scene
 from Business.scripts.codec import battle_flow
+from dash_fixture import profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,10 +22,10 @@ ATTACKS = [
     (300540, (253, 255, 256, 257)),
 ]
 BLOCKS = [
-    (300580, (305, 223, 227)),
-    (300590, (308, 224, 228)),
-    (300600, (307, 225, 229)),
-    (300610, (306, 226, 230)),
+    (300580, (305, 223)),
+    (300590, (308, 224)),
+    (300600, (307, 225)),
+    (300610, (306, 226)),
 ]
 ATTACK_TIMES = {
     300560: (360, 640, 500),
@@ -42,7 +43,7 @@ def makeFlow(**sessionValues):
         "instanceStartedAt": 100, "moveClock": controls.MOVE_CLOCK,
         "controlBaseline": wire.BASELINE_ID, **sessionValues,
     }
-    return app.Flow({"connection": 1}, state, {"nowMs": 1000})
+    return app.Flow({"connection": 1}, state, {"nowMs": 1000, "dashAttack": profile()})
 
 
 def actionBody(intent, autoParry=1):
@@ -102,15 +103,13 @@ def test_parry_holds_until_matching_release(intent, chain):
     sendAction(flow, 300020)
     assert animationStates(flow) == list(chain[:2])
     sendAction(flow, 300620)
-    assert animationStates(flow) == list(chain)
-    assert flow.session["pending"][ACTION_TIMER] == flow.now
-    assert flow.result["timers"][-1]["delayMs"] == 0
+    assert animationStates(flow) == [*chain, 2]
+    assert flow.session["action"]["index"] == -1
+    assert ACTION_TIMER not in flow.session["pending"]
     before = deepcopy(flow.result)
     sendAction(flow, 300620)
+    app.handleTimer(flow, ACTION_TIMER)
     assert flow.result == before
-    advanceAction(flow)
-    assert animationStates(flow) == [*chain, 2]
-    assert ACTION_TIMER not in flow.session["pending"]
 
 
 @pytest.mark.parametrize("attackIntent,attackChain", ATTACKS)
@@ -152,10 +151,6 @@ def test_parry_interrupts_attack_prepare_or_hold_without_replaying_it(
         assert flow.result == before
     flow.now += 10
     sendAction(flow, 300620)
-    expected.append(blockChain[2])
-    assert animationStates(flow) == expected
-    assert flow.session["pending"][ACTION_TIMER] == flow.now
-    advanceAction(flow)
     assert animationStates(flow) == [*expected, 2]
     assert flow.session["action"]["index"] == -1
     assert flow.session["action"].get("buffered") is None
@@ -234,15 +229,28 @@ def test_quick_attack_release_finishes_prepare_before_striking(intent, chain):
 
 
 @pytest.mark.parametrize("intent,chain", BLOCKS)
-def test_parry_release_before_prepare_timer_retracts_without_delay(intent, chain):
+def test_parry_release_before_prepare_timer_returns_directly_to_idle(intent, chain):
     flow = makeFlow()
     sendAction(flow, intent)
     flow.now += 10
     sendAction(flow, 300620)
-    assert animationStates(flow) == [chain[0], chain[2]]
-    assert flow.session["pending"][ACTION_TIMER] == 1010
+    assert animationStates(flow) == [chain[0], 2]
+    assert flow.session["action"]["index"] == -1
+    assert ACTION_TIMER not in flow.session["pending"]
+    assert flow.result["timers"][-1]["delayMs"] == -1
+    before = deepcopy(flow.result)
+    sendAction(flow, 300620)
+    app.handleTimer(flow, ACTION_TIMER)
+    assert flow.result == before
+
+
+@pytest.mark.parametrize("intent,_", BLOCKS)
+def test_saved_parry_release_phase_finishes_without_another_animation(intent, _):
+    flow = makeFlow(action={"intent": intent, "index": 2, "seq": 4, "released": True})
+    flow.later(ACTION_TIMER, 0)
     advanceAction(flow)
-    assert animationStates(flow) == [chain[0], chain[2], 2]
+    assert animationStates(flow) == [2]
+    assert flow.session["action"]["index"] == -1
     assert ACTION_TIMER not in flow.session["pending"]
 
 
@@ -270,7 +278,6 @@ def test_parry_release_keeps_the_current_running_input(intent, chain):
     sendAction(flow, intent)
     advanceAction(flow)
     sendAction(flow, 300620)
-    advanceAction(flow)
     assert animationStates(flow) == [*chain, 2]
     assert flow.session["ground"] == ground
 

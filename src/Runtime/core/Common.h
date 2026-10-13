@@ -17,6 +17,18 @@
 namespace t7 {
 using Bytes = std::vector<unsigned char>;
 namespace fs = std::filesystem;
+struct DashAttackProfile {
+    bool enabled = false;
+    int32_t weaponId = 0, weaponCategory = -1;
+    uint32_t durationMs = 0, moveMs = 0, speedMilli = 0;
+    uint32_t contactStartMs = 0, contactEndMs = 0, reboundMs = 0;
+    std::string durationSource = "unavailable", animationPath;
+};
+struct MovementAnimationProfile {
+    bool enabled = false;
+    int32_t weaponId = 0;
+    float forwardSlow = 0, lateralSlow = 0, backwardSlow = 0, forwardSprint = 0;
+};
 struct Config {
     std::string bindAddress = "127.0.0.1", advertisedAddress = "127.0.0.1";
     std::string playerName = u8"新玩家";
@@ -25,6 +37,9 @@ struct Config {
     unsigned short ports[3] = {0, 0, 0};
     fs::path clientRoot;
     fs::path clientDirectory;
+    // Startup resource snapshot shared by business timing and native movement.
+    DashAttackProfile dashAttack;
+    MovementAnimationProfile movementAnimation;
     // The embedded business layer accepts local movement reports only after
     // the launcher has installed the memory-only client overlay.
     bool runtimeMovement = true;

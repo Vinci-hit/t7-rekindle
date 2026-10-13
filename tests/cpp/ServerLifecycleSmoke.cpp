@@ -372,6 +372,14 @@ int wmain(int argc, wchar_t** argv) {
             t7::PythonHost first(argv[1], ownerRoot);
             t7::Config worldConfig;
             worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client" / "Bin";
+            const auto resources = first.checkResources(worldConfig.clientDirectory);
+            if (resources.dashAttack.enabled || resources.dashAttack.weaponId != 1030411 || resources.diagnostics.empty())
+                throw std::runtime_error("missing dash resources did not produce a disabled profile with diagnostics");
+            auto& dash = worldConfig.dashAttack;
+            dash.enabled = true; dash.weaponId = 1030411; dash.weaponCategory = 32;
+            dash.durationMs = 1709; dash.moveMs = 1117; dash.speedMilli = 3210;
+            dash.contactStartMs = 100; dash.contactEndMs = 1300; dash.reboundMs = 777;
+            dash.durationSource = "table";
             t7::WorldSnapshot world;
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
@@ -397,6 +405,12 @@ int wmain(int argc, wchar_t** argv) {
             contactEvent.occurredAt = 1187.5; contactEvent.targetState = 223; contactEvent.targetEntity = 456;
             world.contacts.push_back(contactEvent);
             const auto context = first.context(worldConfig, 1250, {1}, world);
+            for (const char* field : {"\"dashAttack\":[\"dict\",", "\"enabled\":[\"bool\",true]",
+                "\"weaponId\":[\"int\",1030411]", "\"weaponCategory\":[\"int\",32]",
+                "\"durationMs\":[\"int\",1709]", "\"moveMs\":[\"int\",1117]", "\"speedMilli\":[\"int\",3210]",
+                "\"contactStartMs\":[\"int\",100]", "\"contactEndMs\":[\"int\",1300]", "\"reboundMs\":[\"int\",777]",
+                "\"durationSource\":[\"str\",\"table\"]", "\"animationPath\":[\"str\",\"\"]"})
+                if (context.find(field) == std::string::npos) throw std::runtime_error("business context lost the startup dash profile");
             for (const char* field : {"\"contactJournal\":[\"dict\",", "\"batchId\":[\"int\",7]",
                 "\"frames\":[\"int\",17]", "\"occurredAt\":[\"float\",1187.5]", "\"phaseAt\":[\"int\",900]",
                 "\"entity\":[\"int\",123]", "\"targetEntity\":[\"int\",456]", "\"targetState\":[\"int\",223]"})

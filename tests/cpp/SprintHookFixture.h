@@ -16,9 +16,26 @@ constexpr uint32_t ANIMATION_LENGTH = KEYS + 48, ANIMATION_CAPACITY = KEYS + 52;
 constexpr uint32_t COMMAND_SPEED = KEYS + 56, COMMAND_MAX_SPEED = KEYS + 60;
 constexpr uint32_t CLOCK_MODE = KEYS + 64;
 constexpr uint32_t ANIMATION = BASE + 0xC500;
+inline t7::DashAttackProfile profile() {
+    // Deliberately different from the current weapon: the hook must consume the supplied snapshot.
+    t7::DashAttackProfile value;
+    value.enabled = true; value.weaponId = 1030411; value.weaponCategory = 32;
+    value.durationMs = 1709; value.moveMs = 1117; value.speedMilli = 3210;
+    value.contactStartMs = 100; value.contactEndMs = 1300; value.reboundMs = 777;
+    value.durationSource = "table";
+    return value;
+}
 inline uint32_t readWord(HANDLE process, uint32_t address) {
     const auto bytes = t7::readClientMemory(process, address, 4);
     uint32_t value; std::memcpy(&value, bytes.data(), 4); return value;
+}
+inline void setFightState(HANDLE process, uint32_t state, uint32_t phaseTick) {
+    writeWord(process, FIGHT + 0x48, phaseTick);
+    writeWord(process, FIGHT + 0x40, readWord(process, FIGHT + 0x40) + 1);
+    writeWord(process, FIGHT + 0x38, state);
+}
+inline void setFightState(HANDLE process, uint32_t state) {
+    setFightState(process, state, readWord(process, CLOCK));
 }
 inline void prepare(HANDLE process) {
     t7::WorldHookCode c;
@@ -46,7 +63,7 @@ inline void prepare(HANDLE process) {
     t7::writeClientMemory(process, BASE + 0x26A1C0, c.bytes);
     for (const auto& item : std::vector<std::pair<uint32_t, uint32_t>>{
         {INPUT,BASE+0x17868BC}, {INPUT+0x60,6}, {INPUT+0x54,KEYS},
-        {FIGHT,BASE+0x178380C}, {FIGHT+0x38,2}, {CLOCK,1000},
+        {FIGHT,BASE+0x178380C}, {FIGHT+0x38,2}, {FIGHT+0x40,1}, {FIGHT+0x48,1000}, {CLOCK,1000},
         {worldFixture::TABLE+0x3C,BASE+0x295FA0}, {BASE+0x16F6228,BASE+0xC400}
     }) writeWord(process, item.first, item.second);
     c.bytes.clear(); c.emit({0xFF,0x05}); c.word(FRAMES);
@@ -163,7 +180,69 @@ inline void verifyJump(HANDLE process) {
     writeWord(process, worldFixture::STATE + 0x38, 4); expectUnchanged();
     writeWord(process, KEYS, 0); pump(process);
 }
+inline void verifyJumpAttack(HANDLE process) {
+    for (uint32_t keys : {0u, 1u, 5u, 9u}) {
+        for (const auto& chain : std::array<std::array<uint32_t, 4>, 4>{{
+            {235,237,238,239}, {241,243,244,245}, {247,249,250,251}, {253,255,256,257}
+        }}) {
+            writeWord(process, KEYS, 0); setFightState(process, 2); pump(process);
+            writeWord(process, KEYS, keys); pump(process);
+            writeWord(process, CLOCK, readWord(process, CLOCK) + 1000);
+            expect(process, keys ? 5.f : 3.f, keys != 0, "jump attack run setup");
+            const auto moves = readWord(process, MOVES);
+            writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
+            auto events = readWord(process, ANIMATION_EVENTS);
+            for (auto state : chain) {
+                setFightState(process, state);
+                expect(process, 3, false, "airborne attack kept run eligibility");
+                if (readWord(process, ANIMATION_EVENTS) != ++events
+                    || readWord(process, ANIMATION_NAME) != 0x706D754A
+                    || readWord(process, worldFixture::MOVABLE + 0x20) != 0x00010001
+                    || readWord(process, MOVES) != moves)
+                    throw std::runtime_error("attack phase did not preserve the physical jump and its animation");
+                pump(process);
+                if (readWord(process, ANIMATION_EVENTS) != events)
+                    throw std::runtime_error("unchanged attack phase replayed the jump animation");
+            }
+            setFightState(process, 2); pump(process);
+            if (readWord(process, ANIMATION_EVENTS) != ++events
+                || readWord(process, ANIMATION_NAME) != 0x706D754A)
+                throw std::runtime_error("attack recovery ended the jump before landing");
+            writeWord(process, CLOCK, readWord(process, CLOCK) + 2000);
+            expect(process, 3, false, "attack recovery rearmed running in midair");
+            writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+            expect(process, 3, false, "jump attack did not land in walking state");
+            const auto moveState = readWord(process, worldFixture::MOVABLE + 0x2C);
+            if (readWord(process, ANIMATION_EVENTS) != ++events
+                || readWord(process, ANIMATION_NAME) != 0x4A646E45 || moveState < 1 || moveState > 9)
+                throw std::runtime_error("jump attack landing did not end the jump exactly once");
+            setFightState(process, chain[0]); pump(process);
+            if (readWord(process, ANIMATION_EVENTS) != events)
+                throw std::runtime_error("ground attack dispatched a jump animation");
+        }
+    }
+    writeWord(process, KEYS, 1); setFightState(process, 2); pump(process);
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
+    setFightState(process, 238); pump(process);
+    const auto beforeLanding = readWord(process, ANIMATION_EVENTS);
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+    expect(process, 3, false, "landing during a strike did not restore walking");
+    expectDirection(process, 1, false);
+    for (uint32_t state : {239u, 2u}) { setFightState(process, state); pump(process); }
+    if (readWord(process, ANIMATION_EVENTS) != beforeLanding + 1
+        || readWord(process, ANIMATION_NAME) != 0x4A646E45)
+        throw std::runtime_error("grounded recovery restarted the completed jump");
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
+    const auto beforeReaction = readWord(process, ANIMATION_EVENTS);
+    for (uint32_t state : {35u, 240u, 246u, 252u, 258u}) { setFightState(process, state); pump(process); }
+    if (readWord(process, ANIMATION_EVENTS) != beforeReaction)
+        throw std::runtime_error("jump refresh replaced a hurt or parried reaction");
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
+    writeWord(process, KEYS, 0); setFightState(process, 2); pump(process);
+}
 inline void verify(HANDLE process) {
+    const auto config = profile();
+    const float initialSpeed = static_cast<float>(config.speedMilli) / 1000.f;
     writeWord(process, CLOCK, 1000);
     writeWord(process, CLOCK_MODE, 1);
     uint32_t tick = 1000;
@@ -177,6 +256,8 @@ inline void verify(HANDLE process) {
         expectDirection(process, direction, false);
     }
     verifyJump(process);
+    verifyJumpAttack(process);
+    tick = readWord(process, CLOCK);
     writeWord(process, KEYS, 1); expect(process, 3, false, "jog speed");
     time(999); expect(process, 3, false, "sprint armed too early");
     time(1); expect(process, 5, true, "run speed/HUD did not arm");
@@ -195,13 +276,15 @@ inline void verify(HANDLE process) {
     const auto jumpEvents = readWord(process, ANIMATION_EVENTS);
     writeWord(process, KEYS, 37); expect(process, 5, true, "Space reset an established run before takeoff");
     writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001);
-    // The native takeoff callback clears its running byte independently of our run eligibility.
+    expect(process, 5, false, "takeoff retained dash eligibility or lost run speed");
+    expectDirection(process, 8, true);
+    // The native takeoff callback clears RUN without discarding the carried run speed.
     writeWord(process, RESET_SPEED, 2);
-    expect(process, 5, true, "native takeoff lost established run speed/state");
+    expect(process, 5, false, "native takeoff restored dash eligibility or lost run speed");
     time(3000);
-    writeWord(process, KEYS, 9); expect(process, 5, true, "Space release or diagonal change interrupted airborne running");
+    writeWord(process, KEYS, 9); expect(process, 5, false, "Space release or diagonal change restored airborne dash eligibility");
     writeWord(process, RESET_SPEED, 3);
-    expect(process, 5, true, "airborne key command lost run speed"); expectDirection(process, 2, true);
+    expect(process, 5, false, "airborne key command restored dash eligibility or lost run speed"); expectDirection(process, 2, true);
     writeWord(process, worldFixture::MOVABLE + 0x20, 0);
     expect(process, 5, true, "landing restarted the acceleration delay"); expectDirection(process, 2, true);
     if (readWord(process, ANIMATION_EVENTS) != jumpEvents + 2)
@@ -209,19 +292,25 @@ inline void verify(HANDLE process) {
     for (int jump = 0; jump < 2; ++jump) {
         writeWord(process, KEYS, 33); expect(process, 5, true, "repeat jump key reset running");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001);
-        expect(process, 5, true, "repeat takeoff reset running");
+        expect(process, 5, false, "repeat takeoff retained dash eligibility or lost run speed");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0);
         expect(process, 5, true, "landing with Space held reset running");
     }
+    writeWord(process, KEYS, 1);
+    writeWord(process, worldFixture::MOVABLE + 0x20, 1);
+    expect(process, 5, false, "falling retained dash eligibility or lost run speed");
+    expectDirection(process, 1, true);
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+    expect(process, 5, true, "landing after a fall did not restore dash eligibility");
     // Losing forward movement, crouching or taking a hit still cancels the carried run.
     for (uint32_t keys : {0u, 2u, 4u, 17u, 1u}) {
         writeWord(process, KEYS, 1); pump(process); time(1000);
         expect(process, 5, true, "run setup before airborne interruption");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0x00010001); pump(process);
-        if (keys == 1) writeWord(process, FIGHT + 0x38, 35);
+        if (keys == 1) setFightState(process, 35);
         else writeWord(process, KEYS, keys);
         expect(process, 3, false, "airborne interruption retained run eligibility");
-        writeWord(process, FIGHT + 0x38, 2); writeWord(process, KEYS, 1); time(3000);
+        setFightState(process, 2); writeWord(process, KEYS, 1); time(3000);
         expect(process, 3, false, "interrupted run rearmed in midair");
         writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
         time(999); expect(process, 3, false, "landing reused canceled run eligibility");
@@ -240,23 +329,22 @@ inline void verify(HANDLE process) {
         {305,223,231,223,227}, {308,224,232,224,228}, {307,225,233,225,229}, {306,226,234,226,230}
     }) {
         for (auto state : chain) {
-            writeWord(process, FIGHT + 0x38, state);
+            setFightState(process, state);
             expect(process, 3, false, "attack/parry retained run speed or HUD");
             writeWord(process, KEYS, 1); time(1000);
             expect(process, 3, false, "held movement armed running during attack/parry");
             writeWord(process, KEYS, 9);
             expect(process, 3, false, "direction change accelerated attack/parry");
         }
-        writeWord(process, FIGHT + 0x38, 2); pump(process); time(999);
+        setFightState(process, 2); pump(process); time(999);
         expect(process, 3, false, "attack/parry kept elapsed run time");
         time(1); expect(process, 5, true, "attack/parry recovery did not rearm running");
     }
     auto dash = [&](bool advancing) {
-        expect(process, advancing ? 2.585f : 0.f, false, "dash movement window used the wrong speed");
+        expect(process, advancing ? initialSpeed : 0.f, false, "dash movement window used the wrong speed");
         expectDirection(process, advancing ? 1u : 0u, false);
         if (readWord(process, DIRECTION) != (advancing ? 0x7075u : 0u))
             throw std::runtime_error("dash movement window kept the wrong native command");
-        const float initialSpeed = 2.585f;
         uint32_t bits; std::memcpy(&bits, &initialSpeed, 4);
         if (advancing && (readWord(process, COMMAND_SPEED) != bits
             || readWord(process, COMMAND_MAX_SPEED) != bits))
@@ -266,34 +354,43 @@ inline void verify(HANDLE process) {
         writeWord(process, KEYS, keys);
         writeWord(process, RESET_SPEED, readWord(process, RESET_SPEED) + 1);
     };
-    writeWord(process, FIGHT + 0x38, 438); dash(false);
+    setFightState(process, 438); dash(false);
     for (uint32_t keys : {1u, 9u, 4u, 2u, 0u}) {
         keyCommand(keys); dash(false);
     }
     time(200); dash(false);
-    writeWord(process, FIGHT + 0x38, 439); dash(true);
+    setFightState(process, 439); dash(true);
     for (uint32_t keys : {1u, 9u, 4u, 2u, 0u}) {
         keyCommand(keys); dash(true); time(100); dash(true);
     }
-    time(466); dash(true);
-    time(1); dash(false); // Movement stops at 967 ms, not at the 2033 ms animation deadline.
+    time(config.moveMs - 501); dash(true);
+    time(1); dash(false); // Movement stops at the configured boundary, not the animation deadline.
     const auto stoppedMoves = readWord(process, MOVES); pump(process);
     if (readWord(process, MOVES) != stoppedMoves)
         throw std::runtime_error("expired dash repeatedly issued stop commands");
     for (uint32_t keys : {1u, 9u, 4u, 2u, 0u}) {
         keyCommand(keys); dash(false);
     }
-    time(1066); dash(false);
-    writeWord(process, FIGHT + 0x38, 2); pump(process);
+    time(config.durationMs - config.moveMs); dash(false);
+    setFightState(process, 2); pump(process);
     // A new attack gets a fresh deadline, including GetTickCount wrap and skipped frames.
     tick = 0xFFFFFF00; time(0);
-    writeWord(process, FIGHT + 0x38, 439); dash(true);
-    time(966); dash(true); time(1); dash(false);
-    writeWord(process, FIGHT + 0x38, 2); pump(process);
-    writeWord(process, FIGHT + 0x38, 439); dash(true);
-    time(1200); dash(false);
+    setFightState(process, 439); dash(true);
+    time(config.moveMs - 1); dash(true); time(1); dash(false);
+    setFightState(process, 2); pump(process);
+    setFightState(process, 439); dash(true);
+    time(config.moveMs + 200); dash(false);
+    // Same state and same keys, but a new sequence is a new native action.
+    setFightState(process, 439); dash(true);
+    const auto movesBeforeSequence = readWord(process, MOVES);
+    setFightState(process, 439); dash(true);
+    if (readWord(process, MOVES) != movesBeforeSequence + 1)
+        throw std::runtime_error("new dash sequence reused the previous movement command");
+    // First observation can arrive after the entire movement interval.
+    setFightState(process, 2); pump(process);
+    setFightState(process, 439, tick - config.moveMs); dash(false);
     if (readWord(process, JUMP_COMMANDS)) throw std::runtime_error("dash movement invoked the jump command");
-    writeWord(process, FIGHT + 0x38, 2); expect(process, 3, false, "dash did not return to jog");
+    setFightState(process, 2); expect(process, 3, false, "dash did not return to jog");
     if (readWord(process, DIRECTION)) throw std::runtime_error("released keys resumed motion");
     expectDirection(process, 0, false);
     for (uint32_t keys : {0u, 2u, 4u, 8u, 3u, 17u, 33u}) {
@@ -301,8 +398,8 @@ inline void verify(HANDLE process) {
         expect(process, 3, false, "stop/backward/strafe/crouch/jump armed running");
     }
     writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "run rearm");
-    writeWord(process, FIGHT + 0x38, 35); expect(process, 3, false, "hurt kept sprint ready");
-    writeWord(process, FIGHT + 0x38, 2); pump(process); time(999); expect(process, 3, false, "hurt kept elapsed run time");
+    setFightState(process, 35); expect(process, 3, false, "hurt kept sprint ready");
+    setFightState(process, 2); pump(process); time(999); expect(process, 3, false, "hurt kept elapsed run time");
     time(1); expect(process, 5, true, "hurt recovery rearm");
     writeWord(process, worldFixture::STATE + 0x38, 0); expect(process, 3, false, "leaving kept sprint ready");
     writeWord(process, worldFixture::STATE + 0x38, 4); pump(process); time(1000);
@@ -311,12 +408,12 @@ inline void verify(HANDLE process) {
     // Tick subtraction remains valid across GetTickCount wraparound.
     writeWord(process, KEYS, 0); pump(process); tick = 0xFFFFFF00; time(0);
     writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "clock wrap broke run timer");
-    writeWord(process, FIGHT + 0x38, 439); pump(process);
+    setFightState(process, 439); pump(process);
     writeWord(process, KEYS, 4); pump(process);
-    writeWord(process, FIGHT + 0x38, 35); expect(process, 3, false, "interrupted dash speed");
+    setFightState(process, 35); expect(process, 3, false, "interrupted dash speed");
     if (readWord(process, DIRECTION) != 0x7466656C) throw std::runtime_error("dash interruption did not restore held direction");
     if (readWord(process, JUMP_COMMANDS)) throw std::runtime_error("dash recovery invoked the jump command");
-    writeWord(process, KEYS, 0); writeWord(process, FIGHT + 0x38, 2);
+    writeWord(process, KEYS, 0); setFightState(process, 2);
     writeWord(process, worldFixture::INSTANCE + 0x6C, 1); pump(process);
     writeWord(process, CLOCK_MODE, 0);
 }

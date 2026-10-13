@@ -47,6 +47,7 @@
     <ClCompile Include="launcher\ClientWorld.cpp" />
     <ClCompile Include="launcher\WorldHookCode.cpp" />
     <ClCompile Include="launcher\SprintHookCode.cpp" />
+    <ClCompile Include="launcher\MovementAnimationHookCode.cpp" />
     <ClCompile Include="launcher\ChatInputHookCode.cpp" />
     <ClCompile Include="launcher\RoundEndHookCode.cpp" />
     <ClCompile Include="launcher\TerrainHookCode.cpp" />

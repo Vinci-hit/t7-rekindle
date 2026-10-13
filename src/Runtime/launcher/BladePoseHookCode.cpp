@@ -1,8 +1,9 @@
 #include "ClientWorld.h"
 #include "WorldHookCode.h"
+#include <cstring>
 
 namespace t7 {
-Bytes buildBladePoseHook(uint32_t, uint32_t imageBase) {
+Bytes buildBladePoseHook(uint32_t address, uint32_t imageBase) {
     WorldHookCode c;
     c.emit({0x60,0x8B,0xF1,0x8D,0xAF}); c.word(offsetof(ActorMailbox, blade)); // ESI entity, EBP blade.
     auto store = [&](uint32_t offset, uint32_t value) { c.emit({0xC7,0x85}); c.word(offset); c.word(value); };
@@ -63,6 +64,7 @@ Bytes buildBladePoseHook(uint32_t, uint32_t imageBase) {
     c.emit({0x8B,0x70,8}); nonzero(0xF6, noBlade);
     c.emit({0x8B,0x46,8}); save(offsetof(BladeMailbox, weaponEntity));
     c.emit({0x83,0x7E,0x7C,0}); noBlade.push_back(c.branch(0x84));
+    c.emit({0x81,0xFA}); c.word(100000); const auto fist = c.branch(0x84);
     component(0x17736BC); nonzero(0xC0, noBlade); // GeSwooshable holds the original bound NiAVObjects.
     c.emit({0x81,0x38}); c.word(imageBase + 0x1773684); noBlade.push_back(c.branch(0x85));
     c.emit({0x8B,0xD8});
@@ -78,9 +80,32 @@ Bytes buildBladePoseHook(uint32_t, uint32_t imageBase) {
             noBlade.push_back(c.branch(0x83));
         }
     }
+    const auto ribbonReady = c.jump();
+    c.bind(fist);
+    // The native default fist has no mesh/ribbon. Its entity follows the RHand attachment.
+    // Reuse the segment sweep with the resource's 0.15 m half-extent, not the sheathed sword.
+    c.emit({0x8B,0x56,0x4C}); nonzero(0xD2, noBlade);
+    c.emit({0x8B,0x5E,0x48}); nonzero(0xDB, noBlade);
+    std::vector<size_t> radiusReferences;
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+        c.emit({0xF3,0x0F,0x10,0x42,static_cast<unsigned char>(axis * 4)});
+        c.emit({0xF3,0x0F,0x10,0x4B,static_cast<unsigned char>((axis * 3 + 2) * 4)});
+        c.emit({0xF3,0x0F,0x59,0x0D}); radiusReferences.push_back(c.bytes.size()); c.word(0);
+        c.emit({0x0F,0x28,0xD0,0xF3,0x0F,0x5C,0xC1,0xF3,0x0F,0x58,0xD1});
+        c.emit({0x66,0x0F,0x7E,0xC0}); save(offsetof(BladeMailbox, base) + axis * 4);
+        c.emit({0x25}); c.word(0x7FFFFFFF); c.emit({0x3D}); c.word(0x47C35000);
+        noBlade.push_back(c.branch(0x83));
+        c.emit({0x66,0x0F,0x7E,0xD0}); save(offsetof(BladeMailbox, tip) + axis * 4);
+        c.emit({0x25}); c.word(0x7FFFFFFF); c.emit({0x3D}); c.word(0x47C35000);
+        noBlade.push_back(c.branch(0x83));
+    }
+    c.bind(ribbonReady);
     store(offsetof(BladeMailbox, poseReady), 1);
     for (auto branch : noBlade) c.bind(branch);
     c.emit({0x61,0xC3});
+    const auto radius = address + BLADE_POSE_CODE_OFFSET + static_cast<uint32_t>(c.bytes.size());
+    for (const auto offset : radiusReferences) std::memcpy(c.bytes.data() + offset, &radius, sizeof(radius));
+    c.word(0x3E19999A); // 0.15f.
     if (c.bytes.size() > BLADE_SWEEP_CODE_OFFSET - BLADE_POSE_CODE_OFFSET)
         throw std::runtime_error("blade pose hook overflow");
     return c.bytes;

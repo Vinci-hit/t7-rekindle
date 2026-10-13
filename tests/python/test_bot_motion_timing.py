@@ -109,7 +109,9 @@ def test_planned_guard_release_is_not_rounded_to_an_ai_pulse(multi, actorId):
     assert multi.result['timers'][-1]['delayMs'] == 437
     multi.now += 437
     sample(multi)
+    timers = deepcopy(multi.result['timers'])
     app.handleTimer(multi, name)
-    assert states(multi)[-1] == (actorId, 230)
-    assert multi.result['timers'][-1]['event']['name'] == battle.actionTimer(actorId)
-    assert multi.result['timers'][-1]['delayMs'] == 0
+    assert states(multi) == [(actorId, state) for state in (306, 226, 2)]
+    assert battle.actionState(multi, actorId)['index'] == -1
+    assert battle.actionTimer(actorId) not in multi.session['pending']
+    assert multi.result['timers'] == timers

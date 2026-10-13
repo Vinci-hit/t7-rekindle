@@ -456,8 +456,16 @@ void Server::updateWorld(const WorldSnapshot& world) {
 void Server::businessLoop() {
     try {
         PythonHost python(root_, run_ / "revisions");
-        if (!boundConfig_.clientDirectory.empty())
-            python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
+        if (!boundConfig_.clientDirectory.empty()) {
+            const auto resources = python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                boundConfig_.dashAttack = resources.dashAttack;
+                boundConfig_.movementAnimation = resources.movementAnimation;
+            }
+            for (const auto& diagnostic : resources.diagnostics)
+                journal_->add(diagnostic.level, "RESOURCE", 0, python.version(), diagnostic.message);
+        }
         std::string state = python.create(python.context(boundConfig_, clock_.millis(), {}));
         Timers timers;
         {

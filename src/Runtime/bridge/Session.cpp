@@ -452,7 +452,8 @@ void Session::executeCheck(const Command& command) {
         PythonHost python(fs::path(wide(packageRoot_)), run.path() / "revisions");
         try {
             if (cancelled(command.id)) throw std::runtime_error("check cancelled");
-            python.checkResources(fs::path(wide(command.clientDirectory)));
+            const auto resources = python.checkResources(fs::path(wide(command.clientDirectory)));
+            for (const auto& diagnostic : resources.diagnostics) log(diagnostic.message, diagnostic.level);
         } catch (...) { failure = std::current_exception(); }
         try {
             for (const auto& line : python.closeRevision()) log(line, DiagnosticLogLevel::Warn);
