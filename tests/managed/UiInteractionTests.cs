@@ -29,6 +29,7 @@ namespace T7.ManagedHarness
             TestSettingsAccessibility(directory, output);
             TestGameSettingsPersistence(directory);
             TestDialogs(output);
+            PreviewAccessUiTests.Run(directory, output);
             DiagnosticLogTests.Run(directory, output);
             LogLevelTests.Run(directory, output);
         }
@@ -488,6 +489,7 @@ namespace T7.ManagedHarness
             FakeDesktopInteraction interaction = null) => new MainWindowViewModel(new FakeLauncherBridge(),
             new SettingsService(directory), new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "玩家" }, null,
             path => Task.FromResult(ValidDirectory(path)), interaction ?? new FakeDesktopInteraction(),
-            checkUpdate: checkUpdate ?? (() => Task.FromResult(new LauncherUpdateInfo())));
+            checkUpdate: checkUpdate ?? (() => Task.FromResult(new LauncherUpdateInfo())),
+            previewAccess: PreviewAccessFixture.Authorized(directory + "-authorization"));
     }
 }

@@ -38,6 +38,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             if (_disposed) return;
             var utcNow = DateTime.UtcNow;
             DismissExpiredNotice(utcNow);
+            CheckPreviewAccess();
             CheckScheduledUpdate(utcNow);
             Refresh();
             if (Interlocked.CompareExchange(ref _logPollActive, 1, 0) != 0) return;

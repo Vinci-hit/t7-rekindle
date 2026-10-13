@@ -16,6 +16,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private readonly IDesktopInteraction _interaction;
         private readonly Func<Task<LauncherUpdateInfo>> _checkUpdate;
         private readonly Func<LauncherUpdateInfo, UpdateDownloadViewModel> _createDownload;
+        private readonly Func<bool> _canStartUpdateOperation;
         private UpdateDownloadViewModel _updateDownload;
         private bool _disposed;
         private string _feedback = string.Empty;
@@ -35,18 +36,21 @@ namespace T7.Rekindle.Desktop.ViewModels
         internal AboutViewModel(IDesktopInteraction interaction, Func<Task<LauncherUpdateInfo>> checkUpdate,
             Func<LauncherUpdateInfo, UpdateDownloadViewModel> createDownload = null,
             Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> loadHistory = null,
-            Func<LauncherHistoryEntry, UpdateDownloadViewModel> createRollbackDownload = null)
+            Func<LauncherHistoryEntry, UpdateDownloadViewModel> createRollbackDownload = null,
+            Func<bool> canStartUpdateOperation = null)
         {
             _interaction = interaction;
             _checkUpdate = checkUpdate;
+            _canStartUpdateOperation = canStartUpdateOperation ?? (() => true);
             _createDownload = createDownload ?? (info => new UpdateDownloadViewModel(info,
                 LauncherInformation.DownloadInstallerAsync, DesktopInteraction.InstallUpdateAsync, _interaction.OpenAddress));
             ShowContactCommand = new RelayCommand(() => OpenAddress(ContactAddress), () => HasContactAddress);
-            CheckUpdateCommand = new AsyncRelayCommand(CheckUpdateAsync, () => !_disposed && !IsCheckingUpdate && !IsUpdating);
+            CheckUpdateCommand = new AsyncRelayCommand(CheckUpdateAsync, () => !_disposed && !IsCheckingUpdate && !IsUpdating && _canStartUpdateOperation());
             History = new ReleaseHistoryViewModel(loadHistory ?? LauncherInformation.GetHistoryAsync,
                 createRollbackDownload ?? (entry => new UpdateDownloadViewModel(entry.ToInstallInfo(), LauncherInformation.DownloadInstallerAsync,
                     path => DesktopInteraction.InstallRollbackAsync(path, entry), _interaction.OpenAddress, entry)),
-                () => IsCheckingUpdate || UpdateDownload?.IsDownloading == true || UpdateDownload?.IsInstalling == true);
+                () => IsCheckingUpdate || UpdateDownload?.IsDownloading == true || UpdateDownload?.IsInstalling == true,
+                _canStartUpdateOperation);
             History.ActivityChanged += OnHistoryActivityChanged;
             CopyHashCommand = new RelayCommand(() => Copy(LauncherInformation.CommitHash, "完整 hash 已复制。"),
                 () => LauncherInformation.CommitHash.Length != 0);
@@ -177,7 +181,7 @@ namespace T7.Rekindle.Desktop.ViewModels
 
         private async Task CheckUpdateAsync()
         {
-            if (_disposed || IsCheckingUpdate || IsUpdating) return;
+            if (_disposed || IsCheckingUpdate || IsUpdating || !_canStartUpdateOperation()) return;
             IsCheckingUpdate = true;
             Feedback = UpdateError = string.Empty;
             UpdateStatus = "正在检查更新…";
@@ -185,7 +189,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             try
             {
                 var update = await _checkUpdate();
-                if (_disposed) return;
+                if (_disposed || !_canStartUpdateOperation()) return;
                 _lastUpdate = update;
                 SetUpdateDownload(update);
                 UpdateStatus = _lastUpdate.StatusText;
@@ -249,7 +253,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _updateDownload = info.IsNewVersion ? _createDownload(info) : null;
             if (_updateDownload != null)
             {
-                _updateDownload.CanStartOperation = () => !History.IsBusy;
+                _updateDownload.CanStartOperation = () => !History.IsBusy && _canStartUpdateOperation();
                 _updateDownload.PropertyChanged += OnDownloadChanged;
             }
             OnPropertyChanged(nameof(UpdateDownload));
@@ -273,6 +277,13 @@ namespace T7.Rekindle.Desktop.ViewModels
             OnPropertyChanged(nameof(IsUpdating));
             CheckUpdateCommand.NotifyCanExecuteChanged();
             UpdateDownload?.RefreshAvailability();
+        }
+
+        internal void RefreshAccess()
+        {
+            CheckUpdateCommand.NotifyCanExecuteChanged();
+            UpdateDownload?.RefreshAvailability();
+            History.RefreshAvailability();
         }
 
         private void LoadHistoryIfNeeded()

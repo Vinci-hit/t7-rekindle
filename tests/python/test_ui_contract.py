@@ -270,7 +270,7 @@ def test_project_information_uses_the_public_repository():
     metadata = {item.attrib["Include"]: item.attrib["Value"]
                 for item in project.findall("ItemGroup/AssemblyMetadata")}
     assert set(metadata) == {"RepositoryUrl", "DownloadUrl", "BuildsUrl", "IssuesUrl", "UpdateBaseUrl", "AuthBaseUrl",
-                             "BuildChannel", "PreviewRunId", "PreviewRunNumber", "PreviewRunAttempt"}
+                             "BuildChannel", "PreviewRunId", "PreviewRunNumber", "PreviewRunAttempt", "PreviewAccessPublicKey"}
     assert metadata["RepositoryUrl"] == "$(RepositoryUrl)"
     assert metadata["DownloadUrl"] == "$(RepositoryUrl)/releases"
     assert metadata["BuildsUrl"] == "$(RepositoryUrl)/actions/workflows/ci.yml"

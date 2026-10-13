@@ -8,7 +8,16 @@ namespace T7.Rekindle.Desktop.ViewModels
     public sealed partial class MainWindowViewModel
     {
         private UpdateChannel _updateChannel;
-        public bool CanChangeUpdateChannel => !_disposed && !About.IsCheckingUpdate && !About.IsUpdating;
+        private readonly PreviewAccessService _previewAccess;
+        private readonly Func<PreviewAccessViewModel, bool> _requestPreviewAccess;
+        private bool _previewExpiredPending;
+        private bool _authorizationPromptOpen;
+        private bool _channelTransitionActive;
+        private string _previewAccessStatus;
+        private bool CanStartPreviewOperation => !_previewExpiredPending && _previewAccess.IsAuthorized;
+        public string PreviewAccessStatus => _previewAccessStatus;
+        public bool CanChangeUpdateChannel => !_disposed && !_authorizationPromptOpen && !_channelTransitionActive
+            && !About.IsCheckingUpdate && !About.IsUpdating;
         public UpdateChannel SelectedUpdateChannel
         {
             get => _updateChannel;
@@ -18,11 +27,20 @@ namespace T7.Rekindle.Desktop.ViewModels
                 if (!CanChangeUpdateChannel) { RestoreUpdateChannelSelection(); return; }
                 if (value == UpdateChannel.Preview)
                 {
-                    var confirmed = _interaction.Confirm("切换到预览版？",
-                        "预览版包含未经充分验证的更改，可能出现崩溃、功能异常或兼容性问题。建议先备份重要配置与游戏数据。\n确认后将保存预览渠道并立即检查更新。",
-                        "切换到预览版");
+                    bool confirmed;
+                    _authorizationPromptOpen = true;
+                    OnPropertyChanged(nameof(CanChangeUpdateChannel));
+                    try
+                    {
+                        confirmed = _previewAccess.IsAuthorized
+                            ? _interaction.Confirm("切换到预览版？", PreviewAccessViewModel.RiskDescription + "\n"
+                                + _previewAccess.StatusText + "\n确认后将保存预览渠道并立即检查更新。", "切换到预览版")
+                            : _requestPreviewAccess(new PreviewAccessViewModel(_previewAccess, _interaction.CopyText));
+                    }
+                    finally { _authorizationPromptOpen = false; OnPropertyChanged(nameof(CanChangeUpdateChannel)); }
                     // 弹窗打开期间，后台可能开始检查更新。
-                    if (!confirmed || !CanChangeUpdateChannel) { RestoreUpdateChannelSelection(); return; }
+                    RefreshPreviewAccessStatus();
+                    if (!confirmed || !_previewAccess.IsAuthorized || !CanChangeUpdateChannel) { RestoreUpdateChannelSelection(); return; }
                 }
                 PreferenceError = string.Empty;
                 try
@@ -36,13 +54,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                     RestoreUpdateChannelSelection();
                     return;
                 }
-                _updateChannel = value;
-                About.ResetUpdateChannel(value);
-                foreach (var identity in _announcedUpdateVersions) Notices.Resolve("update.available." + identity);
-                Notices.Resolve("update.failed");
-                Notices.Resolve("暂无正式发布版本");
-                Notices.Resolve("暂无预览构建");
-                OnPropertyChanged();
+                ApplyUpdateChannel(value);
                 TriggerUpdateCheck();
                 var channelName = value == UpdateChannel.Preview ? "预览版" : "正式版";
                 if (_interaction.Confirm("前往更新页？",
@@ -50,6 +62,55 @@ namespace T7.Rekindle.Desktop.ViewModels
                     "前往更新页")) IsUpdateSelected = true;
             }
         }
+
+        private void ApplyUpdateChannel(UpdateChannel channel)
+        {
+            _channelTransitionActive = true;
+            try
+            {
+                _updateChannel = channel;
+                _previewExpiredPending = false;
+                About.ResetUpdateChannel(channel);
+                foreach (var identity in _announcedUpdateVersions) Notices.Resolve("update.available." + identity);
+                Notices.Resolve("update.failed");
+                Notices.Resolve("暂无正式发布版本");
+                Notices.Resolve("暂无预览构建");
+                OnPropertyChanged(nameof(SelectedUpdateChannel));
+                RefreshPreviewAccessStatus();
+                About.RefreshAccess();
+            }
+            finally { _channelTransitionActive = false; OnPropertyChanged(nameof(CanChangeUpdateChannel)); }
+        }
+
+        internal void CheckPreviewAccess()
+        {
+            if (_disposed || _channelTransitionActive || About == null) return;
+            if (_updateChannel == UpdateChannel.Preview && !_previewAccess.IsAuthorized) _previewExpiredPending = true;
+            RefreshPreviewAccessStatus();
+            if (!_previewExpiredPending) return;
+            About.RefreshAccess();
+            if (About.IsCheckingUpdate || About.IsUpdating || _authorizationPromptOpen) return;
+            try { _settings.ResetUpdateChannelToStable(); }
+            catch (Exception)
+            {
+                _log.Warn("预览授权失效后的正式渠道设置未保存。");
+                PreferenceError = "当前已使用正式渠道，但设置未保存，下次启动将重试。";
+            }
+            ApplyUpdateChannel(UpdateChannel.Stable);
+            Notices.Publish("preview.access.expired", "预览授权已失效，已切换为正式渠道；游戏运行不受影响。", NoticeSeverity.Warning);
+            TriggerUpdateCheck();
+        }
+
+        private void RefreshPreviewAccessStatus()
+        {
+            var text = _previewExpiredPending ? "预览授权已失效，等待当前更新操作结束后切回正式渠道。" : _previewAccess.StatusText;
+            if (_previewAccessStatus == text) return;
+            _previewAccessStatus = text;
+            OnPropertyChanged(nameof(PreviewAccessStatus));
+        }
+
+        private void QueuePreviewAccessCheck() => Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background,
+            new Action(CheckPreviewAccess));
 
         private void RestoreUpdateChannelSelection()
         {
@@ -61,7 +122,10 @@ namespace T7.Rekindle.Desktop.ViewModels
         private void OnUpdateActivityChanged(object sender, PropertyChangedEventArgs args)
         {
             if (args.PropertyName == nameof(AboutViewModel.IsCheckingUpdate) || args.PropertyName == nameof(AboutViewModel.IsUpdating))
+            {
                 OnPropertyChanged(nameof(CanChangeUpdateChannel));
+                if (_updateChannel == UpdateChannel.Preview && !CanStartPreviewOperation) QueuePreviewAccessCheck();
+            }
         }
     }
 }

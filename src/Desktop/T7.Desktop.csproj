@@ -34,6 +34,7 @@
     <AssemblyMetadata Include="IssuesUrl" Value="$(RepositoryUrl)/issues" />
     <AssemblyMetadata Include="UpdateBaseUrl" Value="$(T7_UPDATE_BASE_URL)" />
     <AssemblyMetadata Include="AuthBaseUrl" Value="$(T7R_SERVER_BASE_URL)" />
+    <AssemblyMetadata Include="PreviewAccessPublicKey" Value="$(T7_PREVIEW_ACCESS_PUBLIC_KEY)" />
     <AssemblyMetadata Include="BuildChannel" Value="$(T7_BUILD_CHANNEL)" />
     <AssemblyMetadata Include="PreviewRunId" Value="$(T7_PREVIEW_RUN_ID)" />
     <AssemblyMetadata Include="PreviewRunNumber" Value="$(T7_PREVIEW_RUN_NUMBER)" />

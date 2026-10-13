@@ -13,6 +13,8 @@ namespace T7.Rekindle.Desktop.Services
         private readonly string _directory;
         private readonly string _path;
         private readonly string _backupPath;
+        internal string DirectoryPath => _directory;
+        internal bool CanPersistLoadedSettings { get; private set; }
 
         public string LastWarning { get; private set; } = string.Empty;
 
@@ -54,6 +56,7 @@ namespace T7.Rekindle.Desktop.Services
             }
 
             var canMigrate = settings != null || (!File.Exists(_path) && !File.Exists(_backupPath));
+            CanPersistLoadedSettings = canMigrate;
             settings = settings ?? new UserSettings();
             if (!hasUpdateChannel)
             {

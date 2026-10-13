@@ -349,6 +349,14 @@ Python transition 的 `logs` 接受 `{ "level": "DEBUG|INFO|WARN|ERROR", "messag
 
 写入使用同目录临时文件、`Flush(true)` 和原子替换；替换已有文件时保留上一份为备份。读取损坏配置时保留原文件、尝试备份并反馈警告；两者均不可用时加载默认设置。具体实现见 [UserSettings / SettingsSchema](../src/Core/Settings.cs) 和 [SettingsService](../src/Desktop/Services/SettingsService.cs)。
 
+### 预览准入
+
+预览渠道须持有绑定本机和当前 Windows 用户的 7 天离线签名授权，独立存入同目录 `preview-access.json`，由 DPAPI `CurrentUser` 保护；不增加普通设置字段或提升 schema。授权格式、公钥配置与签发见[预览渠道离线授权](preview-access.md)。
+
+新门禁策略首次运行，在任何更新请求之前将已有预览订阅重置为正式；主配置、备份恢复与旧渠道文件迁移均经过此步骤，其他设置保持不变。保存正式渠道后才记录迁移完成；失败时内存使用正式并提示，下次启动重试，损坏主配置与备份不被迁移覆盖。后续启动仅在有效授权存在时保留预览，配置或备份中的 `preview` 不作为授权依据。
+
+到期停止新的预览操作，已有检查、下载和安装允许收尾后切回正式；切换失败不恢复预览准入。安装版与便携版共享当前用户的授权存储，不同 Windows 用户分别申请。普通设置保存、回退备份及 schema 重置不触碰授权文件；旧版启动器不识别此门禁。
+
 ### 回退设置契约
 
 新程序包声明 `rollbackProtocol: 1` 和 `settingsSchemaVersion`。打包验证设置 schema 与 `SettingsSchema.CurrentVersion`、安装器中的 `RollbackSettingsSchemaVersion` 一致。后续增加旧版不接受的字段或改变字段含义时，必须提升设置 schema 并实现对应的正常升级迁移；不得仅依据版本号猜测兼容性。

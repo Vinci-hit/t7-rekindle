@@ -60,7 +60,10 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null,
             Func<string, Task<ClientVersionResult>> readClientVersion = null,
             Func<CancellationToken, Task<LauncherAnnouncement>> fetchAnnouncement = null,
-            Func<DateTime> announcementUtcNow = null)
+            Func<DateTime> announcementUtcNow = null,
+            PreviewAccessService previewAccess = null,
+            Func<PreviewAccessViewModel, bool> requestPreviewAccess = null,
+            Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> loadUpdateHistory = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -88,7 +91,10 @@ namespace T7.Rekindle.Desktop.ViewModels
             _skipStartupAnimation = loaded.SkipStartupAnimation;
             var outputDevice = ParseOutputDevice(loaded.OutputDeviceId);
             _selectedOutputDeviceId = outputDevice == Guid.Empty ? string.Empty : outputDevice.ToString("D");
-            _updateChannel = settings.LoadUpdateChannel(out var channelWarning);
+            _previewAccess = previewAccess ?? new PreviewAccessService(settings.DirectoryPath);
+            _requestPreviewAccess = requestPreviewAccess ?? DesktopInteraction.RequestPreviewAccess;
+            _updateChannel = _previewAccess.InitializeChannel(settings, out var channelWarning);
+            _previewAccessStatus = _previewAccess.StatusText;
             _preferenceError = channelWarning;
             _settingsFeedback = string.Empty;
             ShowNotice(settingsWarning ?? string.Empty, !string.IsNullOrEmpty(settingsWarning));
@@ -108,7 +114,8 @@ namespace T7.Rekindle.Desktop.ViewModels
             OpenLogsCommand = new RelayCommand(OpenLogs);
             CopyLogsCommand = new RelayCommand(CopyLogs);
             var channelCheck = checkChannelUpdate ?? new Func<UpdateChannel, Task<LauncherUpdateInfo>>(LauncherInformation.CheckUpdateAsync);
-            About = new AboutViewModel(interaction, checkUpdate ?? (() => channelCheck(_updateChannel)), createUpdateDownload);
+            About = new AboutViewModel(interaction, checkUpdate ?? (() => channelCheck(_updateChannel)), createUpdateDownload,
+                loadUpdateHistory, canStartUpdateOperation: () => _updateChannel != UpdateChannel.Preview || CanStartPreviewOperation);
             About.ResetUpdateChannel(_updateChannel);
             About.PropertyChanged += OnUpdateActivityChanged;
             About.NoticeRaised += (message, severity, actionText, action) => Notices.Publish(message, message, severity, actionText, action, severity == NoticeSeverity.Warning);
@@ -251,6 +258,8 @@ namespace T7.Rekindle.Desktop.ViewModels
         {
             var automatic = _automaticUpdateCheck;
             _automaticUpdateCheck = false;
+            if (_updateChannel == UpdateChannel.Preview && !CanStartPreviewOperation)
+            { QueuePreviewAccessCheck(); return; }
             if (!IsUpdateSelected && About.UpdateFailed)
                 Notices.Publish("update.failed", "检查更新失败，不影响本地启动", NoticeSeverity.Warning, "重试",
                     () => { IsUpdateSelected = true; About.CheckUpdateCommand.Execute(null); });

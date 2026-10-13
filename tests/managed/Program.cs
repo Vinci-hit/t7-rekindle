@@ -14,6 +14,30 @@ namespace T7.ManagedHarness
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--preview-key-check")
+            {
+                try
+                {
+                    new PreviewGrantVerifier(PreviewAccessService.BuiltInPublicKey);
+                    Console.WriteLine("compiled preview authorization public key is valid");
+                    return 0;
+                }
+                catch (Exception) { Console.Error.WriteLine("A valid T7_PREVIEW_ACCESS_PUBLIC_KEY is required before publishing. Rebuild after configuring it."); return 1; }
+            }
+            if (args.Length >= 1 && args[0] == "--preview-access-tests")
+            {
+                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-preview-tests-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    PreviewAccessTests.Run(directory);
+                    PreviewAccessWorkflowTests.Run(System.IO.Path.Combine(directory, "workflow"));
+                    PreviewSigningScriptTests.Run(System.IO.Path.Combine(directory, "signing"));
+                    Console.WriteLine("preview access protocol, persistence and migration checks passed");
+                    return 0;
+                }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+                finally { if (System.IO.Directory.Exists(directory)) System.IO.Directory.Delete(directory, true); }
+            }
             if (args.Length >= 1 && args[0] == "--announcement-tests")
             {
                 var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-announcement-tests-" + Guid.NewGuid().ToString("N"));

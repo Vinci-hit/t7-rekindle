@@ -84,6 +84,8 @@ SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包�
 
 公告定向测试：`T7.ManagedHarness.exe --announcement-tests artifacts/ui-announcements`，覆盖匿名接口、刷新节流、关闭取消、离线兜底及三种主题；省略输出目录时仅执行断言。
 
+预览授权定向测试：`T7.ManagedHarness.exe --preview-access-tests`，覆盖签名协议、Windows 用户绑定、存量迁移、到期收尾和 PowerShell 5.1 签发互通；完整 UI 测试还覆盖授权弹窗三种主题。发布前运行 `--preview-key-check` 验证编译公钥；配置及管理员脚本见[预览渠道离线授权](preview-access.md)。
+
 日志定向测试：`T7.ManagedHarness.exe --log-tests artifacts/ui-log-levels`，覆盖等级过滤、中文显示、配置兼容、保存失败回滚及三种主题；省略输出目录时仅执行断言。
 
 合成集成测试依赖 `native-tests` 的输出，并生成 JSON 报告。`realClient=false` 表示未启动真实客户端；它验证所覆盖的合成流程，不代替进图、移动、AI 或完整对局验收。真实客户端与界面验收项目见[实施计划](planning/implementation-plan.md)。

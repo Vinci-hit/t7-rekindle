@@ -26,6 +26,9 @@ namespace T7.ManagedHarness
                 ClientResourceTests.Run(directory);
                 TestPersistence(directory);
                 SettingsMergeTests.Run(directory);
+                PreviewAccessTests.Run(Path.Combine(directory, "preview-access"));
+                PreviewAccessWorkflowTests.Run(Path.Combine(directory, "preview-workflow"));
+                PreviewSigningScriptTests.Run(Path.Combine(directory, "preview-signing"));
                 GameSettingsFileTests.Run(directory);
                 OfflineGameSettingsTests.Run(directory);
                 GraphicsSettingsTests.Run(directory);
