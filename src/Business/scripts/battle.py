@@ -136,11 +136,13 @@ def syncState(flow, state, actorId=wire.ACTOR_ID, *, targetId=None):
         raise ValueError("battle animation requires an instance start time")
     action = actionState(flow, actorId)
     sequence = action["seq"] % 0xFFFF + 1
-    # DashAttack.enforcedDuration consumes the full state duration, not elapsed time.
+    # Havok enforcedDuration consumes the full state duration, not elapsed time.
     dash = action.get('dash')
     duration = phaseMs(DASH_ATTACK, 1, dash=dash) if state == DASH_CHAIN[1] else 0
     if state == 443 and action['intent'] == DASH_ATTACK:
         duration = reactionMs(DASH_ATTACK, dash=dash)
+    if state == weapons.CHANGE_STATE:
+        duration = weapons.CHANGE_DURATION_MS[weapons.equipped(actorData(flow, actorId))]
     fields = dict(instance_id=actorId, seq_no=sequence, state=state,
                   state_change_ms=flow.now - startedAt, state_time_ms=duration)
     body = (battle_flow.encode_battle_state_sync_simple(**fields) if targetId is None

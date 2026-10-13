@@ -52,6 +52,53 @@ def test_native_hand_toggle_and_main_slot_restore_weapon(returnSlot):
     assert states(flow) == [1, 2, 1, 2]
 
 
+@pytest.mark.parametrize('current,slot,target,duration', [
+    (wire.WEAPON_ID, 13, FIST_ID, 800),
+    (FIST_ID, 13, wire.WEAPON_ID, 1000),
+    (FIST_ID, 1, wire.WEAPON_ID, 1000),
+])
+def test_weapon_change_sends_native_duration_after_equipment_update(current, slot, target, duration):
+    flow = makeFlow(weaponId=current)
+    change(flow, slot)
+    assert flow.session['weaponId'] == target
+    assert [packet['reason'] for packet in flow.result['send']] == [
+        'weapon-change-response', 'weapon-use-update', 'battle-model-state-1',
+    ]
+    sync = battle_flow.decode_battle_state_sync_simple(flow.result['send'][-1]['body'])
+    assert sync.state == 1
+    assert sync.state_time_ms == duration
+    assert sync.state_change_ms == flow.now - flow.session['instanceStartedAt']
+    assert flow.session['pending'][battle.ACTION_TIMER] == flow.now + duration
+
+
+@pytest.mark.parametrize('current,slot,duration', [
+    (wire.WEAPON_ID, 13, 800), (FIST_ID, 13, 1000), (FIST_ID, 1, 1000),
+])
+def test_weapon_draw_survives_visibility_keyframe_and_finishes_once(current, slot, duration):
+    flow = makeFlow(weaponId=current)
+    change(flow, slot)
+    startedAt = flow.now
+    target = flow.session['weaponId']
+    for elapsed in (100, 293, duration - 1):
+        flow.now = startedAt + elapsed
+        app.handleTimer(flow, battle.ACTION_TIMER)
+        sendAction(flow, 300560)
+        change(flow)
+        assert states(flow) == [1]
+        assert flow.session['weaponId'] == target
+        assert flow.session['pending'][battle.ACTION_TIMER] == startedAt + duration
+    advanceAction(flow)
+    assert states(flow) == [1, 2]
+    sync = battle_flow.decode_battle_state_sync_simple(flow.result['send'][-1]['body'])
+    assert sync.state_time_ms == 0
+    assert battle.ACTION_TIMER not in flow.session['pending']
+    assert 'weaponChange' not in flow.session['action']
+    app.handleTimer(flow, battle.ACTION_TIMER)
+    assert states(flow) == [1, 2]
+    sendAction(flow, 300560)
+    assert states(flow)[-1] == battle.ATTACK_CHAINS[300560][0]
+
+
 def test_selecting_already_equipped_main_weapon_is_an_acknowledged_noop():
     flow = makeFlow()
     change(flow, 1)

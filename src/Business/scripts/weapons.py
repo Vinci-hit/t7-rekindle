@@ -3,7 +3,9 @@ from . import actors, contracts as wire
 from .codec import weapon_flow
 
 FIST_ID = 100000
-CHANGE_STATE, CHANGE_MS = 1, 100
+CHANGE_STATE = 1
+# s_battle_param_cli: [持续时间]换出武器, keys (1,2,0,0,0) / (1,1,0,0,0).
+CHANGE_DURATION_MS = {wire.WEAPON_ID: 1000, FIST_ID: 800}
 
 
 def equipped(data):
@@ -39,5 +41,5 @@ def message(flow, command, selector, body):
     flow.send(command, weapon_flow.encode_use_update(actor_id=wire.ACTOR_ID, main_weapon_id=wire.WEAPON_ID,
               fist_weapon_id=FIST_ID, equipped_weapon_id=target, now_ms=flow.now), 'weapon-use-update')
     battle.syncState(flow, CHANGE_STATE)
-    flow.later(battle.ACTION_TIMER, CHANGE_MS)
+    flow.later(battle.ACTION_TIMER, CHANGE_DURATION_MS[target])
     return True
