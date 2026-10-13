@@ -5,6 +5,7 @@
 
 bool verifyGraphicsSettings();
 bool verifyAudioDiagnostics();
+bool verifyAudioPlaybackTrace();
 bool verifyOutputDevice();
 bool verifyModuleLookup();
 bool verifyAp32();
@@ -25,7 +26,8 @@ bool verifyStartupAnimation();
 int runDebugClientFixture();
 int runInputMethodDebugFixture();
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--audio-playback-tests") return verifyAudioPlaybackTrace() ? 0 : 1;
     const auto inputMethodFixture = runInputMethodDebugFixture();
     if (inputMethodFixture >= 0) return inputMethodFixture;
     const auto fixture = runDebugClientFixture();
@@ -51,7 +53,7 @@ int main() {
     assert(t7::MovementOverlayInfo::kEntitySheetLoadRva == 0x00275A70u);
     assert(t7::MovementOverlayInfo::kLocalHeroResourceId == 110001u);
     assert(t7::MovementOverlayInfo::kGravityMilli == -10000);
-    return verifyOutputDevice() && verifyGraphicsSettings() && verifyAudioDiagnostics() && verifyModuleLookup() && verifyAp32() && verifyClientCode() && verifyClientImports()
+    return verifyOutputDevice() && verifyGraphicsSettings() && verifyAudioDiagnostics() && verifyAudioPlaybackTrace() && verifyModuleLookup() && verifyAp32() && verifyClientCode() && verifyClientImports()
         && verifyClientAdaptation() && verifyCameraInput() && verifyDefenseAssist() && verifyRemoteImage() && verifyInputMethodRegistry() && verifyInputMethodDebugClient()
         && verifyDebugClient() && verifyClientWindowMonitor() && verifyMovementResources()
         && verifyStartupAnimation() && verifyEndpointStorage() && verifyStartupGate() ? 0 : 1;

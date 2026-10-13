@@ -29,7 +29,8 @@ public:
     Server() = default;
     ~Server();
     void start(const Config& config, const fs::path& root, const fs::path& writableRoot = {},
-               const std::function<bool()>& cancelled = {}, std::shared_ptr<DiagnosticLogFilter> logFilter = {});
+               const std::function<bool()>& cancelled = {}, std::shared_ptr<DiagnosticLogFilter> logFilter = {},
+               const DiagnosticLogCallback& audioLog = {});
     void stop();
     // start() waits for this condition before returning.  The method is kept
     // public for the bridge worker and tests that need an explicit readiness
@@ -45,6 +46,7 @@ public:
 private:
 #ifdef T7_NATIVE_BRIDGE_TESTING
     friend struct ServerEventOrderTests;
+    friend struct ServerAudioDiagnosticsTests;
 #endif
     using TimePoint = detail::TimePoint;
     struct PendingWrite { Bytes bytes; size_t offset = 0; std::string version, reason; };
@@ -80,6 +82,7 @@ private:
     bool worldPending_ = false;
     std::vector<std::string> lastLines_;
     std::unique_ptr<Journal> journal_;
+    DiagnosticLogCallback audioLog_;
     std::thread io_, business_;
     void networkLoop();
     void acceptConnections();

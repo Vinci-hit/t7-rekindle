@@ -197,7 +197,7 @@ void Bootstrap::check(const fs::path& directory, const Config& config, const Dia
 }
 void Bootstrap::launch(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log,
                        const std::function<bool()>& cancelled, const std::function<void()>& adapting,
-                       const std::function<void(std::string)>& warning) {
+                       const std::function<void(std::string)>& warning, bool traceAudio) {
     if (running()) throw std::runtime_error("this launcher already owns a running client");
     if (testAdapter_.launch) {
         validateConfig(config);
@@ -238,7 +238,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
         }, log, cancelled, {{fs::absolute(directory / "TieJiWebHelper.exe"), WEB_HELPER_HASH}},
         [this](DWORD threadId, uintptr_t address) {
             return startupGate_.handleBreakpoint(threadId, address) || movementOverlay_.handleBreakpoint(threadId, address);
-        }, warning);
+        }, warning, traceAudio);
         process_ = debugClient_->process(); pid_ = debugClient_->pid();
         if (log) log(DiagnosticLogLevel::Info, "Prepared owned client PID=" + std::to_string(pid_) + "; waiting for startup gate");
         auto deadline = GetTickCount64() + 60000;

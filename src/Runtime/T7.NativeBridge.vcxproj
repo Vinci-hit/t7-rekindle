@@ -43,6 +43,8 @@
     <ClCompile Include="launcher\GraphicsHookCode.cpp" />
     <ClCompile Include="launcher\AudioSettings.cpp" />
     <ClCompile Include="launcher\AudioDiagnostics.cpp" />
+    <ClCompile Include="launcher\AudioPlaybackTrace.cpp" />
+    <ClCompile Include="launcher\AudioPlaybackHookCode.cpp" />
     <ClCompile Include="launcher\AudioHookCode.cpp" />
     <ClCompile Include="launcher\ClientWorld.cpp" />
     <ClCompile Include="launcher\WorldHookCode.cpp" />
@@ -85,6 +87,7 @@
     <ClInclude Include="core\Protocol.h" />
     <ClInclude Include="launcher\Bootstrap.h" />
     <ClInclude Include="launcher\AudioDiagnostics.h" />
+    <ClInclude Include="launcher\AudioPlaybackTrace.h" />
     <ClInclude Include="launcher\ClientWindowMonitor.h" />
     <ClInclude Include="launcher\OutputDevice.h" />
     <ClInclude Include="launcher\StartupGate.h" />

@@ -12,6 +12,7 @@
 
 bool verifyJournalContracts(const t7::fs::path& fixtureRoot);
 bool verifyServerEventOrder(const t7::fs::path& fixtureRoot);
+bool verifyServerAudioDiagnostics();
 bool verifyDiagnosticLogs(const t7::fs::path& fixtureRoot);
 bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel);
 bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, bool normalExit);
@@ -309,6 +310,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--audio-notifications") return verifyServerAudioDiagnostics() ? 0 : 1;
     const auto dispatched = t7::detail::TimePoint{};
     const auto committed = dispatched + std::chrono::milliseconds(231);
     for (const auto* id : {"1:battle-action-phase", "1:bot-action-phase-20", "1:bot-release", "1:combat-hurt-2"}) {
@@ -349,6 +351,7 @@ int wmain(int argc, wchar_t** argv) {
     int result = 0;
     try {
         if (!verifyServerEventOrder(t7::fs::path(argv[1]))) result = 42;
+        if (!verifyServerAudioDiagnostics()) result = 44;
         if (!verifyFakeBootstrapAdapter()) result = 21;
         if (!verifyJobAssignmentOrder()) result = 15;
         // The embedded interpreter has one process-wide owner.  A second

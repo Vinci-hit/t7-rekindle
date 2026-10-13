@@ -500,7 +500,8 @@ void Session::executeStart(const Command& command) {
     }
     server_ = std::make_unique<Server>();
     const auto packageRoot = fs::path(wide(packageRoot_));
-    server_->start(config, packageRoot, localDataRoot(), [this, id = command.id] { return cancelled(id); }, logFilter_);
+    server_->start(config, packageRoot, localDataRoot(), [this, id = command.id] { return cancelled(id); }, logFilter_,
+        [this](DiagnosticLogLevel level, std::string line) { log(line, level); });
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     auto actual = server_->boundConfig();
     {
@@ -515,7 +516,7 @@ void Session::executeStart(const Command& command) {
         [this, id = command.id] {
             setState(T7NB_STATE_ADAPTING_CLIENT, T7NB_OPERATION_START, id, "client-adaptation");
         },
-        [this](std::string line) { log(line, DiagnosticLogLevel::Warn); });
+        [this](std::string line) { log(line, DiagnosticLogLevel::Warn); }, logFilter_->allows(DiagnosticLogLevel::Debug));
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     if (!server_->running()) {
         auto runtime = server_->snapshot();

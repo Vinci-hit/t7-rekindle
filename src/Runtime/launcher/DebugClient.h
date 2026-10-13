@@ -32,7 +32,7 @@ public:
                const std::function<bool()>& cancelled = {},
                const std::vector<ChildImageRule>& children = {},
                const std::function<bool(DWORD, uintptr_t)>& breakpoint = {},
-               const std::function<void(std::string)>& warning = {});
+               const std::function<void(std::string)>& warning = {}, bool traceAudio = false);
     HANDLE process() const noexcept { return process_; }
     DWORD pid() const noexcept { return pid_; }
     void check() const;
