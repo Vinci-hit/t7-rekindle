@@ -33,8 +33,9 @@ Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
 
 class GraphicsSettings final {
 public:
-    void install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash,
-                 const MovementAnimationProfile& animation = {});
+    void install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash = {},
+                 const MovementAnimationProfile& animation = {},
+                 const fs::path& audioDirectory = {});
     void clear(); // Called after the owned process has exited.
     // false means no completed read yet; result: 0 not ready, 1 ready, 2 conflict.
     bool poll(GraphicsValues& values, uint32_t& result, bool& applied);

@@ -58,5 +58,6 @@ private:
     bool outputDeviceVerified_ = false;
     TestAdapter testAdapter_;
     bool testRunning_ = false;
+    DiagnosticLogCallback audioLog_;
 };
 }
