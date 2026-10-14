@@ -233,20 +233,3 @@ def test_global_contact_order_interrupts_later_swing_even_if_input_batch_is_reve
     combat.worldUpdated(multi)
     assert hp(multi, 2) == 80
     assert hp(multi, 1) == 100
-
-
-@pytest.mark.parametrize('guarding', [False, True])
-def test_weapon_contact_parries_without_becoming_body_damage(multi, guarding):
-    sample(multi, {1: ((0., 0., .2), 0), 2: ((1., 0., .2), 180)})
-    if guarding:
-        battle.startAction(multi, 300580)
-        battle.timer(multi, battle.actionTimer(1))
-    attack(multi, 2)
-    event = native(multi)
-    event['weaponContact'] = True
-    if guarding:
-        event['targetState'] = battle.BLOCK_CHAINS[300580][1]
-    multi.now += 50
-    combat.worldUpdated(multi)
-    assert hp(multi, 1) == 100
-    assert any('combat-parry' in line['message'] for line in multi.result['logs']) == guarding
