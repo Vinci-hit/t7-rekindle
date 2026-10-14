@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -70,7 +71,7 @@ def test_terrain_after_target_keeps_earlier_damage_and_then_interrupts(arena):
     obstacle(arena, probe="forward")["along"] = .9
     swing(arena)
     advance(arena, combat.hitTimer(1))
-    assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, 2) == combat.MAX_HEALTH - NORMAL_DAMAGE
     assert any(p["reason"] == "combat-terrain-hit" for p in arena.result["send"])
 
 

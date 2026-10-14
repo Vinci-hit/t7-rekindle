@@ -10,7 +10,7 @@
 #include <condition_variable>
 #include <functional>
 
-namespace t7 {
+namespace t7r {
 struct ConnectionSnapshot {
     uint64_t id, ageMs, idleMs, received, sent, sequence, receivedMessages, sentMessages, heartbeatAgeMs;
     size_t queuedSend;
@@ -43,10 +43,13 @@ public:
     std::vector<std::string> lines();
     bool needsWorld() const;
     void updateWorld(const WorldSnapshot& world);
+    void publishTitles(uint64_t epoch, const std::string& json, uint64_t requestId, bool success);
+    TitleRequest titleRequest();
 private:
-#ifdef T7_NATIVE_BRIDGE_TESTING
+#ifdef T7R_NATIVE_BRIDGE_TESTING
     friend struct ServerEventOrderTests;
     friend struct ServerAudioDiagnosticsTests;
+    friend struct TitleRuntimeTests;
 #endif
     using TimePoint = detail::TimePoint;
     struct PendingWrite { Bytes bytes; size_t offset = 0; std::string version, reason; };
@@ -58,7 +61,11 @@ private:
         TimePoint blockedUntil{};
     };
     struct Timer { TimePoint due; uint64_t connection; std::string event; };
-    struct QueuedEvent : Event { TimePoint queuedAt{}, due = TimePoint::max(); std::string timerId; };
+    struct QueuedEvent : Event {
+        TimePoint queuedAt{}, due = TimePoint::max();
+        std::string timerId;
+        std::shared_ptr<const PublishedWorld> world;
+    };
     using Timers = std::map<std::string, Timer>;
     Config config_;
     fs::path root_, writableRoot_, run_;
@@ -78,7 +85,10 @@ private:
     detail::ServerClock clock_;
     std::unique_ptr<detail::ServerSignals> signals_;
     ServerSnapshot snapshot_;
-    WorldSnapshot world_;
+    std::shared_ptr<const PublishedWorld> world_;
+    uint64_t worldVersion_ = 0;
+    uint64_t titleEpoch_ = 0;
+    TitleRequest titleRequest_;
     bool worldPending_ = false;
     std::vector<std::string> lastLines_;
     std::unique_ptr<Journal> journal_;

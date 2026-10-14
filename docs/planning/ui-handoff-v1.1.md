@@ -20,7 +20,7 @@
 
 ## 资源来源
 
-- 功能图标：T7 UI Outline 1.0，24×24，描边 1.75；`Resources/Icons.xaml` 保留交付的 43×6 DrawingImage，包含 UI 1.2 新增的 `construction`。
+- 功能图标：T7R UI Outline 1.0，24×24，描边 1.75；`Resources/Icons.xaml` 保留交付的 43×6 DrawingImage，包含 UI 1.2 新增的 `construction`。
 - `Icon` 控件复用同一几何路径，并继承主题/交互状态颜色，不另造图标。
 - 版本胶囊单独使用 Lucide 的 `shield-check`、`flask-conical` 原始路径，描边 1.8；样式与几何集中于 `Resources/VersionCapsule.xaml`，许可随启动器嵌入。不替换现有功能图标族。
 - 登录 UI 的 Lucide 图标与暖白资源集中在 `Resources/LoginControls.xaml`、`LoginPalette.xaml`、`AccountCapsule.xaml`；只作用于标题栏账号、菜单和登录窗口，不批量改色其他页面。
@@ -68,8 +68,8 @@
 ```powershell
 python scripts/build.py --project managed
 python -m pytest -q
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --render-ui artifacts/ui-v11-final
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --native-ui artifacts/ui-v11-final
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --render-ui artifacts/ui-v11-final
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --native-ui artifacts/ui-v11-final
 ```
 
 截图位于 `artifacts/ui-v11-final/`，深色与高对比度分别位于其 `Dark/`、`HighContrast/` 子目录；原生结果为 `native-window.json`。关键文件包括 `home-running.png`、`settings-validation-error.png`、`update-state-failed.png`、`toast-error.png`、`confirm-end-game.png` 和 `diagnostics-copy-failed.png`。
@@ -85,7 +85,7 @@ python -m pytest -q
 git rev-parse HEAD
 python scripts/build.py --project all
 python -m pytest -q
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe
 $run = Join-Path 'artifacts' ('ui-device-check-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $pythonArchive = Read-Host '请输入 CPython 3.14.4 AMD64 embeddable ZIP 的完整路径'
 python scripts/package.py --output "$run/package" --python-archive "$pythonArchive" --release
@@ -97,7 +97,7 @@ python scripts/package.py --output "$run/package" --verify --release
 
 ```powershell
 $scale = Read-Host '当前主屏缩放百分比（125、150 或 175）'
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --native-ui "$run/mixed-dpi-$scale"
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --native-ui "$run/mixed-dpi-$scale"
 Get-Content -LiteralPath "$run/mixed-dpi-$scale/native-window.json" -Encoding UTF8
 ```
 

@@ -1,7 +1,7 @@
 """Settle retained native contacts by event time, independently of AI and delivery latency."""
 import math
 
-from . import actors, battle, blade_contacts
+from . import actors, battle, blade_contacts, damage_state
 
 
 def available(flow):
@@ -18,19 +18,25 @@ def valid(event, throughAt):
     if type(event) is not dict:
         return False
     integers = ('actorId', 'targetId', 'entity', 'targetEntity', 'state', 'seq', 'targetState', 'targetSeq',
-                'phaseAt', 'targetPhaseAt')
+                'phaseAt', 'targetPhaseAt', 'defenceWeaponId')
     if not all(type(event.get(key)) is int and event[key] >= 0 for key in integers):
         return False
     return (1 <= event['actorId'] <= actors.MAX_ACTORS and 0 <= event['targetId'] <= actors.MAX_ACTORS
             and event['actorId'] != event['targetId'] and 1 <= event['seq'] <= 0xFFFF
+            and (event['targetId'] != 0 or event['defenceWeaponId'] == 0)
             and event.get('ready') is True and event.get('hit') is True
             and type(event.get('material')) is int and -1 <= event['material'] <= 7
             and all(type(event.get(key)) in (int, float) and math.isfinite(event[key])
                     for key in ('occurredAt', 'along', 'sourceHeading', 'targetHeading'))
             and 0 <= event['occurredAt'] <= throughAt and 0 <= event['along'] <= 1
             and abs(event['sourceHeading']) <= 180 and abs(event['targetHeading']) <= 180
+            and type(event.get('bodyIndex')) is int and -1 <= event['bodyIndex'] <= 127
+            and event.get('region') in ('unknown', 'head', 'torso', 'legs')
+            and type(event.get('velocityReady')) is bool and type(event.get('airborne')) is bool
+            and type(event.get('targetAirborne')) is bool
             and all(actors.validPosition(event.get(key))
-                    for key in ('sourcePosition', 'targetPosition', 'position', 'normal', 'direction'))
+                    for key in ('sourcePosition', 'targetPosition', 'position', 'normal', 'direction',
+                                'sourceVelocity', 'targetVelocity', 'weaponVelocity'))
             and all(.9 <= math.hypot(*event[key]) <= 1.1 for key in ('normal', 'direction')))
 
 
@@ -46,6 +52,8 @@ def settle(flow):
         return
     raw = flow.context['botWorld']
     journal = raw['contactJournal']
+    if journal.get('damageEvidenceVersion') != 2:
+        raise ValueError('damage evidence contract changed; restart Runtime before upgrading')
     epoch = flow.session.get('instanceStartedAt')
     if raw.get('instanceStartedAt') != epoch:
         return
@@ -63,7 +71,8 @@ def settle(flow):
         flow.log("WARN", f"combat-contact-overflow dropped={journal['dropped']} batch={batchId}")
     actorIds = set(actors.ids(flow.session))
     settled, unmatched = 0, 0
-    events = sorted(journal['events'], key=lambda item: (item['occurredAt'], item['along'], item['actorId'], item['targetId']))
+    events = sorted(journal['events'], key=lambda item: (
+        item['occurredAt'], item['along'], item['actorId'], item['targetId'], not item['defenceWeaponId']))
     for event in events:
         if flow.session.get('roundEnded'):
             break
@@ -100,19 +109,26 @@ def settle(flow):
                 continue
             defender = actors.data(flow, target)
             targetPose = raw.get('actors', {}).get(str(target), {})
-            if (data.get('camp', 1) == defender.get('camp', 1) or event['targetEntity'] != targetPose.get('entity')
+            if (event['targetEntity'] != targetPose.get('entity')
                     or occurredAt < defender.get('contactLifeAt', 0)):
                 continue
+            if event['defenceWeaponId']:
+                if data.get('camp', 1) == defender.get('camp', 1):
+                    continue
+            elif damage_state.friendly(flow, attacker, target, swing):
+                continue
+            if not damage_state.canHit(swing):
+                continue
             snapshot = pair(raw, event)
-            guard = next((key for key, chain in battle.BLOCK_CHAINS.items() if chain[1] == event['targetState']), None)
-            if guard is not None and combat.parry(flow, attacker, target, snapshot, contact=event,
-                                                 attackIntent=intent, defenceIntent=guard, dash=swing.get('dash'),
-                                                 weaponId=swing.get('weaponId')):
-                swing['stopped'] = True
+            if event['defenceWeaponId']:
+                if combat.parry(flow, attacker, target, snapshot, contact=event,
+                                attackIntent=intent, dash=swing.get('dash'),
+                                weaponId=swing.get('weaponId'), swing=swing):
+                    swing['stopped'] = True
             else:
                 swing['hits'] = [*swing['hits'], target]
                 combat.applyHit(flow, attacker, target, snapshot, contact=event, intent=intent,
-                                weaponId=swing.get('weaponId'))
+                                weaponId=swing.get('weaponId'), swing=swing)
             settled += 1
         finally:
             del flow.contactAt

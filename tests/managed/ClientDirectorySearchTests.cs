@@ -2,9 +2,9 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class ClientDirectorySearchTests
     {

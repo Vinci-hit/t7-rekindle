@@ -10,7 +10,7 @@
 #include "ClientWindowMonitor.h"
 #include <functional>
 #include <memory>
-namespace t7 {
+namespace t7r {
 class Bootstrap {
 public:
     // Test-only seam for lifecycle tests.  Product Session instances use the
@@ -43,6 +43,8 @@ public:
     void applyGraphics(const GraphicsValues& values);
     bool pollAudio(AudioValues& values, uint32_t& result, bool& applied);
     void applyAudio(const AudioValues& values);
+    void updateTitleDescriptions(const Bytes& bytes) { graphicsSettings_.titles().update(bytes); }
+    void pollTitleDescriptions() { graphicsSettings_.titles().poll(); }
     bool pollWorld(WorldSnapshot& value);
 private:
     HANDLE process_ = nullptr;
@@ -58,6 +60,5 @@ private:
     bool outputDeviceVerified_ = false;
     TestAdapter testAdapter_;
     bool testRunning_ = false;
-    DiagnosticLogCallback audioLog_;
 };
 }

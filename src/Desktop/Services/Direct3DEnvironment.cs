@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal static class Direct3DEnvironment
     {

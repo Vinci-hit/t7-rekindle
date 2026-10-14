@@ -95,7 +95,7 @@ def test_invalid_required_parameters_disable_dash_and_report_resource_error(sour
     result = load(source)
     assert not result.profile.enabled
     assert resources.validProfile(result.asDict()['dashAttack'])
-    assert any('[T7_RESOURCE:content_mismatch]' in message for _, message in result.diagnostics)
+    assert any('[T7R_RESOURCE:content_mismatch]' in message for _, message in result.diagnostics)
 
 
 def test_duplicate_move_parameter_does_not_borrow_another_value(source):

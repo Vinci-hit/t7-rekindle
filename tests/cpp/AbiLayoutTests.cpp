@@ -1,4 +1,4 @@
-#include "../../src/Runtime/bridge/T7NativeBridge.h"
+#include "../../src/Runtime/bridge/T7RNativeBridge.h"
 #include "../../src/Runtime/launcher/MovementOverlay.h"
 #include <cassert>
 #include <cstddef>
@@ -6,6 +6,7 @@
 bool verifyGraphicsSettings();
 bool verifyAudioDiagnostics();
 bool verifyAudioPlaybackTrace();
+bool verifyAudioResourcePaths();
 bool verifyOutputDevice();
 bool verifyModuleLookup();
 bool verifyAp32();
@@ -14,6 +15,7 @@ bool verifyClientImports();
 bool verifyClientAdaptation();
 bool verifyCameraInput();
 bool verifyDefenseAssist();
+bool verifyPingDisplay();
 bool verifyRemoteImage();
 bool verifyDebugClient();
 bool verifyClientWindowMonitor();
@@ -27,34 +29,37 @@ int runDebugClientFixture();
 int runInputMethodDebugFixture();
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--ping-tests") return verifyClientAdaptation() && verifyPingDisplay() ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--audio-playback-tests") return verifyAudioPlaybackTrace() ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--audio-path-tests") return verifyAudioResourcePaths() ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--audio-settings-tests") return verifyGraphicsSettings() ? 0 : 1;
     const auto inputMethodFixture = runInputMethodDebugFixture();
     if (inputMethodFixture >= 0) return inputMethodFixture;
     const auto fixture = runDebugClientFixture();
     if (fixture >= 0) return fixture;
-    assert(sizeof(T7NativePath) == 24);
-    assert(sizeof(T7NativeStartArgs) == 40);
-    assert(sizeof(T7NativeStartOptions) == 48);
-    assert(offsetof(T7NativeStartOptions, flags) == 40);
-    assert(T7NB_START_SKIP_STARTUP_ANIMATION == 1u);
-    assert(sizeof(T7NativeCreateArgs) == 24);
-    assert(sizeof(T7NativeSnapshot) == 120);
-    assert(sizeof(T7NativeOperation) == 32);
-    assert(offsetof(T7NativePath, data) == 8);
-    assert(offsetof(T7NativeSnapshot, phase) == 56);
-    assert(offsetof(T7NativeOperation, operationId) == 8);
-    const auto features = static_cast<uint32_t>(t7::MovementFeature::Terrain)
-        | static_cast<uint32_t>(t7::MovementFeature::Gravity)
-        | static_cast<uint32_t>(t7::MovementFeature::Jump)
-        | static_cast<uint32_t>(t7::MovementFeature::Crouch);
+    assert(sizeof(T7RNativePath) == 24);
+    assert(sizeof(T7RNativeStartArgs) == 40);
+    assert(sizeof(T7RNativeStartOptions) == 48);
+    assert(offsetof(T7RNativeStartOptions, flags) == 40);
+    assert(T7RNB_START_SKIP_STARTUP_ANIMATION == 1u);
+    assert(sizeof(T7RNativeCreateArgs) == 24);
+    assert(sizeof(T7RNativeSnapshot) == 120);
+    assert(sizeof(T7RNativeOperation) == 32);
+    assert(offsetof(T7RNativePath, data) == 8);
+    assert(offsetof(T7RNativeSnapshot, phase) == 56);
+    assert(offsetof(T7RNativeOperation, operationId) == 8);
+    const auto features = static_cast<uint32_t>(t7r::MovementFeature::Terrain)
+        | static_cast<uint32_t>(t7r::MovementFeature::Gravity)
+        | static_cast<uint32_t>(t7r::MovementFeature::Jump)
+        | static_cast<uint32_t>(t7r::MovementFeature::Crouch);
     assert(features == 0x0Fu);
-    assert(t7::MovementOverlayInfo::kImageBase == 0x00400000u);
-    assert(t7::MovementOverlayInfo::kResourceOpenRva == 0x00071590u);
-    assert(t7::MovementOverlayInfo::kEntitySheetLoadRva == 0x00275A70u);
-    assert(t7::MovementOverlayInfo::kLocalHeroResourceId == 110001u);
-    assert(t7::MovementOverlayInfo::kGravityMilli == -10000);
-    return verifyOutputDevice() && verifyGraphicsSettings() && verifyAudioDiagnostics() && verifyAudioPlaybackTrace() && verifyModuleLookup() && verifyAp32() && verifyClientCode() && verifyClientImports()
-        && verifyClientAdaptation() && verifyCameraInput() && verifyDefenseAssist() && verifyRemoteImage() && verifyInputMethodRegistry() && verifyInputMethodDebugClient()
+    assert(t7r::MovementOverlayInfo::kImageBase == 0x00400000u);
+    assert(t7r::MovementOverlayInfo::kResourceOpenRva == 0x00071590u);
+    assert(t7r::MovementOverlayInfo::kEntitySheetLoadRva == 0x00275A70u);
+    assert(t7r::MovementOverlayInfo::kLocalHeroResourceId == 110001u);
+    assert(t7r::MovementOverlayInfo::kGravityMilli == -10000);
+    return verifyOutputDevice() && verifyGraphicsSettings() && verifyAudioDiagnostics() && verifyAudioPlaybackTrace() && verifyAudioResourcePaths() && verifyModuleLookup() && verifyAp32() && verifyClientCode() && verifyClientImports()
+        && verifyClientAdaptation() && verifyCameraInput() && verifyDefenseAssist() && verifyPingDisplay() && verifyRemoteImage() && verifyInputMethodRegistry() && verifyInputMethodDebugClient()
         && verifyDebugClient() && verifyClientWindowMonitor() && verifyMovementResources()
         && verifyStartupAnimation() && verifyEndpointStorage() && verifyStartupGate() ? 0 : 1;
 }

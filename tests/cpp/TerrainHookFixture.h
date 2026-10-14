@@ -24,7 +24,7 @@ inline void prepare(HANDLE process) {
         {WORLD,BASE+0x1ACFF4C}, {WORLD+0x74,WORLD}, {CHILD+0xC,BODY+0x10}, {ACTOR_CHILD+0xC,ACTOR},
         {MODE,1}, {MATERIAL,4}, {FRACTION,0x3F000000}, {HEIGHT,0x40000000}, {HIT,0xBF800000}
     }) writeWord(process, p.first, p.second);
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x55,0x8B,0xEC,0x83,0xE4,0xF0,0x83,0xEC,0x58,0x56,0x57});
     c.emit({0x8B,0x75,0x0C,0x8B,0x7D,8});
     c.emit({0x83,0x7F,36,0}); const auto terrain = c.branch(0x85);
@@ -47,7 +47,7 @@ inline void prepare(HANDLE process) {
     c.emit({0xA1}); c.word(FRACTION); c.emit({0xA3}); c.word(HIT + 0x10);
     hit(CHILD);
     c.bind(above); c.bind(clear); c.bind(bladeDone); c.emit({0x5F,0x5E,0x8B,0xE5,0x5D,0xC2,8,0});
-    t7::writeClientMemory(process, BASE + 0x10FA3B0, c.bytes);
+    t7r::writeClientMemory(process, BASE + 0x10FA3B0, c.bytes);
 
     c.bytes.clear();
     c.emit({0x53,0x8B,0x5C,0x24,0x0C,0x57,0x8B,0xF9});
@@ -56,7 +56,7 @@ inline void prepare(HANDLE process) {
     c.emit({0x8B,0x44,0x24,0x0C,0x8B,0x40,0x0C,0x89,0x47,0x60});
     c.emit({0xC7,0x47,0x30}); c.word(42); c.emit({0xC7,0x47,0x34}); c.word(7);
     c.emit({0x5F,0x5B,0xC2,8,0});
-    t7::writeClientMemory(process, BASE + 0x108BFA0, c.bytes);
+    t7r::writeClientMemory(process, BASE + 0x108BFA0, c.bytes);
 
     c.bytes.clear();
     c.emit({0x8B,0x41,8,0x85,0xC0,0x74,0x28});
@@ -64,22 +64,22 @@ inline void prepare(HANDLE process) {
     c.emit({0xFF,0x05}); c.word(ERRORS); c.bind(rightKey);
     c.emit({0xA1}); c.word(MATERIAL); c.emit({0xC3});
     c.bytes.resize(0x2F, 0xCC); c.emit({0x83,0xC8,0xFF,0xC3});
-    t7::writeClientMemory(process, BASE + 0x29D4B0, c.bytes);
+    t7r::writeClientMemory(process, BASE + 0x29D4B0, c.bytes);
 }
 
-inline void verifyMultiTarget(HANDLE process, t7::ClientWorld& reader) {
+inline void verifyMultiTarget(HANDLE process, t7r::ClientWorld& reader) {
     // A pose change needs a full sampling/selection/query cycle, including the queued request.
     auto sample = [&] { worldFixture::read(reader); worldFixture::read(reader); return worldFixture::read(reader); };
     auto position = [&](uint32_t index, std::array<float, 3> value) {
-        t7::Bytes bytes(sizeof(value)); std::memcpy(bytes.data(), value.data(), bytes.size());
-        t7::writeClientMemory(process, worldFixture::CONTROLLER + index * 0x100 + 0x10, bytes);
+        t7r::Bytes bytes(sizeof(value)); std::memcpy(bytes.data(), value.data(), bytes.size());
+        t7r::writeClientMemory(process, worldFixture::CONTROLLER + index * 0x100 + 0x10, bytes);
     };
     const std::array<uint32_t, 5> changed{0, 1, 2, 3, 11};
-    std::array<t7::Bytes, 5> original, headings;
+    std::array<t7r::Bytes, 5> original, headings;
     for (size_t i = 0; i < changed.size(); ++i) {
         const auto controller = worldFixture::CONTROLLER + changed[i] * 0x100;
-        original[i] = t7::readClientMemory(process, controller + 0x10, 12);
-        headings[i] = t7::readClientMemory(process, controller + 0xAC, 4);
+        original[i] = t7r::readClientMemory(process, controller + 0x10, 12);
+        headings[i] = t7r::readClientMemory(process, controller + 0xAC, 4);
     }
     writeWord(process, worldFixture::CONTROLLER + 0xAC, 0);
     writeWord(process, worldFixture::CONTROLLER + 0xBAC, 0);
@@ -124,13 +124,13 @@ inline void verifyMultiTarget(HANDLE process, t7::ClientWorld& reader) {
     writeWord(process, MAP + 0x1C, COLLISION);
     for (size_t i = 0; i < changed.size(); ++i) {
         const auto controller = worldFixture::CONTROLLER + changed[i] * 0x100;
-        t7::writeClientMemory(process, controller + 0x10, original[i]);
-        t7::writeClientMemory(process, controller + 0xAC, headings[i]);
+        t7r::writeClientMemory(process, controller + 0x10, original[i]);
+        t7r::writeClientMemory(process, controller + 0xAC, headings[i]);
     }
     sample();
 }
 
-inline void verify(HANDLE process, t7::ClientWorld& reader) {
+inline void verify(HANDLE process, t7r::ClientWorld& reader) {
     auto sample = [&] { worldFixture::read(reader); return worldFixture::read(reader); };
     auto value = sample();
     const auto& forward = value.terrain[0][0];
@@ -171,14 +171,14 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
         throw std::runtime_error("native clear query lost or actor mistaken for terrain");
     writeWord(process, MODE, 1);
     // An exact overlap still has a clear target segment and never enters Havok as a degenerate ray.
-    const auto original = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x110, 12);
-    t7::writeClientMemory(process, worldFixture::CONTROLLER + 0x110,
-                         t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12));
+    const auto original = t7r::readClientMemory(process, worldFixture::CONTROLLER + 0x110, 12);
+    t7r::writeClientMemory(process, worldFixture::CONTROLLER + 0x110,
+                         t7r::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12));
     value = sample();
     if (!value.actors[0].terrain[1].ready || value.actors[0].terrain[1].hit || value.actors[0].targetId != 2
         || !value.actors[0].targetTerrain[1].ready || value.actors[0].targetTerrain[1].hit)
         throw std::runtime_error("coincident actor terrain segment mismatch");
-    t7::writeClientMemory(process, worldFixture::CONTROLLER + 0x110, original); sample();
+    t7r::writeClientMemory(process, worldFixture::CONTROLLER + 0x110, original); sample();
     for (const auto& p : std::vector<std::pair<uint32_t, uint32_t>>{
         {HIT,0xBF800000}, {FRACTION,0x3F000000}
     }) {
@@ -188,7 +188,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
         writeWord(process, p.first, p.second);
     }
     verifyMultiTarget(process, reader);
-    const auto errors = t7::readClientMemory(process, ERRORS, 4);
-    if (errors != t7::Bytes(4, 0)) throw std::runtime_error("terrain collector admitted an actor or used the wrong shape key");
+    const auto errors = t7r::readClientMemory(process, ERRORS, 4);
+    if (errors != t7r::Bytes(4, 0)) throw std::runtime_error("terrain collector admitted an actor or used the wrong shape key");
 }
 }

@@ -1,9 +1,10 @@
+from damage_fixture import NORMAL_DAMAGE, DASH_DAMAGE
 from copy import deepcopy
 
 import pytest
 
 from Business.runtime import host_runtime
-from Business.scripts import actors, app, battle, bot_life, combat
+from Business.scripts import actors, app, battle, bot_life, combat, contracts as wire
 from test_bot_roster import multi, sample
 from test_melee_combat import advance, hp
 from blade_fixture import contact, publish
@@ -41,10 +42,10 @@ def test_one_swing_hits_every_nearby_enemy_once_without_friendly_fire(multi, att
     _, targets, ally = cluster(multi, attacker)
     attack(multi, attacker, intent)
     advance(multi, combat.hitTimer(attacker))
-    damage = combat.DASH_DAMAGE if intent == battle.DASH_ATTACK else combat.DAMAGE
+    damage = DASH_DAMAGE if intent == battle.DASH_ATTACK else NORMAL_DAMAGE
     assert [hp(multi, rid) for rid in targets] == [100 - damage] * len(targets)
     assert hp(multi, ally) == hp(multi, attacker) == 100
-    assert actors.data(multi, attacker)['swing']['hits'] == list(targets)
+    assert actors.data(multi, attacker)['swing']['hits'] == [ally, *targets]
     for _ in range(2):
         advance(multi, combat.hitTimer(attacker))
     assert [hp(multi, rid) for rid in targets] == [100 - damage] * len(targets)
@@ -112,6 +113,8 @@ def test_terrain_or_parry_interrupts_remaining_contacts_in_sweep_order(multi, bl
     else:
         battle.startAction(multi, 300580, actorId=blockedTarget)
         advance(multi, battle.actionTimer(blockedTarget))
+        world['blades']['1']['contacts'].append(contact(
+            blockedTarget, defenceWeaponId=wire.WEAPON_ID, along=(blockedTarget - 1) / 5 - .05))
     attack(multi)
     advance(multi, combat.hitTimer(1))
     assert [hp(multi, rid) for rid in targets] == ([100, 100, 100] if blockedTarget == 2 else [80, 100, 100])
@@ -125,7 +128,7 @@ def test_terrain_or_parry_interrupts_remaining_contacts_in_sweep_order(multi, bl
 def test_one_swing_can_kill_multiple_enemies_and_announce_each_kill(multi):
     _, targets, _ = cluster(multi)
     for rid in targets:
-        actors.data(multi, rid)['health'] = combat.DAMAGE
+        actors.data(multi, rid)['health'] = NORMAL_DAMAGE
     attack(multi)
     advance(multi, combat.hitTimer(1))
     assert multi.session['killStreak'] == len(targets)
@@ -149,10 +152,8 @@ def test_invalid_swing_hit_registry_is_rejected(hits):
     assert not combat.validState(dict(health=100, swing=dict(seq=1, epoch=1, until=100, hits=hits)))
 
 
-def test_existing_swing_without_hit_registry_remains_compatible(multi):
+def test_swing_without_hit_registry_requires_restart(multi):
     cluster(multi)
     attack(multi)
     multi.session['swing'].pop('hits', None)
-    assert app.validateState(multi.state)
-    advance(multi, combat.hitTimer(1))
-    assert [hp(multi, rid) for rid in (2, 3, 4)] == [80, 80, 80]
+    assert not app.validateState(multi.state)

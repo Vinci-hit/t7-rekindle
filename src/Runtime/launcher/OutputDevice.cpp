@@ -3,7 +3,7 @@
 #include <cstring>
 #include <memory>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t RENDERER_INITIALIZE_RVA = 0x2364E0, RESOLUTION_ADAPTER_RVA = 0x33B444;
 void put32(Bytes& code, uint32_t value) {

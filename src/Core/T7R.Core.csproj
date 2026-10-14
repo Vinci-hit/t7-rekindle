@@ -2,8 +2,8 @@
   <Import Project="..\..\Managed.Common.props" />
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <RootNamespace>T7.Rekindle.Core</RootNamespace>
-    <AssemblyName>T7.Core</AssemblyName>
+    <RootNamespace>T7R.Core</RootNamespace>
+    <AssemblyName>T7R.Core</AssemblyName>
     <PlatformTarget>x64</PlatformTarget>
     <Nullable>disable</Nullable>
   </PropertyGroup>

@@ -4,7 +4,7 @@
 #include <functional>
 #include <memory>
 
-namespace t7 {
+namespace t7r {
 enum class DiagnosticLogLevel : uint32_t { Debug = 0, Info = 1, Warn = 2, Error = 3 };
 using DiagnosticLogCallback = std::function<void(DiagnosticLogLevel, std::string)>;
 struct DiagnosticMessage {

@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Desktop.Services;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class PreviewSigningScriptTests
     {

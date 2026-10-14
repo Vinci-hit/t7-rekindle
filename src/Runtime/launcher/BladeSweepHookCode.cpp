@@ -2,7 +2,7 @@
 #include "WorldHookCode.h"
 #include "WeaponTrailHookCode.h"
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t COLLECTOR_OFFSET = 0x1800, RAY_OFFSET = 0x1400, CONSTANTS_OFFSET = 0x2400;
 constexpr uint32_t BO = offsetof(ActorMailbox, blade), CONTACTS = offsetof(BladeMailbox, contacts);
@@ -15,6 +15,8 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     const auto mode = data + 20, steps = data + 24, index = data + 28, along = data + 32;
     const auto stepFloat = data + 36, candidateTime = data + 40, candidateAlong = data + 44;
     const auto cdBody = data + 48, rayCount = data + 52;
+    const auto candidateBody = data + 56, candidateRegion = data + 60;
+    const auto candidateDefence = data + 64;
     const auto collector = data + 0x100, input = data + 0x200, material = data + 0x240;
     const auto constants = code + CONSTANTS_OFFSET, one = constants, epsilon = constants + 4;
     const auto minLength = constants + 8, maxLength = constants + 12, density = constants + 16;
@@ -70,7 +72,7 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x83,0x78,0x74,0}); unavailable.push_back(c.branch(0x84));
     c.store(collector, table); c.store(collector + 4, 0x3F800000);
     for (uint32_t offset : {12u,28u,32u,36u,40u}) c.store(input + offset, 0);
-    // Query layer zero admits scene and hurt bodies. The collector admits only this frame's exact roots.
+    // Query layer zero admits scene, hurt and equipped weapon bodies; only exact roots are retained.
     c.emit({0xBF}); c.word(batch);
     const auto actorLoop = c.bytes.size();
     c.emit({0x8D,0xAF}); c.word(BO);
@@ -117,6 +119,15 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
         squaredDistance(points[0], points[1]); compare(maxTravel);
         reset.push_back(c.branch(0x87)); reset.push_back(c.branch(0x8A));
     }
+    load(0, offsetof(BladeMailbox, spanMs)); c.emit({0x85,0xC0}); const auto zeroSpan = c.branch(0x84);
+    c.emit({0xF3,0x0F,0x2A,0xD0,0xF3,0x0F,0x10,0x1D}); c.word(constants + 40);
+    c.emit({0xF3,0x0F,0x5E,0xDA});
+    for (uint32_t i = 0; i < 6; ++i) {
+        scalar(0x10, 0, offsetof(BladeMailbox, base) + i * 4);
+        scalar(0x5C, 0, offsetof(BladeMailbox, previousBase) + i * 4);
+        c.emit({0xF3,0x0F,0x59,0xC3}); scalar(0x11, 0, offsetof(BladeMailbox, baseVelocity) + i * 4);
+    }
+    c.bind(zeroSpan);
     auto section = [&](uint32_t first, uint32_t second, uint32_t rayMode) {
         c.store(mode, rayMode);
         for (uint32_t axis = 0; axis < 3; ++axis) {
@@ -193,12 +204,22 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x8B,0x42,0x0C,0x85,0xC0}); const auto root = c.branch(0x84);
     c.emit({0x8B,0xD0,0x49}); c.bind(c.branch(0x85), parents);
     std::vector<size_t> ignored{c.jump()};
-    c.bind(root); c.emit({0x33,0xC0,0x3B,0x15}); c.word(sceneRoot); const auto scene = c.branch(0x84);
+    c.bind(root); c.store(candidateDefence, 0);
+    c.emit({0x33,0xC0,0x3B,0x15}); c.word(sceneRoot); const auto scene = c.branch(0x84);
     c.emit({0xBF}); c.word(batch); c.emit({0xB8}); c.word(1);
     const auto targetLoop = c.bytes.size();
     std::vector<size_t> skipTarget;
     c.emit({0x83,0x3F,1}); skipTarget.push_back(c.branch(0x85));
     c.emit({0x3B,0x3D}); c.word(source); skipTarget.push_back(c.branch(0x84));
+    c.emit({0x8B,0x9F}); c.word(BO + offsetof(BladeMailbox, defenceCount));
+    c.emit({0x85,0xDB}); const auto noDefence = c.branch(0x84);
+    c.emit({0x8D,0x8F}); c.word(BO + offsetof(BladeMailbox, defenceRoots));
+    const auto defenceLoop = c.bytes.size();
+    c.emit({0x3B,0x11}); const auto otherRoot = c.branch(0x85);
+    c.emit({0x56,0x8B,0xB1}); c.word(offsetof(BladeMailbox, defenceWorlds) - offsetof(BladeMailbox, defenceRoots));
+    c.emit({0x3B,0x35}); c.word(world); c.emit({0x5E}); const auto defenceRoot = c.branch(0x84);
+    c.bind(otherRoot); c.emit({0x83,0xC1,4,0x4B}); c.bind(c.branch(0x85), defenceLoop);
+    c.bind(noDefence);
     c.emit({0x8B,0x8F}); c.word(BO + offsetof(BladeMailbox, bodyWorld));
     c.emit({0x3B,0x0D}); c.word(world); skipTarget.push_back(c.branch(0x85));
     c.emit({0x8B,0x9F}); c.word(BO + offsetof(BladeMailbox, bodyCount));
@@ -210,7 +231,20 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     for (auto branch : skipTarget) c.bind(branch);
     c.emit({0x40,0x81,0xC7}); c.word(STRIDE); c.emit({0x83,0xF8,21}); c.bind(c.branch(0x82), targetLoop);
     ignored.push_back(c.jump());
-    c.bind(scene); c.bind(actorRoot);
+    c.bind(actorRoot);
+    c.emit({0x8B,0x99}); c.word(offsetof(BladeMailbox, bodyIndices) - offsetof(BladeMailbox, roots));
+    c.emit({0x89,0x1D}); c.word(candidateBody);
+    c.emit({0x8B,0x99}); c.word(offsetof(BladeMailbox, regions) - offsetof(BladeMailbox, roots));
+    c.emit({0x89,0x1D}); c.word(candidateRegion);
+    const auto classified = c.jump();
+    c.bind(defenceRoot);
+    c.emit({0x8B,0x99}); c.word(offsetof(BladeMailbox, defenceWeapons) - offsetof(BladeMailbox, defenceRoots));
+    c.emit({0x89,0x1D}); c.word(candidateDefence);
+    c.emit({0x83,0xC0,static_cast<unsigned char>(DEFENCE_CONTACT_OFFSET)});
+    c.store(candidateBody, UINT32_MAX); c.store(candidateRegion, 0);
+    const auto defenceClassified = c.jump();
+    c.bind(scene); c.store(candidateBody, UINT32_MAX); c.store(candidateRegion, 0);
+    c.bind(classified); c.bind(defenceClassified);
     c.emit({0x8B,0x3D}); c.word(source);
     c.emit({0x69,0xC0}); c.word(HIT_STRIDE); c.emit({0x8D,0xBC,0x07}); c.word(BO + CONTACTS);
     c.emit({0x8B,0x74,0x24,0x2C,0xF3,0x0F,0x10,0x46,0x10,0x0F,0x57,0xC9,0x0F,0x2F,0xC1});
@@ -255,7 +289,7 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
     compare(groundPlaneTolerance); const auto invalidHeight = c.branch(0x8A);
     const auto overhead = c.branch(0x87);
     // Keep ground feedback separate so it neither hides nor replaces a blocking scene contact.
-    c.emit({0x81,0xC7}); c.word((MAX_WORLD_ACTORS + 1) * HIT_STRIDE);
+    c.emit({0x81,0xC7}); c.word(GROUND_CONTACT_SLOT * HIT_STRIDE);
     c.bind(overhead); c.bind(invalidHeight); c.bind(steep); c.bind(degenerateNormal); c.bind(bodyContact);
     c.emit({0xF3,0x0F,0x10,0x05}); c.word(candidateTime);
     c.emit({0xF3,0x0F,0x10,0x0D}); c.word(candidateAlong);
@@ -272,6 +306,8 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
         resultCopy(collector + 0x10 + axis * 4, 32 + axis * 4);
     }
     resultCopy(collector + 0x20, 44); resultCopy(candidateTime, 48); resultCopy(candidateAlong, 52);
+    resultCopy(candidateBody, 56); resultCopy(candidateRegion, 60);
+    resultCopy(candidateDefence, 64);
     c.emit({0xC7,0x47,4,0,0,0,0});
     c.emit({0xA1}); c.word(collector + 0x60); c.emit({0x3B,0x05}); c.word(sceneRoot);
     const auto bodyMaterial = c.branch(0x85);
@@ -295,6 +331,7 @@ Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase) {
         uint32_t bits; std::memcpy(&bits, &value, 4); c.word(bits);
     }
     c.word(code + COLLECTOR_OFFSET);
+    c.word(0x447A0000); // 1000 milliseconds per second.
     if (c.bytes.size() > WEAPON_TRAIL_CODE_OFFSET - BLADE_SWEEP_CODE_OFFSET)
         throw std::runtime_error("blade code overlaps weapon trail hook");
     return c.bytes;

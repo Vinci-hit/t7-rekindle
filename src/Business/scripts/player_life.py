@@ -1,7 +1,7 @@
 """Player death and respawn through the client's native spectator/hero UI flow."""
 import math
 
-from . import actors, battle, body_collision, bot_life, contracts as wire, controls
+from . import actors, battle, body_collision, bot_life, contracts as wire, controls, loadouts
 from .codec import battle_flow, room_flow, vision_flow
 
 SELECT_TIMER, RESPAWN_TIMER = 'player-select', 'player-respawn'
@@ -70,9 +70,8 @@ def die(flow, attacker, position, *, weaponId=None):
 
 def chooseSpawn(flow, snapshot):
     from .roster import loadRespawns
-    # The exposed runtime roster contains only this infantry hero. Unknown heroes
-    # must not silently inherit infantry spawn eligibility.
-    if flow.session.get('heroId') != wire.HERO_ID:
+    heroes = flow.session.get('loadoutProfile', {}).get('formation', [wire.HERO_ID])
+    if flow.session.get('heroId') not in heroes:
         raise ValueError('selected hero has no supported respawn troop')
     points = flow.session.get('respawnPoints')
     if points is None:
@@ -117,7 +116,7 @@ def respawn(flow):
         flow.later(RESPAWN_TIMER, RETRY_MS)
         return
     position, heading = point
-    flow.session.pop('weaponId', None)
+    loadouts.resetWeapons(flow)
     flow.session.update(spawnPosition=position, spawnHeading=heading, health=combat.MAX_HEALTH,
                         contactLifeAt=flow.now, contactSwings=[],
                         life={**life, 'state': 'spawning', 'spawnedAt': flow.now})
@@ -128,6 +127,9 @@ def respawn(flow):
     flow.send(0x36, wire.actorState(flow.now, 6), 'player-respawn-in-scene')
     flow.send(0xE, vision_flow.encode_vision_del_event(), 'player-respawn-remove')
     flow.send(0xE, roster.playerVision(flow), 'player-respawn-add')
+    from . import shields, guard_state
+    shields.publishAll(flow)
+    guard_state.publish(flow, wire.ACTOR_ID)
     battle.syncState(flow, battle_flow.ACT_STATE_IDLE)
     combat.publishHealth(flow, wire.ACTOR_ID)
     controls.activate(flow)

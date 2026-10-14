@@ -7,7 +7,7 @@ using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal sealed class PreviewUpdateService
     {

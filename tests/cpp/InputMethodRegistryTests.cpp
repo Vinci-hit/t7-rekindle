@@ -6,13 +6,13 @@
 #include <tuple>
 
 namespace {
-using Scope = t7::InputMethodScope;
-using View = t7::InputMethodView;
+using Scope = t7r::InputMethodScope;
+using View = t7r::InputMethodView;
 using Key = std::tuple<Scope, View, std::wstring>;
 struct RegistryFixture {
     std::map<Key, std::vector<std::wstring>> keys;
     std::map<std::pair<Key, std::wstring>, std::wstring> values;
-    t7::InputMethodRegistryReader reader() const {
+    t7r::InputMethodRegistryReader reader() const {
         return {
             [this](Scope scope, View view, const std::wstring& path) {
                 const auto found = keys.find({scope, view, path});
@@ -48,18 +48,18 @@ private:
     std::wstring name_, previous_;
     bool existed_ = false;
 };
-std::wstring normalized(const t7::fs::path& path) {
+std::wstring normalized(const t7r::fs::path& path) {
     auto text = path.lexically_normal().wstring();
     std::transform(text.begin(), text.end(), text.begin(), [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
     return text;
 }
-bool contains(const std::vector<t7::InputMethodRegistration>& entries, const t7::fs::path& path, const std::string& source) {
+bool contains(const std::vector<t7r::InputMethodRegistration>& entries, const t7r::fs::path& path, const std::string& source) {
     return std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
         return normalized(entry.module) == normalized(path) && entry.source == source;
     });
 }
-void verifyEnvironmentViews(const t7::fs::path& windows) {
-    const auto root = windows.parent_path() / "t7-fixture-programs";
+void verifyEnvironmentViews(const t7r::fs::path& windows) {
+    const auto root = windows.parent_path() / "t7r-fixture-programs";
     const auto nativePrograms = root / "Native Apps", wowPrograms = root / "WOW Apps";
     const auto nativeCommon = root / "Native Shared", wowCommon = root / "WOW Shared";
     const EnvironmentScope programFiles(L"ProgramFiles", nativePrograms.c_str());
@@ -70,11 +70,11 @@ void verifyEnvironmentViews(const t7::fs::path& windows) {
     const EnvironmentScope commonW6432(L"CommonProgramW6432", nativeCommon.c_str());
     const EnvironmentScope processor(L"PROCESSOR_ARCHITECTURE", L"AMD64");
     const EnvironmentScope processorW6432(L"PROCESSOR_ARCHITEW6432", nullptr);
-    const EnvironmentScope ordinary(L"T7_IME_FIXTURE_ROOT", root.c_str());
-    const EnvironmentScope missing(L"T7_IME_FIXTURE_MISSING", nullptr);
+    const EnvironmentScope ordinary(L"T7R_IME_FIXTURE_ROOT", root.c_str());
+    const EnvironmentScope missing(L"T7R_IME_FIXTURE_MISSING", nullptr);
     struct PathCase {
         std::wstring registered;
-        t7::fs::path x86, x64;
+        t7r::fs::path x86, x64;
     };
     const PathCase cases[] = {
         {L"%ProgramFiles%\\IME\\Fixture.dll", wowPrograms / "IME/Fixture.dll", nativePrograms / "IME/Fixture.dll"},
@@ -89,9 +89,9 @@ void verifyEnvironmentViews(const t7::fs::path& windows) {
             wowPrograms / "x86/Fixture.dll", nativePrograms / "AMD64/Fixture.dll"},
         {L"%ProgramFiles%\\%PROCESSOR_ARCHITEW6432%\\Fixture.dll",
             wowPrograms / "AMD64/Fixture.dll", nativePrograms / "%PROCESSOR_ARCHITEW6432%/Fixture.dll"},
-        {L"%T7_IME_FIXTURE_ROOT%\\Ordinary.dll", root / "Ordinary.dll", root / "Ordinary.dll"},
-        {L"%T7_IME_FIXTURE_ROOT%\\%T7_IME_FIXTURE_MISSING%\\Unknown.dll",
-            root / "%T7_IME_FIXTURE_MISSING%/Unknown.dll", root / "%T7_IME_FIXTURE_MISSING%/Unknown.dll"},
+        {L"%T7R_IME_FIXTURE_ROOT%\\Ordinary.dll", root / "Ordinary.dll", root / "Ordinary.dll"},
+        {L"%T7R_IME_FIXTURE_ROOT%\\%T7R_IME_FIXTURE_MISSING%\\Unknown.dll",
+            root / "%T7R_IME_FIXTURE_MISSING%/Unknown.dll", root / "%T7R_IME_FIXTURE_MISSING%/Unknown.dll"},
         {(nativePrograms / "Literal.dll").wstring(), nativePrograms / "Literal.dll", nativePrograms / "Literal.dll"}
     };
     const std::wstring tips = L"SOFTWARE\\Microsoft\\CTF\\TIP";
@@ -102,7 +102,7 @@ void verifyEnvironmentViews(const t7::fs::path& windows) {
     for (const auto& test : cases) {
         for (const auto view : {View::X86, View::X64})
             fixture.values[{{Scope::Machine, view, server}, L""}] = test.registered;
-        const auto entries = t7::readInputMethodRegistrations(fixture.reader(), windows);
+        const auto entries = t7r::readInputMethodRegistrations(fixture.reader(), windows);
         require(entries.size() == 2, "environment fixture registration count");
         require(contains(entries, test.x86, "TSF/system/x86"), "x86 environment expansion used the wrong view");
         require(contains(entries, test.x64, "TSF/system/x64"), "x64 environment expansion changed");
@@ -116,7 +116,7 @@ void verifyEnvironmentViews(const t7::fs::path& windows) {
 
 bool verifyInputMethodRegistry() {
     try {
-        const auto windows = t7::fs::temp_directory_path() / "t7-fixture-windows";
+        const auto windows = t7r::fs::temp_directory_path() / "t7r-fixture-windows";
         const std::wstring layouts = L"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts";
         const std::wstring tips = L"SOFTWARE\\Microsoft\\CTF\\TIP";
         const std::wstring classes = L"SOFTWARE\\Classes\\CLSID\\";
@@ -131,7 +131,7 @@ bool verifyInputMethodRegistry() {
         fixture.keys[{Scope::User, View::X64, tips}] = {L"{user-tsf}"};
         fixture.values[{{Scope::User, View::X64, classes + L"{user-tsf}\\InprocServer32"}, L""}]
             = L"\"" + (windows / "UserIme/UserTsf.dll").wstring() + L"\"";
-        const auto registrations = t7::readInputMethodRegistrations(fixture.reader(), windows);
+        const auto registrations = t7r::readInputMethodRegistrations(fixture.reader(), windows);
         require(registrations.size() == 4, "IMM and TSF registration discovery");
         require(contains(registrations, windows / "SysWOW64/Fixture.ime", "IMM/system/x86"), "x86 IMM system directory");
         require(contains(registrations, windows / "System32/Fixture.ime", "IMM/system/x64"), "x64 IMM system directory");
@@ -140,25 +140,25 @@ bool verifyInputMethodRegistry() {
         require(contains(registrations, windows / "UserIme/UserTsf.dll", "TSF/user/x64"), "user TSF quoted module path");
         fixture.values[{{Scope::User, View::X86, classes + L"{fixture-tsf}\\InprocServer32"}, L""}]
             = (windows / "UserIme/Override.dll").wstring();
-        const auto overridden = t7::readInputMethodRegistrations(fixture.reader(), windows);
+        const auto overridden = t7r::readInputMethodRegistrations(fixture.reader(), windows);
         require(contains(overridden, windows / "UserIme/Override.dll", "TSF/system/x86"), "per-user COM registration precedence");
         require(!contains(overridden, windows / "SysWOW64/IME/Fixture/FixtureTsf.dll", "TSF/system/x86"),
                 "shadowed COM server remained eligible");
         fixture.values[{{Scope::User, View::X86, classes + L"{fixture-tsf}\\InprocServer32"}, L""}]
             = (windows / "System32Extra/Fixture.dll").wstring();
-        require(contains(t7::readInputMethodRegistrations(fixture.reader(), windows),
+        require(contains(t7r::readInputMethodRegistrations(fixture.reader(), windows),
                          windows / "System32Extra/Fixture.dll", "TSF/system/x86"), "WOW64 directory boundary");
         wchar_t systemRoot[32768];
         const auto length = GetEnvironmentVariableW(L"SystemRoot", systemRoot, static_cast<DWORD>(std::size(systemRoot)));
         require(length && length < std::size(systemRoot), "Windows environment fixture");
         fixture.values[{{Scope::User, View::X86, classes + L"{fixture-tsf}\\InprocServer32"}, L""}]
             = L"  \"%SystemRoot%\\System32\\IME\\Fixture\\Env.dll\"  ";
-        require(contains(t7::readInputMethodRegistrations(fixture.reader(), systemRoot),
-                         t7::fs::path(systemRoot) / "SysWOW64/IME/Fixture/Env.dll", "TSF/system/x86"),
+        require(contains(t7r::readInputMethodRegistrations(fixture.reader(), systemRoot),
+                         t7r::fs::path(systemRoot) / "SysWOW64/IME/Fixture/Env.dll", "TSF/system/x86"),
                 "environment expansion, whitespace and WOW64 path normalization");
         verifyEnvironmentViews(windows);
         RegistryFixture empty;
-        require(t7::readInputMethodRegistrations(empty.reader(), windows).empty(), "missing registrations enabled compatibility");
+        require(t7r::readInputMethodRegistrations(empty.reader(), windows).empty(), "missing registrations enabled compatibility");
         const auto reader = fixture.reader();
         auto broken = reader;
         size_t reads = 0;
@@ -167,7 +167,7 @@ bool verifyInputMethodRegistry() {
             return reader.value(scope, view, path, name);
         };
         bool rejected = false;
-        try { t7::readInputMethodRegistrations(broken, windows); }
+        try { t7r::readInputMethodRegistrations(broken, windows); }
         catch (const std::runtime_error&) { rejected = true; }
         require(rejected, "registry failure returned a partial snapshot");
         std::cout << "IMM/TSF registration and architecture cases passed\n";

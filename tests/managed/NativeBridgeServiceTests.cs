@@ -1,11 +1,13 @@
 using System;
+using System.ComponentModel;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
+using T7R.Core;
+using T7R.Desktop.Services;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class NativeBridgeServiceTests
     {
@@ -13,6 +15,50 @@ namespace T7.ManagedHarness
         {
             CheckCancellationAsync().GetAwaiter().GetResult();
             CheckLogGrowth();
+        }
+
+        internal static void RunNativeContract(string packageRoot)
+        {
+            packageRoot = Path.GetFullPath(packageRoot);
+            var legacy = Path.Combine(Path.GetTempPath(), "T7R-native-contract-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(legacy);
+            try
+            {
+                foreach (var path in Directory.EnumerateFiles(packageRoot, "*.dll"))
+                {
+                    var name = Path.GetFileName(path);
+                    if (name == NativeBridgeContract.LibraryName) name = "T7.NativeBridge.dll";
+                    File.Copy(path, Path.Combine(legacy, name));
+                }
+                try
+                {
+                    var unexpected = new NativeBridgeService(legacy);
+                    unexpected.Dispose();
+                    throw new InvalidOperationException("old DLL name was accepted without the T7R library");
+                }
+                catch (Win32Exception error) when (error.NativeErrorCode == 126) { }
+            }
+            finally { Directory.Delete(legacy, true); }
+
+            var bridge = new NativeBridgeService(packageRoot);
+            try
+            {
+                using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                {
+                    if (bridge.GetSnapshot().State != SessionState.Idle)
+                        throw new InvalidOperationException("native session did not start idle");
+                    bridge.SetLogLevel(DiagnosticLogLevel.Info);
+                    bridge.SetOutputDevice(Guid.Empty);
+                    bridge.GetGraphicsSettings();
+                    bridge.GetAudioSettings();
+                    ulong cursor = 0;
+                    bridge.ReadLogRecords(ref cursor);
+                    var operation = bridge.StopAsync(timeout.Token).GetAwaiter().GetResult();
+                    if (operation.Status != OperationStatus.Succeeded || !bridge.GetSnapshot().CleanupComplete)
+                        throw new InvalidOperationException("native session cleanup did not complete");
+                }
+            }
+            finally { bridge.Dispose(); }
         }
 
         private static async Task CheckCancellationAsync()

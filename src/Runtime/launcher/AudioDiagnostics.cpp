@@ -11,7 +11,7 @@
 #include <sstream>
 #include <wrl/client.h>
 
-namespace t7 {
+namespace t7r {
 namespace {
 using Microsoft::WRL::ComPtr;
 std::string hexValue(uint32_t value) {

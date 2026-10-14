@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
+using T7R.Core;
+using T7R.Desktop.Services;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
-    internal sealed class FakeLauncherBridge : INativeBridge
+    internal sealed partial class FakeLauncherBridge : INativeBridge
     {
         public DiagnosticLogLevel LogLevel { get; private set; } = DiagnosticLogLevel.Info;
         public DiagnosticLogLevel? RejectedLogLevel { get; set; }

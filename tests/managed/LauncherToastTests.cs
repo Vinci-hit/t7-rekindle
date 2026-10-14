@@ -1,7 +1,7 @@
 using System;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Desktop.ViewModels;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class LauncherToastTests
     {

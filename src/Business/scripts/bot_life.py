@@ -163,6 +163,8 @@ def respawn(flow, actorId):
     bot.stop(flow, actorId, publish=False)
     clearPerception(value)
     value.pop('heightOffset', None)
+    from . import damage_state
+    damage_state.reset(value)
     value.update(position=list(position), heading=heading, health=combat.MAX_HEALTH,
                  contactLifeAt=flow.now, contactSwings=[],
                  initialized=False, status='spawning',

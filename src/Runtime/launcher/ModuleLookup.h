@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <psapi.h>
 
-namespace t7 {
+namespace t7r {
 struct ModuleLocation {
     uintptr_t base = 0;
     DWORD error = ERROR_SUCCESS;

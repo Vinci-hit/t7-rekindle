@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -34,7 +35,7 @@ def targetGame(multi):
 
 
 def lethalHit(flow, attacker, target):
-    actors.data(flow, target)['health'] = combat.DAMAGE
+    actors.data(flow, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(flow, attacker, target, actors.pair(sample(flow), attacker, target))
 
 
@@ -159,11 +160,11 @@ def test_legacy_contact_sweep_stops_at_first_winning_kill(targetGame, attacker):
     _, targets, _ = cluster(flow, attacker)
     actors.data(flow, attacker)['kills'] = 59
     for rid in targets:
-        actors.data(flow, rid)['health'] = combat.DAMAGE
+        actors.data(flow, rid)['health'] = NORMAL_DAMAGE
     attack(flow, attacker)
     clear(flow)
     advance(flow, combat.hitTimer(attacker))
-    assert [actors.data(flow, rid)['health'] for rid in targets] == [0, combat.DAMAGE, combat.DAMAGE]
+    assert [actors.data(flow, rid)['health'] for rid in targets] == [0, NORMAL_DAMAGE, NORMAL_DAMAGE]
     assert actors.data(flow, attacker)['kills'] == 60
     assert flow.session['pending'] == {'round-finish': flow.now + 5000}
     assert [(t['id'], t['delayMs']) for t in flow.result['timers'] if t['delayMs'] >= 0] == [
@@ -176,7 +177,7 @@ def test_native_batch_freezes_first_winner_in_existing_contact_order(targetGame,
     flow = targetGame
     for attacker, target in ((1, 2), (3, 12)):
         actors.data(flow, attacker)['kills'] = 59
-        actors.data(flow, target)['health'] = combat.DAMAGE
+        actors.data(flow, target)['health'] = NORMAL_DAMAGE
         attack(flow, attacker)
     blue = native(flow, attacker=1, target=2, occurredAt=flow.now + (10 if firstCamp == 1 else 20))
     red = native(flow, attacker=3, target=12, occurredAt=flow.now + (20 if firstCamp == 1 else 10))
@@ -188,7 +189,7 @@ def test_native_batch_freezes_first_winner_in_existing_contact_order(targetGame,
     combat.worldUpdated(flow)
     assert flow.state['settlement']['result'] == firstCamp
     assert flow.state['settlement']['campKills'] == {str(firstCamp): 60, str(3 - firstCamp): 59}
-    assert actors.data(flow, 12 if firstCamp == 1 else 2)['health'] == combat.DAMAGE
+    assert actors.data(flow, 12 if firstCamp == 1 else 2)['health'] == NORMAL_DAMAGE
     assert sum(p['reason'] == 'combat-kill' for p in flow.result['send']) == 1
     assert flow.session['pending'] == {'round-finish': flow.now + 5000}
     assert not hasattr(flow, 'contactAt')
@@ -200,7 +201,7 @@ def test_deadline_precedes_even_an_earlier_but_late_delivered_winning_contact(ta
     flow = targetGame
     deadline = flow.session['pending']['round-end']
     flow.session['kills'] = actors.data(flow, 3)['kills'] = 59
-    actors.data(flow, 2)['health'] = combat.DAMAGE
+    actors.data(flow, 2)['health'] = NORMAL_DAMAGE
     flow.now = deadline - 1000
     sample(flow)
     attack(flow)
@@ -238,29 +239,14 @@ def test_finished_target_round_rejects_late_damage_death_and_timers(targetGame):
     assert flow.session['pending'] == {'logout': flow.now + 250}
 
 
-def test_old_live_round_keeps_time_only_rule_until_new_instance(multi):
+def test_old_live_round_requires_restart_without_changing_clock_or_score(multi):
     multi.session['battleClock'] = {'durationMs': 60000, 'startedAt': multi.now}
     multi.later('round-end', 60000)
-    deadline = multi.session['pending']['round-end']
     multi.session['kills'] = actors.data(multi, 2)['kills'] = 70
     original = deepcopy(multi.state)
-    restored = app.migrateState(13, multi.state)
-    assert app.STATE_VERSION == 16 and restored == original
-    flow = app.Flow({'connection': 1}, restored, multi.context)
-    lethalHit(flow, 1, 2)
-    assert not flow.session.get('roundEnded') and KILL_TARGET_KEY not in scriptItems(flow)
-    assert flow.session['pending']['round-end'] == deadline
-    finish(flow)
-    settle(flow)
-    assert flow.state['settlement']['reason'] == 'timeout' and 'killTarget' not in flow.state['settlement']
-    oldFinished = deepcopy(flow.state)
-    assert app.migrateState(13, oldFinished) == oldFinished
-    context = dict(flow.context, nowMs=flow.now)
-    closed = app.handleEvent({'type': 'closed', 'connection': 1}, flow.state, context)
-    connected = app.handleEvent({'type': 'connected', 'connection': 1, 'role': 'instance'}, closed['state'], context)
-    flow = app.Flow({'connection': 1}, connected['state'], context)
-    start(flow)
-    assert flow.session['killTarget'] == 60 and 'settlement' not in flow.state
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(13, multi.state)
+    assert app.STATE_VERSION == 19 and multi.state == original
 
 
 @pytest.mark.parametrize('value', [None, 0, -1, True, 1.5, '60', 2**31])

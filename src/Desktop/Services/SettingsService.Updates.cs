@@ -2,9 +2,9 @@ using System;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
-using T7.Rekindle.Core;
+using T7R.Core;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public sealed partial class SettingsService
     {
@@ -21,6 +21,7 @@ namespace T7.Rekindle.Desktop.Services
                 throw new ArgumentOutOfRangeException(nameof(channel));
             var settings = Load();
             settings.UpdateChannel = channel == UpdateChannel.Preview ? "preview" : "stable";
+            if (channel == UpdateChannel.Preview) settings.LogLevel = DiagnosticLogLevels.Name(DiagnosticLogLevel.Debug);
             Save(settings);
         }
 

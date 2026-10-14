@@ -1,7 +1,7 @@
 #pragma once
 #include "EndpointLayout.h"
 
-namespace t7 {
+namespace t7r {
 struct EndpointAllocator {
     uint32_t object, vectorAllocate, vectorFree, stringAllocate, stringFree;
 };

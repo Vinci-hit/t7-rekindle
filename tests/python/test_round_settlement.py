@@ -144,15 +144,15 @@ def test_settlement_survives_instance_close_until_return_to_lobby():
     assert 'settlement' not in state and state['phase'] == 'lobby-data-sent'
 
 
-def test_old_state_migration_retains_deadline_without_fabricating_results():
+def test_old_active_state_rejection_retains_deadline_without_fabricating_results():
     flow = start(wire.GAME_MS)
     deadline = flow.session['pending']['round-end']
     flow.session.pop('battleClock', None)
-    restored = app.migrateState(12, flow.state)
-    assert restored['sessions']['1']['battleClock'] == {
-        'durationMs': 1200000, 'startedAt': deadline - 1200000}
-    assert restored['sessions']['1']['pending']['round-end'] == deadline
-    assert 'settlement' not in restored
+    before = deepcopy(flow.state)
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(12, flow.state)
+    assert flow.state == before and flow.session['pending']['round-end'] == deadline
+    assert 'settlement' not in flow.state
 
 
 @pytest.mark.parametrize('event', [
@@ -198,7 +198,9 @@ def test_old_finished_state_migration_does_not_replay_or_invent_a_settlement():
     settle(flow)
     flow.state.pop('settlement')
     flow.session.pop('battleClock')
-    restored = app.migrateState(12, flow.state)
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(12, flow.state)
+    restored = app.migrateState(app.STATE_VERSION, flow.state)
     assert 'settlement' not in restored and not restored['sessions']['1']['pending']
     result = app.handleEvent({'type': 'world', 'connection': 1}, restored,
                              {'nowMs': flow.now, 'connections': [1]})

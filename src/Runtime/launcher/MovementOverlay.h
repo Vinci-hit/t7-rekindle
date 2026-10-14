@@ -5,7 +5,7 @@
 #include <functional>
 #include <string>
 
-namespace t7 {
+namespace t7r {
 
 enum class MovementFeature : uint32_t {
     Terrain = 1u << 0,
@@ -68,4 +68,4 @@ private:
     void clear() noexcept;
 };
 
-} // namespace t7
+} // namespace t7r

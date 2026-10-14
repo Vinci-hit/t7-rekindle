@@ -3,7 +3,7 @@
 #include <functional>
 #include <propidl.h>
 
-namespace t7 {
+namespace t7r {
 std::string describeAudioFormat(const void* data, size_t size);
 std::string describeSystemEffects(HRESULT result, const PROPVARIANT& value);
 bool isAudioDiagnosticModule(const std::wstring& name);

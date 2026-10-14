@@ -2,12 +2,12 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class ClientResourceTests
     {
@@ -57,7 +57,7 @@ namespace T7.ManagedHarness
         {
             foreach (var code in new[] { "unsupported_overlay", "directory_invalid", "entry_missing", "entry_decode", "content_mismatch" })
             {
-                var detail = "ResourceError: [T7_RESOURCE:" + code + "] archive='map.vfs' entry='data/fixture': 覆盖布局尚未支持\ntraceback detail";
+                var detail = "ResourceError: [T7R_RESOURCE:" + code + "] archive='map.vfs' entry='data/fixture': 覆盖布局尚未支持\ntraceback detail";
                 var bridge = new FakeLauncherBridge { PendingCheck = new TaskCompletionSource<OperationSnapshot>() };
                 using (var model = Model(root, bridge))
                 {
@@ -76,7 +76,7 @@ namespace T7.ManagedHarness
                         "directory draft retained previous resource error");
                 }
             }
-            var startBridge = new FakeLauncherBridge { Failure = "[T7_RESOURCE:entry_decode] changed after check" };
+            var startBridge = new FakeLauncherBridge { Failure = "[T7R_RESOURCE:entry_decode] changed after check" };
             using (var model = Model(root, startBridge))
             {
                 RunTask(model.ValidationTask);
@@ -142,7 +142,7 @@ namespace T7.ManagedHarness
                 RunTask(model.ValidationTask);
                 bridge.Snapshot = new SessionSnapshot { State = SessionState.Failed, CleanupComplete = true };
                 bridge.PendingCheck.SetResult(new OperationSnapshot { Status = OperationStatus.Failed,
-                    Error = "[T7_RESOURCE:entry_missing] old directory" });
+                    Error = "[T7R_RESOURCE:entry_missing] old directory" });
                 RunTask(check);
                 Assert(model.ClientDirectory == nextRoot && model.ResourceCheckText == "未检查"
                     && model.DiagnosticText != "资源不匹配", "stale check replaced current directory state");

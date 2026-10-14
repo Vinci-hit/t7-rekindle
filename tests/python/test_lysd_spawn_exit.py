@@ -164,7 +164,7 @@ def test_search_and_current_action_take_priority_over_return_route(lowerGround):
 
 
 def test_landing_flag_survives_reload_and_rejects_invalid_type(lowerGround):
-    assert app.migrateState(9, lowerGround.state) == lowerGround.state
+    assert app.migrateState(app.STATE_VERSION, lowerGround.state) == lowerGround.state
     value = actors.data(lowerGround, 2)
     assert value['spawnExit']['landed']
     value['spawnExit']['landed'] = 'true'

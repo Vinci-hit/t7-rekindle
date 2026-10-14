@@ -177,7 +177,7 @@ def test_decision_memory_survives_reload_without_mutating_old_state(duel):
     choice = choose(duel)
     duel.session["bot"].update(lastAttack=choice.intent, decisionSeed=choice.seed)
     original = deepcopy(duel.state)
-    assert app.migrateState(5, duel.state) == original
+    assert app.migrateState(app.STATE_VERSION, duel.state) == original
     assert duel.state == original
     for field, invalid in (("decisionSeed", -1), ("decisionSeed", True), ("lastAttack", 999),
                            ("observedPlayer", {"seenAt": "bad"})):

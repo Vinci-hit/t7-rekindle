@@ -9,11 +9,16 @@
 | 使用启动器，确认运行环境和客户端兼容性 | [产品需求与使用说明](requirements.md) |
 | 排查目录、名称、启动和退出问题 | [使用说明中的问题排查](requirements.md#问题排查与反馈) |
 | 从源码构建、测试或制作运行包 | [开发与交付](development.md) |
+| 为社区项目命名，区分原游戏和兼容标识 | [项目命名规范](development.md#项目命名规范) |
 | 了解 UI 1.1 的接入、状态绑定和界面验收 | [UI 1.1 实施与验收](planning/ui-handoff-v1.1.md) |
 | 理解模块职责、进程关系和启动流程 | [架构说明](architecture.md) |
 | 了解原版客户端无 TP 启动的验证结果与实施前置 | [TP 纯内存启动方案](planning/tp-memory-launch.md) |
 | 查找源码、测试、构建产物或内置文档 | [目录与源码范围](source-layout.md) |
 | 修改原生接口、生命周期、日志或设置格式 | [运行契约](runtime-contracts.md) |
+| 配置先锋阵容、武器，了解进场与复活同步 | [先锋阵容与武器配置](loadouts.md) |
+| 查看称号奖励规则、管理入口和游戏内同步方式 | [账户称号](account-titles.md) |
+| 理解近战攻击、格挡、挡反、硬直与破防规则 | [近战攻防规则](combat-rules.md) |
+| 向网页端智能体交接电脑 AI 规则、伪代码与优化任务 | [电脑玩家 AI 优化交接](planning/computer-player-ai-handoff.md) |
 | 了解人机对战和局域网联机的推进顺序 | [实施与验收计划](planning/implementation-plan.md) |
 | 选择可以参与的工作，查看剩余验收事项 | [任务清单](planning/task-list.md) |
 

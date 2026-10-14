@@ -17,7 +17,7 @@ constexpr uint32_t MALLOC_IAT = ALIGNED_ALLOCATE_IAT + 8, FREE_IAT = ALIGNED_ALL
 void require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
 class Code {
 public:
-    t7::Bytes bytes;
+    t7r::Bytes bytes;
     explicit Code(uint32_t address) : address_(address) {}
     void emit(std::initializer_list<unsigned char> data) { bytes.insert(bytes.end(), data); }
     void word(uint32_t value) {
@@ -39,21 +39,21 @@ private:
 };
 template<class T> void writeValue(HANDLE process, uint32_t address, const T& value) {
     const auto data = reinterpret_cast<const unsigned char*>(&value);
-    t7::writeClientMemory(process, address, t7::Bytes(data, data + sizeof(value)));
+    t7r::writeClientMemory(process, address, t7r::Bytes(data, data + sizeof(value)));
 }
 uint32_t readWord(HANDLE process, uint32_t address) {
-    const auto bytes = t7::readClientMemory(process, address, 4);
+    const auto bytes = t7r::readClientMemory(process, address, 4);
     uint32_t value = 0; std::memcpy(&value, bytes.data(), 4); return value;
 }
-void fixture(const t7::fs::path& path) {
-    t7::Bytes memory(IMAGE_SIZE, 0);
-    const auto put = [&](uint32_t address, const t7::Bytes& data) {
+void fixture(const t7r::fs::path& path) {
+    t7r::Bytes memory(IMAGE_SIZE, 0);
+    const auto put = [&](uint32_t address, const t7r::Bytes& data) {
         require(address >= BASE && address - BASE + data.size() <= memory.size(), "endpoint fixture code extent");
         std::memcpy(memory.data() + address - BASE, data.data(), data.size());
     };
     const auto word = [&](uint32_t address, uint32_t value) { std::memcpy(memory.data() + address - BASE, &value, 4); };
     // The fixture uses the Windows CRT; no game files or redistributable are needed.
-    const auto imports = t7::writeClientImports(memory, 0x6000, 0x1000, {
+    const auto imports = t7r::writeClientImports(memory, 0x6000, 0x1000, {
         {"kernel32.dll", SLEEP_IAT - BASE, {"Sleep", "ExitProcess"}},
         {"msvcrt.dll", ALIGNED_ALLOCATE_IAT - BASE, {"_aligned_malloc", "_aligned_free", "malloc", "free"}}
     });
@@ -109,18 +109,18 @@ void fixture(const t7::fs::path& path) {
         main.emit({0xFF, 0xB6}); main.word(i * 52 + 28); main.call(STRING_FREE);
         main.emit({0x83, 0xC4, 0x04}); main.bind(inlineString);
     }
-    main.emit({0x68}); main.word(t7::ENDPOINT_BLOCK_SIZES[0]); main.emit({0x56, 0xB9}); main.word(OBJECT);
+    main.emit({0x68}); main.word(t7r::ENDPOINT_BLOCK_SIZES[0]); main.emit({0x56, 0xB9}); main.word(OBJECT);
     main.call(VECTOR_FREE); main.bind(noRecords);
     for (uint32_t i = 1; i < 3; ++i) {
         main.emit({0xA1}); main.word(BLOCKS + i * 4); main.emit({0x85, 0xC0}); const auto missing = main.branch(0x84);
-        main.emit({0x68}); main.word(t7::ENDPOINT_BLOCK_SIZES[i]); main.emit({0x50, 0xB9}); main.word(OBJECT);
+        main.emit({0x68}); main.word(t7r::ENDPOINT_BLOCK_SIZES[i]); main.emit({0x50, 0xB9}); main.word(OBJECT);
         main.call(VECTOR_FREE); main.bind(missing);
     }
     main.emit({0xA1}); main.word(OBJECT + 8); main.emit({0x0B, 0x05}); main.word(CONTROL + 16);
     main.emit({0x0F, 0x95, 0xC0, 0x0F, 0xB6, 0xC0, 0x50}); main.indirect(EXIT_IAT);
     require(main.bytes.size() <= 0x400, "endpoint fixture entry overlaps allocator helpers"); put(BASE + 0x1000, main.bytes);
 
-    t7::Bytes header(HEADER_SIZE, 0);
+    t7r::Bytes header(HEADER_SIZE, 0);
     IMAGE_DOS_HEADER dos{}; dos.e_magic = IMAGE_DOS_SIGNATURE; dos.e_lfanew = 0x80;
     std::memcpy(header.data(), &dos, sizeof(dos));
     IMAGE_NT_HEADERS32 nt{}; nt.Signature = IMAGE_NT_SIGNATURE;
@@ -150,17 +150,17 @@ void fixture(const t7::fs::path& path) {
     output.write(reinterpret_cast<const char*>(memory.data() + 0x1000), memory.size() - 0x1000);
     require(output.good(), "endpoint fixture write");
 }
-void run(const t7::fs::path& path, const std::string& hash, const t7::Config& config,
+void run(const t7r::fs::path& path, const std::string& hash, const t7r::Config& config,
          unsigned parity, uint32_t failure = 0, bool unpublished = false, bool legacy = false) {
-    t7::DebugClient client;
+    t7r::DebugClient client;
     client.start(path, hash, {}, [](HANDLE, HANDLE) {});
     const auto process = client.process();
     const auto deadline = GetTickCount64() + 10000;
     while (!readWord(process, CONTROL) && GetTickCount64() < deadline) { client.check(); Sleep(10); }
     require(readWord(process, CONTROL) == 1, "endpoint fixture startup");
-    const auto allocator = t7::clientEndpointAllocator(process, BASE);
+    const auto allocator = t7r::clientEndpointAllocator(process, BASE);
     writeValue(process, CONTROL + 8, failure);
-    t7::EndpointAddresses addresses{};
+    t7r::EndpointAddresses addresses{};
     bool failed = false;
     if (legacy) {
         const auto page = VirtualAllocEx(process, nullptr, 8192, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -171,7 +171,7 @@ void run(const t7::fs::path& path, const std::string& hash, const t7::Config& co
         addresses.records = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(page)) + 4096;
         addresses.group = addresses.records + 208; addresses.candidates = addresses.records + 348;
     } else {
-        try { addresses = t7::allocateEndpointStorage(process, allocator, config, parity); }
+        try { addresses = t7r::allocateEndpointStorage(process, allocator, config, parity); }
         catch (const std::runtime_error& error) {
             if (!failure || std::string(error.what()).find("partial allocations released") == std::string::npos) throw;
             failed = true;
@@ -180,7 +180,7 @@ void run(const t7::fs::path& path, const std::string& hash, const t7::Config& co
         if (failed) require(readWord(process, CONTROL + 12) == failure, "allocation continued after failure");
     }
     if (!failed) {
-        const auto layout = t7::makeEndpointLayout(config, addresses, parity);
+        const auto layout = t7r::makeEndpointLayout(config, addresses, parity);
         require(layout.group[0] == addresses.records && layout.group[1] == addresses.records + 208
                 && layout.group[2] == layout.group[1], "endpoint nested vector ownership mismatch");
         writeValue(process, addresses.records, layout.records); writeValue(process, addresses.group, layout.group);
@@ -200,7 +200,7 @@ void run(const t7::fs::path& path, const std::string& hash, const t7::Config& co
                         "endpoint string does not own its allocation");
             }
         }
-        if (unpublished) t7::freeEndpointStorage(process, allocator, addresses);
+        if (unpublished) t7r::freeEndpointStorage(process, allocator, addresses);
         else writeValue(process, BLOCKS, addresses);
     }
     if (failed || unpublished) {
@@ -224,22 +224,22 @@ void run(const t7::fs::path& path, const std::string& hash, const t7::Config& co
 }
 
 bool verifyEndpointStorage() {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-endpoint-" + std::to_wstring(GetCurrentProcessId())
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-endpoint-" + std::to_wstring(GetCurrentProcessId())
                                                     + L"-" + std::to_wstring(GetTickCount64()));
     const auto cleanup = [&] {
-        require(t7::fs::canonical(root).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "endpoint fixture cleanup boundary");
-        t7::fs::remove_all(root);
+        require(t7r::fs::canonical(root).parent_path() == t7r::fs::canonical(t7r::fs::temp_directory_path()), "endpoint fixture cleanup boundary");
+        t7r::fs::remove_all(root);
     };
     try {
-        require(t7::fs::create_directory(root), "fresh endpoint fixture directory");
+        require(t7r::fs::create_directory(root), "fresh endpoint fixture directory");
         const auto path = root / "EndpointFixture.exe";
-        fixture(path); const auto hash = t7::fileHash(path);
-        t7::Config shortConfig; shortConfig.ports[0] = 1; shortConfig.ports[1] = 2; shortConfig.ports[2] = 3;
+        fixture(path); const auto hash = t7r::fileHash(path);
+        t7r::Config shortConfig; shortConfig.ports[0] = 1; shortConfig.ports[1] = 2; shortConfig.ports[2] = 3;
         run(path, hash, shortConfig, 0, 0, false, true);
-        t7::Config heapConfig = shortConfig;
+        t7r::Config heapConfig = shortConfig;
         heapConfig.advertisedAddress = "192.0.2.123"; heapConfig.ports[0] = 123; heapConfig.ports[1] = 12345;
-        t7::Config inlineConfig = heapConfig; inlineConfig.ports[0] = 12345; inlineConfig.ports[1] = 123;
-        t7::Config longConfig = heapConfig; longConfig.advertisedAddress = "203.0.113.123";
+        t7r::Config inlineConfig = heapConfig; inlineConfig.ports[0] = 12345; inlineConfig.ports[1] = 123;
+        t7r::Config longConfig = heapConfig; longConfig.advertisedAddress = "203.0.113.123";
         for (unsigned parity : {0u, 1u}) {
             run(path, hash, shortConfig, parity);
             run(path, hash, inlineConfig, parity);
@@ -254,7 +254,7 @@ bool verifyEndpointStorage() {
         return true;
     } catch (const std::exception& error) {
         std::cerr << "Endpoint storage test failure: " << error.what() << '\n';
-        try { if (t7::fs::exists(root)) cleanup(); }
+        try { if (t7r::fs::exists(root)) cleanup(); }
         catch (const std::exception& cleanupError) { std::cerr << "Endpoint fixture cleanup: " << cleanupError.what() << '\n'; }
         return false;
     }

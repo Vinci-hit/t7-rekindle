@@ -2,7 +2,7 @@
 #include <string>
 #include <string_view>
 
-namespace t7 {
+namespace t7r {
 enum class MovementResource { None, Infantry, Router, Birth };
 inline constexpr size_t MOVEMENT_XML_RESERVE = 4096;
 inline constexpr size_t MOVEMENT_XML_LIMIT = 4 * 1024 * 1024;

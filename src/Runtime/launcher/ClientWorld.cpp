@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 bool validPosition(const std::array<float, 3>& position) {
     for (auto coordinate : position)
@@ -52,8 +52,11 @@ BladeTrace bladeTrace(const BladeMailbox& raw) {
         hit.contact = terrainContact(source.contact);
         if (!hit.contact.ready || !hit.contact.hit || !std::isfinite(source.time) || !std::isfinite(source.along)
             || source.time < 0 || source.time > 1 || source.along < 0 || source.along > 1) return {};
-        hit.targetId = i <= MAX_WORLD_ACTORS ? static_cast<uint32_t>(i) : 0;
+        hit.targetId = static_cast<uint32_t>(i == GROUND_CONTACT_SLOT ? 0 :
+            i > GROUND_CONTACT_SLOT ? i - DEFENCE_CONTACT_OFFSET : i);
         hit.time = source.time; hit.along = source.along;
+        hit.bodyIndex = source.bodyIndex; hit.region = source.region;
+        hit.defenceWeaponId = source.defenceWeaponId;
     }
     return value;
 }
@@ -119,10 +122,13 @@ bool ClientWorld::poll(WorldSnapshot& value) {
                 || !std::isfinite(source.hit.time) || source.hit.time < 0 || source.hit.time > 1
                 || !std::isfinite(source.hit.along) || source.hit.along < 0 || source.hit.along > 1
                 || !validPosition(source.sourcePosition) || !validPosition(source.targetPosition)
-                || !std::isfinite(source.sourceYaw) || !std::isfinite(source.targetYaw))
+                || !std::isfinite(source.sourceYaw) || !std::isfinite(source.targetYaw)
+                || source.hit.region > 3 || source.hit.bodyIndex < -1 || source.hit.bodyIndex > 127
+                || source.sourceVelocityReady > 1 || source.targetVelocityReady > 1 || source.airborne > 1 || source.targetAirborne > 1)
                 throw std::runtime_error("invalid native contact journal entry");
             BladeContactEvent event;
-            event.hit = {contact, source.targetId, source.hit.time, source.hit.along};
+            event.hit = {contact, source.targetId, source.hit.time, source.hit.along,
+                         source.hit.bodyIndex, source.hit.region, source.hit.defenceWeaponId};
             event.actorId = source.actorId; event.entity = source.entity; event.targetEntity = source.targetEntity;
             event.state = source.state; event.sequence = source.sequence; event.instanceStartedAt = source.epoch;
             event.targetState = source.targetState; event.targetSequence = source.targetSequence;
@@ -130,6 +136,18 @@ bool ClientWorld::poll(WorldSnapshot& value) {
             event.occurredAt = static_cast<double>(sampleTime(source.tick, now)) - source.spanMs * (1. - source.hit.time);
             event.sourcePosition = source.sourcePosition; event.targetPosition = source.targetPosition;
             event.sourceHeading = degrees(source.sourceYaw); event.targetHeading = degrees(source.targetYaw);
+            event.airborne = source.airborne != 0;
+            event.targetAirborne = source.targetAirborne != 0;
+            event.velocityReady = source.spanMs > 0 && source.sourceVelocityReady == 1 && source.targetVelocityReady == 1;
+            if (event.velocityReady) {
+                if (!validPosition(source.sourceVelocity) || !validPosition(source.targetVelocity)
+                    || !validPosition(source.baseVelocity) || !validPosition(source.tipVelocity))
+                    throw std::runtime_error("invalid native contact velocity");
+                event.sourceVelocity = source.sourceVelocity; event.targetVelocity = source.targetVelocity;
+                for (size_t axis = 0; axis < 3; ++axis)
+                    event.weaponVelocity[axis] = source.baseVelocity[axis]
+                        + (source.tipVelocity[axis] - source.baseVelocity[axis]) * source.hit.along;
+            }
             value.contacts.push_back(event);
         }
     }

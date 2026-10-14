@@ -1,15 +1,15 @@
 using System;
-using T7.Rekindle.Core;
+using T7R.Core;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.Views;
+using T7R.Desktop.Services;
+using T7R.Desktop.Views;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class AccountViewModel : ObservableObject, IDisposable
     {
@@ -59,7 +59,8 @@ namespace T7.Rekindle.Desktop.ViewModels
         public bool IsSignedOut => !_signedIn;
         public bool HasSession => _session != null;
         public bool CanReconnect => HasSession && !_busy && _connection == null;
-        public bool IsOnline => _signedIn && _connection != null && _heartbeatHealthy;
+        public bool IsOnline => !_disposed && _signedIn && _connection != null && _heartbeatHealthy
+            && _connection.LeaseExpiresAt > DateTimeOffset.UtcNow && _session.ExpiresAt > DateTimeOffset.UtcNow;
         public bool IsLoginOpen => _loginOpen;
         public bool IsWaitingForServer => _waitingForServer;
         public string AccountState => !_signedIn ? "guest" : IsOnline ? "online" : "offline";
@@ -188,6 +189,8 @@ namespace T7.Rekindle.Desktop.ViewModels
             _lifetime.Dispose();
             _lifetime = new CancellationTokenSource();
             _connection = null;
+            _titles = AccountTitles.Empty;
+            _titleStatus = "上线后可查看称号";
             return _generation;
         }
         private bool IsCurrent(int generation) => !_disposed && generation == _generation;

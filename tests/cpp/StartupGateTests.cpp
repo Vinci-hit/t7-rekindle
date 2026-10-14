@@ -17,19 +17,19 @@ class Run {
 public:
     std::atomic<unsigned> hits{0};
     std::atomic<bool> pending{false}, allowPending{false};
-    t7::StartupGate gate;
-    t7::DebugClient client;
+    t7r::StartupGate gate;
+    t7r::DebugClient client;
     ~Run() { allowPending.store(true); }
-    void start(const t7::fs::path& path, const Options& options = {}) {
+    void start(const t7r::fs::path& path, const Options& options = {}) {
         const auto patch = initializationPatch();
-        client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE) {
-            t7::applyRemotePatches(process, BASE, {patch});
+        client.start(path, t7r::fileHash(path), {}, [&](HANDLE process, HANDLE) {
+            t7r::applyRemotePatches(process, BASE, {patch});
             writeWord(process, CONTROL + InitializationSuccess, options.initialized ? 1u : 0u);
             writeWord(process, CONTROL + Delay, options.delay);
             writeWord(process, CONTROL + Peer, options.peer ? 1u : 0u);
             writeWord(process, CONTROL + PeerReady, options.pendingPeer ? 0u : 1u);
             if (options.badObject) writeWord(process, NETWORK, 0);
-            if (options.badSignature) t7::writeClientMemory(process, SELECTOR, {0x90});
+            if (options.badSignature) t7r::writeClientMemory(process, SELECTOR, {0x90});
             if (options.gate) gate.install(process, BASE);
         }, {}, {}, {}, [this, options](DWORD threadId, uintptr_t address) {
             if (address == SELECTOR && options.pendingPeer && hits.load() == 1) {
@@ -69,7 +69,7 @@ public:
     void finish(unsigned count = 1) {
         wait([&] { return readWord(client.process(), CONTROL + Selections) == count; }, "startup gate did not release all callers");
         require(readWord(client.process(), CONTROL + Error) == 0, "startup fixture worker creation failed");
-        require(t7::readClientMemory(client.process(), SELECTOR, 1) == t7::Bytes{0x55}, "selector instruction was not restored");
+        require(t7r::readClientMemory(client.process(), SELECTOR, 1) == t7r::Bytes{0x55}, "selector instruction was not restored");
         writeWord(client.process(), CONTROL + Exit, 1);
         require(WaitForSingleObject(client.process(), 10000) == WAIT_OBJECT_0, "startup fixture did not exit");
         stop(); client.check();
@@ -85,15 +85,15 @@ template<class Operation> void rejects(Operation operation, const char* expected
 }
 template<class T> void writeBlock(HANDLE process, uint32_t address, const T& value) {
     const auto bytes = reinterpret_cast<const unsigned char*>(&value);
-    t7::writeClientMemory(process, address, t7::Bytes(bytes, bytes + sizeof(value)));
+    t7r::writeClientMemory(process, address, t7r::Bytes(bytes, bytes + sizeof(value)));
 }
 void publish(Run& run) {
     const auto process = run.client.process();
-    const auto allocator = t7::clientEndpointAllocator(process, BASE);
-    t7::Config config; config.ports[0] = 26101; config.ports[1] = 26102; config.ports[2] = 26103;
+    const auto allocator = t7r::clientEndpointAllocator(process, BASE);
+    t7r::Config config; config.ports[0] = 26101; config.ports[1] = 26102; config.ports[2] = 26103;
     const auto parity = readWord(process, NETWORK + 0x1C) & 1;
-    const auto addresses = t7::allocateEndpointStorage(process, allocator, config, parity);
-    const auto layout = t7::makeEndpointLayout(config, addresses, parity);
+    const auto addresses = t7r::allocateEndpointStorage(process, allocator, config, parity);
+    const auto layout = t7r::makeEndpointLayout(config, addresses, parity);
     writeBlock(process, addresses.records, layout.records); writeBlock(process, addresses.group, layout.group);
     writeBlock(process, addresses.candidates, layout.candidates);
     const uint32_t groups[]{addresses.group, addresses.group + 12, addresses.group + 12};
@@ -101,7 +101,7 @@ void publish(Run& run) {
     writeBlock(process, NETWORK + 0x8C, groups); writeBlock(process, NETWORK + 0x78, candidates);
     require(readWord(process, CONTROL + Selections) == 0, "allocator worker released server selection early");
 }
-void success(const t7::fs::path& path, unsigned expectedCodePage, bool initialized = false, unsigned delay = 0) {
+void success(const t7r::fs::path& path, unsigned expectedCodePage, bool initialized = false, unsigned delay = 0) {
     Run run; Options options; options.initialized = initialized; options.delay = delay;
     run.start(path, options); run.held();
     require(readWord(run.client.process(), CONTROL + CodePage) == expectedCodePage, "fixture code page was not activated");
@@ -109,7 +109,7 @@ void success(const t7::fs::path& path, unsigned expectedCodePage, bool initializ
             "original successful initialization branch changed");
     publish(run); run.gate.release(); run.finish();
 }
-void concurrentCalls(const t7::fs::path& path, bool pending) {
+void concurrentCalls(const t7r::fs::path& path, bool pending) {
     Run run; Options options; options.peer = true; options.pendingPeer = pending;
     run.start(path, options); run.held(pending ? 1u : 2u);
     publish(run);
@@ -120,7 +120,7 @@ void concurrentCalls(const t7::fs::path& path, bool pending) {
     run.gate.release(); run.allowPending.store(true); run.finish(2);
     require(run.hits.load() == 2, "concurrent breakpoint handling coverage");
 }
-void failures(const t7::fs::path& path) {
+void failures(const t7r::fs::path& path) {
     {
         Run run; Options options; options.gate = false;
         run.start(path, options);
@@ -150,7 +150,7 @@ void failures(const t7::fs::path& path) {
             if (scenario == "owner") writeWord(process, SERVICE, NETWORK + 4);
             if (scenario == "vtable") writeWord(process, NETWORK, VTABLE + 4);
             if (scenario == "vector") writeWord(process, NETWORK + 0x90, 0);
-            if (scenario == "instruction") t7::writeClientMemory(process, SELECTOR + 1, {0x90});
+            if (scenario == "instruction") t7r::writeClientMemory(process, SELECTOR + 1, {0x90});
             const auto* expected = scenario == "owner" || scenario == "vtable" ? "network object mismatch"
                 : scenario == "instruction" ? "breakpoint signature changed" : "requires published endpoint vectors";
             rejects([&] { run.gate.release(); }, expected);
@@ -179,17 +179,17 @@ bool supportsLocaleManifest() {
 }
 }
 bool verifyStartupGate() {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-startup-" + std::to_wstring(GetCurrentProcessId())
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-startup-" + std::to_wstring(GetCurrentProcessId())
                                                     + L"-" + std::to_wstring(GetTickCount64()));
     const auto cleanup = [&] {
-        require(t7::fs::canonical(root).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()),
+        require(t7r::fs::canonical(root).parent_path() == t7r::fs::canonical(t7r::fs::temp_directory_path()),
                 "startup fixture cleanup boundary");
-        t7::fs::remove_all(root);
+        t7r::fs::remove_all(root);
     };
     try {
-        require(t7::fs::create_directory(root), "fresh startup fixture directory");
+        require(t7r::fs::create_directory(root), "fresh startup fixture directory");
         const auto path = create(root, "default");
-        const auto originalHash = t7::fileHash(path);
+        const auto originalHash = t7r::fileHash(path);
         success(path, GetACP()); success(path, GetACP(), true); success(path, GetACP(), false, 150);
         concurrentCalls(path, false); concurrentCalls(path, true); failures(path);
         success(create(root, "utf8", "UTF-8"), CP_UTF8);
@@ -198,13 +198,13 @@ bool verifyStartupGate() {
             success(create(root, "western", "en-US"), 1252);
             std::cout << "Startup gate code pages 936, 65001 and 1252 passed\n";
         } else std::cout << "Startup gate default/UTF-8 passed; locale manifests require Windows 11\n";
-        require(t7::fileHash(path) == originalHash, "startup gate changed the disk image");
+        require(t7r::fileHash(path) == originalHash, "startup gate changed the disk image");
         cleanup();
         std::cout << "Startup gate initialization, allocation, concurrency, queued events and failure cleanup cases passed\n";
         return true;
     } catch (const std::exception& error) {
         std::cerr << "Startup gate test failure: " << error.what() << '\n';
-        try { if (t7::fs::exists(root)) cleanup(); }
+        try { if (t7r::fs::exists(root)) cleanup(); }
         catch (const std::exception& cleanupError) { std::cerr << "Startup fixture cleanup: " << cleanupError.what() << '\n'; }
         return false;
     }

@@ -13,13 +13,12 @@ constexpr uint32_t DATA = BASE + 0xD0000, CONTEXT = DATA + 0x100, CHARACTER = DA
 constexpr uint32_t ROOT = DATA + 0x300, GRAPH = DATA + 0x500, ACTION = DATA + 0x700;
 constexpr uint32_t ACTION_NAME = DATA + 0x900, GRAPH_NAME = DATA + 0x940, OTHER_NAME = DATA + 0x980;
 constexpr uint32_t LAYER = DATA + 0xA00, DISPATCH = DATA + 0x1000, NATIVE = DATA + 0x1400;
-constexpr uint32_t WORKER = DATA + 0x1600;
 constexpr uint32_t EVENT_RVA = 0xCE0D50, VARIABLE_RVA = 0x29ED60, LAYER_RVA = 0xCDD9B0;
 constexpr uint32_t POSE = DATA + 32, WRITES = DATA + 36, HANDLER = DATA + 96;
 inline void prepare(HANDLE process) {
     auto text = [&](uint32_t address, const std::string& value) {
-        t7::Bytes bytes(value.begin(), value.end()); bytes.push_back(0);
-        t7::writeClientMemory(process, address, bytes);
+        t7r::Bytes bytes(value.begin(), value.end()); bytes.push_back(0);
+        t7r::writeClientMemory(process, address, bytes);
     };
     text(ACTION_NAME, "Action"); text(GRAPH_NAME, "2H_Flurry_Behavior.hkb"); text(OTHER_NAME, "Other");
     for (const auto& field : std::vector<std::pair<uint32_t, uint32_t>>{
@@ -31,26 +30,26 @@ inline void prepare(HANDLE process) {
     }) writeWord(process, field.first, field.second);
     movementAnimationFixture::writeFloat(process, LAYER + 0x30, .4f);
     // Native graph dispatch broadcasts Idle separately to Layer and Action.
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x83,0x7C,0x24,8,3}); const auto notIdle = c.branch(0x85);
     c.emit({0xFF,0x05}); c.word(DATA + 28); c.store(LAYER + 0xC, 2);
     c.bind(notIdle); c.emit({0xC2,0x10,0});
-    t7::writeClientMemory(process, BASE + LAYER_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + LAYER_RVA, c.bytes);
     c.bytes = {0xFF,0x74,0x24,8,0xFF,0x74,0x24,8};
     c.call(NATIVE); c.emit({0xC2,0x10,0});
-    t7::writeClientMemory(process, BASE + EVENT_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + EVENT_RVA, c.bytes);
     c.bytes.clear(); c.emit({0xFF,0x05}); c.word(DATA + 24);
     c.emit({0x83,0x7C,0x24,8,3}); const auto keepState = c.branch(0x85);
     c.emit({0xC7,0x81}); c.word(0x84); c.word(0);
     c.bind(keepState); c.emit({0xC2,8,0});
-    t7::writeClientMemory(process, NATIVE, c.bytes);
+    t7r::writeClientMemory(process, NATIVE, c.bytes);
     c.bytes = {0x55,0x8B,0xEC,0x57,0x8B,0x7D,8};
     c.emit({0x89,0x3D}); c.word(DATA + 40);
     c.emit({0x8B,0x45,12,0xA3}); c.word(DATA + 44);
     c.emit({0x8B,0x45,16,0xA3}); c.word(POSE);
     c.emit({0xFF,0x05}); c.word(WRITES);
     c.emit({0xD9,0xEE,0xDD,0xD9,0x0F,0x57,0xC0,0x33,0xC9,0x33,0xD2,0x5F,0x5D,0xC2,12,0});
-    t7::writeClientMemory(process, BASE + VARIABLE_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + VARIABLE_RVA, c.bytes);
     c.bytes.clear(); c.emit({0x83,0x3D}); c.word(DATA); c.emit({0}); const auto disabled = c.branch(0x84);
     c.emit({0x9C,0x60}); c.store(DATA, 0);
     auto arguments = [&] {
@@ -74,9 +73,7 @@ inline void prepare(HANDLE process) {
     c.emit({0xD9,0x1D}); c.word(DATA + 88);
     c.emit({0x66,0x0F,0x7E,0x05}); c.word(DATA + 92);
     c.emit({0x61,0x9D}); c.bind(disabled); c.emit({0xC3});
-    t7::writeClientMemory(process, DISPATCH, c.bytes);
-    c.bytes.clear(); c.call(DISPATCH); c.emit({0x33,0xC0,0xC2,4,0});
-    t7::writeClientMemory(process, WORKER, c.bytes);
+    t7r::writeClientMemory(process, DISPATCH, c.bytes);
 }
 inline void verify(HANDLE process) {
     using namespace sprintFixture;
@@ -93,12 +90,7 @@ inline void verify(HANDLE process) {
         writeWord(process, POSE, 2); writeWord(process, LAYER + 0xC, 0);
         writeWord(process, DATA + 4, event); writeWord(process, DATA, 1);
         if (worker) {
-            const auto thread = CreateRemoteThread(process, nullptr, 0,
-                reinterpret_cast<LPTHREAD_START_ROUTINE>(static_cast<uintptr_t>(WORKER)), nullptr, 0, nullptr);
-            if (!thread) throw std::runtime_error(t7::errorText("defense exit fixture worker"));
-            const auto result = WaitForSingleObject(thread, 3000);
-            CloseHandle(thread);
-            if (result != WAIT_OBJECT_0) throw std::runtime_error("defense exit fixture worker timeout");
+            movementAnimationFixture::runWorker(process, DISPATCH);
         } else {
             writeWord(process, worldFixture::FRAME_GATE, 2);
         }
@@ -128,7 +120,7 @@ inline void verify(HANDLE process) {
             throw std::runtime_error("filtered defense exit changed native register inputs or flags");
     };
     sample(true);
-    sample(false, 3, 2, 22, true);
+    sample(true, 3, 2, 22, true);
     for (auto state : {305u,308u,307u,306u,223u,224u,225u,226u}) {
         sample(false, 23, state); sample(true);
     }
@@ -137,9 +129,14 @@ inline void verify(HANDLE process) {
     }
     writeWord(process, worldFixture::MOVABLE + 0x60, 0); sample(false);
     writeWord(process, worldFixture::MOVABLE + 0x60, 1); sample(true);
+    for (uint32_t flags : {1u,0x10000u,0x10001u}) {
+        writeWord(process, worldFixture::MOVABLE + 0x20, flags);
+        sample(flags != 0x10001); sample(flags != 0x10001, 3, 2, 22, true);
+    }
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
     sample(false, 27, 235); sample(false, 23, 305); sample(false, 3, 2, 23); sample(true);
     for (const auto& field : std::vector<std::pair<uint32_t, uint32_t>>{
-        {KEYS,17}, {worldFixture::MOVABLE+0x20,1}, {FIGHT+0x98,100000},
+        {KEYS,17}, {FIGHT+0x98,100000},
         {worldFixture::STATE+0x38,3}, {worldFixture::PLAYER+0x34,0},
         {CONTEXT,CHARACTER+0x1000}, {GRAPH+0x20,OTHER_NAME}, {ACTION+0x20,OTHER_NAME},
         {DATA+12,0}, {CONTEXT+8,0}, {MODEL+0x10,0}, {CHARACTER+0x44,0},
@@ -147,15 +144,17 @@ inline void verify(HANDLE process) {
         {sprintFixture::INPUT+0x60,5}, {sprintFixture::INPUT+0x54,0}
     }) {
         const auto previous = readWord(process, field.first);
-        writeWord(process, field.first, field.second); sample(false);
-        writeWord(process, field.first, previous); sample(true);
+        writeWord(process, field.first, field.second); sample(false); sample(false, 3, 2, 22, true);
+        writeWord(process, field.first, previous); sample(true); sample(true, 3, 2, 22, true);
     }
     // Resolve the current model each time; a replaced character must not reuse the old identity.
     writeWord(process, MODEL + 0x10, CHARACTER + 0x1000); sample(false);
-    writeWord(process, CHARACTER + 0x1044, ROOT); writeWord(process, CONTEXT, CHARACTER + 0x1000); sample(true);
+    writeWord(process, CHARACTER + 0x1044, ROOT); writeWord(process, CONTEXT, CHARACTER + 0x1000);
+    sample(true); sample(true, 3, 2, 22, true);
     writeWord(process, MODEL + 0x10, CHARACTER); writeWord(process, CONTEXT, CHARACTER);
+    // Only the physical-jump case emits the native Jump/EndJump pair.
     if (movementAnimationFixture::readFloat(process, worldFixture::CONTROLLER + 0x24) != 3
-        || readWord(process, ANIMATION_EVENTS) != events)
+        || readWord(process, ANIMATION_EVENTS) != events + 2)
         throw std::runtime_error("defense exit event changed physical speed or emitted animation events");
     writeWord(process, ANIMATION + 0x30, previousModel);
     writeWord(process, KEYS, 0); writeWord(process, CLOCK_MODE, 0); writeWord(process, worldFixture::FRAME_GATE, 0);
@@ -163,18 +162,18 @@ inline void verify(HANDLE process) {
 }
 inline void prepare(HANDLE process) {
     defenseExit::prepare(process);
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x83,0x3D}); c.word(DATA); c.emit({0}); const auto disabled = c.branch(0x84);
     c.emit({0x9C,0x60,0xBE}); c.word(MODIFIER); c.emit({0x8B,0x3D}); c.word(DATA + 4);
     c.emit({0xB8}); c.word(SCHEDULE); c.emit({0xBA}); c.word(BASE + WRITER_RVA); c.emit({0xFF,0xD2});
     c.emit({0xA3}); c.word(DATA + 12); c.emit({0x89,0x0D}); c.word(DATA + 16);
     c.emit({0x61,0x9D}); c.bind(disabled); c.emit({0xC3});
-    t7::writeClientMemory(process, DISPATCH, c.bytes);
+    t7r::writeClientMemory(process, DISPATCH, c.bytes);
     // Native writer inputs: ESI modifier, EDI model, EAX {time, AttackMoveDir}.
     c.bytes = {0xFF,0x70,4,0x8B,0xCE};
     c.emit({0x8B,0x14,0x24,0x89,0x15}); c.word(DATA + 8);
     c.emit({0x83,0xC4,4,0xC3});
-    t7::writeClientMemory(process, BASE + WRITER_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + WRITER_RVA, c.bytes);
     writeWord(process, SCHEDULE + 4, 2); writeWord(process, DATA + 4, MODEL);
 }
 inline void verify(HANDLE process) {
@@ -187,14 +186,16 @@ inline void verify(HANDLE process) {
     writeWord(process, ANIMATION + 0x30, MODEL);
     writeWord(process, worldFixture::MOVABLE + 0x60, 1);
     const auto events = readWord(process, ANIMATION_EVENTS);
-    auto sample = [&](uint32_t state, const std::string& name, uint32_t expected) {
+    auto sample = [&](uint32_t state, const std::string& name, uint32_t expected, bool worker = false) {
         setFightState(process, state, 20000);
         writeWord(process, MODIFIER + 0x18, static_cast<uint32_t>(name.size()));
         writeWord(process, MODIFIER + 0x1C, name.size() > 15 ? 31 : 15);
         writeWord(process, MODIFIER + 8, NAME);
-        t7::Bytes text(name.begin(), name.end()); text.push_back(0);
-        t7::writeClientMemory(process, name.size() > 15 ? NAME : MODIFIER + 8, text);
-        writeWord(process, DATA + 8, 99); writeWord(process, worldFixture::FRAME_GATE, 2);
+        t7r::Bytes text(name.begin(), name.end()); text.push_back(0);
+        t7r::writeClientMemory(process, name.size() > 15 ? NAME : MODIFIER + 8, text);
+        writeWord(process, DATA + 8, 99);
+        if (worker) movementAnimationFixture::runWorker(process, DISPATCH);
+        else writeWord(process, worldFixture::FRAME_GATE, 2);
         const auto deadline = GetTickCount64() + 3000;
         while (readWord(process, worldFixture::FRAME_GATE) != 1) {
             if (GetTickCount64() >= deadline) throw std::runtime_error("movement pose sample timeout");
@@ -213,11 +214,13 @@ inline void verify(HANDLE process) {
         writeWord(process, SCHEDULE + 4, combatPose);
         sample(308, name + "Prepare", combatPose); sample(224, name + "Hold", combatPose);
         sample(2, name + "Hold", 0); sample(2, name + "Prepare", 0);
+        sample(224, name + "Hold", combatPose, true); sample(2, name + "Hold", 0, true);
         sample(237, name + "Hold", combatPose); // A new attack keeps native combat selection.
     }
     writeWord(process, SCHEDULE + 4, 2);
     sample(2, "AttackRightHold", 2); sample(2, "Idle", 2);
     writeWord(process, DATA + 4, MODEL + 0x100); sample(2, "ParryRightHold", 2);
+    sample(2, "ParryRightHold", 2, true);
     writeWord(process, DATA + 4, MODEL);
     writeWord(process, FIGHT + 0x98, 100000); sample(2, "ParryRightHold", 2);
     writeWord(process, FIGHT + 0x98, static_cast<uint32_t>(movementAnimationFixture::profile().weaponId));
@@ -227,10 +230,15 @@ inline void verify(HANDLE process) {
     }
     writeWord(process, worldFixture::MOVABLE + 0x60, 1);
     writeWord(process, KEYS, 17); sample(2, "ParryRightHold", 2); writeWord(process, KEYS, 1);
-    writeWord(process, worldFixture::MOVABLE + 0x20, 1); sample(2, "ParryRightHold", 2);
+    for (uint32_t flags : {1u,0x10000u,0x10001u}) {
+        writeWord(process, worldFixture::MOVABLE + 0x20, flags);
+        const uint32_t expected = flags == 0x10001 ? 2 : 0;
+        sample(2, "ParryRightHold", expected); sample(2, "ParryRightHold", expected, true);
+    }
     writeWord(process, worldFixture::MOVABLE + 0x20, 0); sample(2, "ParryRightHold", 0);
+    // Only the physical-jump case emits the native Jump/EndJump pair.
     if (movementAnimationFixture::readFloat(process, worldFixture::CONTROLLER + 0x24) != 3
-        || readWord(process, ANIMATION_EVENTS) != events)
+        || readWord(process, ANIMATION_EVENTS) != events + 2)
         throw std::runtime_error("movement pose selection changed physical speed or sent an animation event");
     writeWord(process, ANIMATION + 0x30, previousModel);
     writeWord(process, DATA, 0); writeWord(process, KEYS, 0); writeWord(process, CLOCK_MODE, 0);

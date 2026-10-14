@@ -7,9 +7,9 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed class AboutViewModel : ObservableObject, IDisposable
     {

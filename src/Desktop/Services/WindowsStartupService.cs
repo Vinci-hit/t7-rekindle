@@ -1,7 +1,7 @@
 using System;
 using Microsoft.Win32;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal static class WindowsStartupService
     {

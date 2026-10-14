@@ -1,4 +1,4 @@
-<UserControl x:Class="T7.Rekindle.Desktop.Views.AudioSettingsPanel"
+<UserControl x:Class="T7R.Desktop.Views.AudioSettingsPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <UserControl.Resources>

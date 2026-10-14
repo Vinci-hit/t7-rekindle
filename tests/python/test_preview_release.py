@@ -14,7 +14,7 @@ from test_release_mirror import MemoryStore
 
 def environment(**changes):
     return {"GITHUB_REF_TYPE": "branch", "GITHUB_REF_NAME": "main",
-            "GITHUB_EVENT_NAME": "push", "T7_DEFAULT_BRANCH": "main",
+            "GITHUB_EVENT_NAME": "push", "T7R_DEFAULT_BRANCH": "main",
             "GITHUB_RUN_ID": "101", "GITHUB_RUN_NUMBER": "12", "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_SHA": "a" * 40, **changes}
 
@@ -23,7 +23,7 @@ def test_build_identity_and_eligibility(tmp_path):
     for changes, expected in [({}, True), ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, True),
                               ({"GITHUB_EVENT_NAME": "pull_request"}, False),
                               ({"GITHUB_REF_NAME": "feature"}, False),
-                              ({"T7_DEFAULT_BRANCH": ""}, False)]:
+                              ({"T7R_DEFAULT_BRANCH": ""}, False)]:
         destination = tmp_path / "env"
         destination.write_text("", encoding="utf-8")
         release_metadata.prepare_build(environment(GITHUB_ENV=str(destination), **changes))

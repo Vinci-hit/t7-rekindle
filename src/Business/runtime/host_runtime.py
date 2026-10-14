@@ -1,4 +1,4 @@
-"""Trusted embedded business packages; no transport or persistent PyObject state."""
+"""Trusted business revisions; native owns transport and read-only observation caches."""
 from __future__ import annotations
 
 import atexit
@@ -11,6 +11,7 @@ import os
 import shutil
 from pathlib import Path
 import sys
+from time import perf_counter_ns
 import uuid
 
 # Packaged pure-Python dependencies; the isolated host does not load site-packages.
@@ -109,7 +110,7 @@ class Revision:
             digest.update(relative.encode() + b"\0" + data + b"\0")
             contents.append((relative, data))
         self.version = digest.hexdigest()
-        self.name = "t7rev_" + uuid.uuid4().hex
+        self.name = "t7r_rev_" + uuid.uuid4().hex
         self.cache = Path(cache).resolve()
         self.path = self.cache / self.name
         self.path.mkdir(parents=True, exist_ok=False)
@@ -150,9 +151,18 @@ def _integer(value, minimum, maximum, field):
         raise ValueError(f"invalid {field}")
 
 
-def validateTransition(result, context):
-    if type(result) is not dict or set(result) != {"state", "send", "timers", "logs"}:
+def _validateTransition(result, context):
+    if type(result) is not dict or set(result) - {'titleRequest'} != {"state", "send", "timers", "logs"}:
         raise ValueError("transition requires state/send/timers/logs")
+    request = result.get('titleRequest')
+    if request is not None:
+        if type(request) is not dict or set(request) != {'requestId', 'epoch', 'titleId', 'connection'}:
+            raise ValueError('invalid title request')
+        for name in ('requestId', 'epoch', 'connection'):
+            _integer(request[name], 1, (1 << 63) - 1, name)
+        _integer(request['titleId'], 0, 0x7fffffff, 'titleId')
+        if request['connection'] not in context.get('connections', []):
+            raise ValueError('title request has no live connection')
     for field in ("send", "timers", "logs"):
         if type(result[field]) is not list or len(result[field]) > 256:
             raise ValueError(f"invalid transition {field}")
@@ -183,7 +193,6 @@ def validateTransition(result, context):
         if timer["event"].get("connection") not in live:
             raise ValueError("timer targets a non-live connection")
         _integer(timer["event"]["connection"], 1, (1 << 63) - 1, "timer connection")
-        encode(timer["event"])
     for log in result["logs"]:
         if type(log) is dict:
             if (set(log) != {"level", "message"} or type(log["level"]) is not str
@@ -194,7 +203,18 @@ def validateTransition(result, context):
             message = log
         if type(message) is not str or len(message) > 4096:
             raise ValueError("invalid business log")
-    encode(result["state"])
+
+
+def validateTransition(result, context):
+    _validateTransition(result, context)
+    for timer in result['timers']:
+        encode(timer['event'])
+    encode(result['state'])
+
+
+def _phase(value):
+    label = value.get('phase', '') if type(value) is dict else ''
+    return label[:128] if type(label) is str else ''
 
 
 class Runtime:
@@ -217,9 +237,7 @@ class Runtime:
         return result
 
     def phase(self, state):
-        value = decode(state)
-        label = value.get("phase", "") if type(value) is dict else ""
-        return label[:128] if type(label) is str else ""
+        return _phase(decode(state))
 
     def version(self):
         return self.active.version
@@ -232,24 +250,69 @@ class Runtime:
         return candidate.version
 
     def create(self, context):
-        value = self.active.module.createState(decode(context))
+        context = decode(context)
+        if context.get('playerProfilePath'):
+            store = self.profileStore()
+            profile = importlib.import_module(self.active.name + '.player_profile')
+            resources = importlib.import_module(self.active.name + '.hero_resources')
+            catalogue = resources.loadCatalogue(context['clientDirectory'])
+            saved, warnings = store.load(context['playerProfilePath'], lambda v: profile.validate(v, catalogue))
+            self.cleanupWarnings.extend(warnings)
+            if saved is not None:
+                context['playerProfile'] = saved
+        value = self.active.module.createState(context)
         if self.active.module.validateState(value) is not True:
             raise ValueError("initial state rejected")
         return encode(value)
+
+    @staticmethod
+    def profileStore():
+        if __package__:
+            return importlib.import_module(__package__ + '.profile_store')
+        return importlib.import_module('profile_store')
 
     def checkResources(self, clientDirectory, playerName=''):
         module = importlib.import_module(self.active.name + '.client_resources')
         return module.checkResources(clientDirectory, playerName)
 
     def dispatch(self, event, state, context):
-        contextValue = decode(context)
-        result = self.active.module.handleEvent(decode(event), decode(state), contextValue)
-        validateTransition(result, contextValue)
+        return self.dispatchNative(decode(event), state, decode(context))[:4]
+
+    def dispatchNative(self, event, state, context):
+        started = perf_counter_ns()
+        if type(event) is str:
+            event = decode(event)
+        stateValue = decode(state)
+        decoded = perf_counter_ns()
+        result = self.active.module.handleEvent(event, stateValue, context)
+        handled = perf_counter_ns()
+        _validateTransition(result, context)
         if self.active.module.validateState(result["state"]) is not True:
             raise ValueError("business state rejected")
-        return (encode(result["state"]), result["send"],
-                [(item["id"], item["delayMs"], encode(item["event"]), item["event"]["connection"]) for item in result["timers"]],
-                [dict(level="INFO", message=log) if type(log) is str else log for log in result["logs"]])
+        validated = perf_counter_ns()
+        encoded = encode(result['state'])
+        timers = [(item['id'], item['delayMs'], encode(item['event']), item['event']['connection'])
+                  for item in result['timers']]
+        logs = [dict(level='INFO', message=log) if type(log) is str else log for log in result['logs']]
+        phase = _phase(result['state'])
+        profile = result['state'].get('playerProfile')
+        previous = stateValue.get('playerProfile')
+        if context.get('playerProfilePath') and profile is not None and profile != previous:
+            try:
+                self.profileStore().save(context['playerProfilePath'], profile, previous)
+            except (OSError, ValueError) as error:
+                handler = importlib.import_module(self.active.name + '.loadouts')
+                result = handler.saveFailed(event, stateValue, context, error)
+                validateTransition(result, context)
+                if self.active.module.validateState(result['state']) is not True:
+                    raise ValueError('profile rollback state rejected')
+                encoded = encode(result['state'])
+                timers = [(i['id'], i['delayMs'], encode(i['event']), i['event']['connection']) for i in result['timers']]
+                logs, phase = result['logs'], _phase(result['state'])
+        finished = perf_counter_ns()
+        timing = dict(decodeMs=(decoded - started) / 1e6, handlerMs=(handled - decoded) / 1e6,
+                      validationMs=(validated - handled) / 1e6, encodeMs=(finished - validated) / 1e6)
+        return encoded, result['send'], timers, logs, phase, timing, result.get('titleRequest')
 
     def switch(self, state, rollback=False):
         target = self.previous if rollback else self.candidate

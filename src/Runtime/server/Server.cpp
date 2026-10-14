@@ -4,7 +4,7 @@
 #include "../core/DiagnosticLog.h"
 #include <algorithm>
 
-namespace t7 {
+namespace t7r {
 namespace {
 struct ConnectionClosed : std::runtime_error { using std::runtime_error::runtime_error; };
 
@@ -33,7 +33,9 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
         std::lock_guard<std::mutex> lock(mutex_);
         lastLines_.clear();
         world_ = {};
+        worldVersion_ = 0;
         worldPending_ = false;
+        titleEpoch_ = 0; titleRequest_ = {};
     }
     validateConfig(config); config_ = config; boundConfig_ = config; root_ = root;
     audioLog_ = audioLog;
@@ -91,6 +93,7 @@ void Server::stop() {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& item : sessions_) closesocket(item.second.socket);
         sessions_.clear(); events_.clear(); eventBytes_ = 0; snapshot_.status = "stopped";
+        world_.reset(); worldPending_ = false;
         // Do not leave callers with ports from a listener that has already
         // been closed (including a partially failed start transaction).
         boundConfig_.ports[0] = boundConfig_.ports[1] = boundConfig_.ports[2] = 0;
@@ -168,6 +171,21 @@ void Server::command(const std::string& name) {
         event.connection = sessions_.begin()->first;
     }
     queue(std::move(event));
+}
+void Server::publishTitles(uint64_t epoch, const std::string& json, uint64_t requestId, bool success) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_ || !ready_) throw std::runtime_error("title runtime is not ready");
+    if (epoch < titleEpoch_) return;
+    if (events_.size() >= 1024) throw std::runtime_error("title event queue full");
+    Event event; event.type = "titles"; event.sequence = epoch; event.serverTime = requestId;
+    event.command = success ? 0 : 1; event.body.assign(json.begin(), json.end());
+    queue(std::move(event));
+    if (epoch != titleEpoch_ || requestId == titleRequest_.requestId) titleRequest_ = {};
+    titleEpoch_ = epoch;
+}
+TitleRequest Server::titleRequest() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return titleRequest_;
 }
 ServerSnapshot Server::snapshot() {
     std::lock_guard<std::mutex> lock(mutex_); auto result = snapshot_;
@@ -352,6 +370,7 @@ void Server::processControl(PythonHost& python, const Event& event, std::string&
 }
 void Server::commit(Transition& result, const QueuedEvent& event, const std::string& version,
                     std::string phase, TimePoint now, double callbackMs, std::string& state, Timers& timers, bool& committed) {
+    const auto commitStarted = detail::Clock::now();
     std::vector<PendingWrite> writes;
     auto label = "event=" + std::to_string(event.id) + " ";
     for (const auto& message : result.send) writes.push_back({plainFrame(message.command, 0, message.body), 0, version, label + message.reason});
@@ -388,6 +407,9 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         session.send.swap(replacement.second); session.queued += totals.at(replacement.first);
     }
     state.swap(result.state); timers.swap(nextTimers); snapshot_.phase.swap(phase); snapshot_.timers = timers.size();
+    if (result.titleRequest.requestId && result.titleRequest.epoch == titleEpoch_) titleRequest_ = result.titleRequest;
+    if ((event.type == "closed" || event.timerId == std::to_string(event.connection) + ":title-request-timeout")
+        && titleRequest_.connection == event.connection) titleRequest_ = {};
     for (const auto& change : result.timers) {
         for (auto it = events_.begin(); it != events_.end();) {
             if (it->timerId != change.id) { ++it; continue; }
@@ -396,11 +418,25 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         }
     }
     committed = true;
+    const auto publishedAt = detail::Clock::now();
     const auto queuedTick = GetTickCount();
     auto late = event.due == TimePoint::max() ? 0.0 : elapsedMs(event.due, event.queuedAt);
     journal_->add(DiagnosticLogLevel::Debug, "COMMIT", event.connection, version, label + event.type + " command=" + std::to_string(event.command)
         + " sends=" + std::to_string(result.send.size()) + " queueMs=" + std::to_string(elapsedMs(event.queuedAt, now))
-        + " callbackMs=" + std::to_string(callbackMs) + " timerLateMs=" + std::to_string(late));
+        + " callbackMs=" + std::to_string(callbackMs) + " timerLateMs=" + std::to_string(late)
+        + " contextMs=" + std::to_string(result.timing.contextMs)
+        + " decodeMs=" + std::to_string(result.timing.decodeMs)
+        + " handlerMs=" + std::to_string(result.timing.handlerMs)
+        + " validationMs=" + std::to_string(result.timing.validationMs)
+        + " encodeMs=" + std::to_string(result.timing.encodeMs)
+        + " resultMs=" + std::to_string(result.timing.resultMs)
+        + " commitMs=" + std::to_string(elapsedMs(commitStarted, publishedAt))
+        + " dispatchMs=" + std::to_string(elapsedMs(now, publishedAt))
+        + " totalMs=" + std::to_string(elapsedMs(event.queuedAt, publishedAt))
+        + " commitAt=" + std::to_string(clock_.millis(publishedAt))
+        + " worldVersion=" + std::to_string(result.timing.worldVersion)
+        + " contextRebuilt=" + std::to_string(result.timing.contextRebuilt)
+        + " queuedEvents=" + std::to_string(events_.size()));
     if (!writes.empty()) signals_->io();
     for (const auto& line : result.logs) journal_->add(line.level, "BUSINESS", event.connection, version, label + line.message);
     lock.unlock();
@@ -421,15 +457,15 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
     bool committed = false;
     try {
         if (event.type == "control") { processControl(python, event, state); return; }
-        if (event.type != "closed" && event.type != "world"
+        if (event.type != "closed" && event.type != "world" && event.type != "titles"
             && std::find(live.begin(), live.end(), event.connection) == live.end()) return;
         auto now = detail::Clock::now();
-        WorldSnapshot world;
-        { std::lock_guard<std::mutex> lock(mutex_); world = world_; }
-        if (event.type != "world") world.contacts.clear();
-        auto result = python.dispatch(event, state, python.context(boundConfig_, clock_.millis(now), live, world));
+        std::shared_ptr<const PublishedWorld> world;
+        { std::lock_guard<std::mutex> lock(mutex_); world = event.type == "world" ? event.world : world_; }
+        auto result = python.dispatchNative(event, state, clock_.millis(now), live, world.get());
         auto callbackMs = elapsedMs(now, detail::Clock::now());
-        commit(result, event, python.version(), python.phase(result.state), now, callbackMs, state, timers, committed);
+        auto phase = std::move(result.phase);
+        commit(result, event, python.version(), std::move(phase), now, callbackMs, state, timers, committed);
     } catch (const std::exception& e) {
         if (committed) {
             fail(std::runtime_error("fatal after committed event=" + std::to_string(event.id) + ": " + e.what()));
@@ -456,15 +492,19 @@ void Server::updateWorld(const WorldSnapshot& world) {
         contact.phaseAt = translated(contact.phaseAt); contact.targetPhaseAt = translated(contact.targetPhaseAt);
         contact.occurredAt += static_cast<double>(now) - static_cast<double>(uptime);
     }
+    auto published = std::make_shared<PublishedWorld>(PublishedWorld{0, std::move(value)});
     std::lock_guard<std::mutex> lock(mutex_);
     if (stopping_) return;
     if (worldPending_) throw std::runtime_error("world snapshot is still awaiting consumption");
-    world_ = value;
-    if ((value.ready || !value.contacts.empty() || value.droppedContacts) && std::any_of(sessions_.begin(), sessions_.end(), [](const auto& item) {
+    published->version = ++worldVersion_;
+    world_ = std::move(published);
+    const auto& snapshot = world_->snapshot;
+    if ((snapshot.ready || !snapshot.contacts.empty() || snapshot.droppedContacts) && std::any_of(sessions_.begin(), sessions_.end(), [](const auto& item) {
             return item.second.authenticated && item.second.role == "instance";
         })) {
         Event event; event.type = "world";
         queue(std::move(event));
+        events_.back().world = world_;
         worldPending_ = true;
     }
 }
@@ -477,11 +517,13 @@ void Server::businessLoop() {
                 std::lock_guard<std::mutex> lock(mutex_);
                 boundConfig_.dashAttack = resources.dashAttack;
                 boundConfig_.movementAnimation = resources.movementAnimation;
+                boundConfig_.combatProfiles = resources.combatProfiles;
+                boundConfig_.playerProfilePath = writableRoot_ / "player-profile.json";
             }
             for (const auto& diagnostic : resources.diagnostics)
                 journal_->add(diagnostic.level, "RESOURCE", 0, python.version(), diagnostic.message);
         }
-        std::string state = python.create(python.context(boundConfig_, clock_.millis(), {}));
+        std::string state = python.create(python.initializeContext(boundConfig_, clock_.millis()));
         Timers timers;
         {
             std::lock_guard<std::mutex> lock(mutex_);

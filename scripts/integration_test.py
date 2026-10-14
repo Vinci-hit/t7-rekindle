@@ -14,7 +14,7 @@ def run(root: Path) -> dict:
     # embedded CPython owner that it is testing.
     import build
 
-    host = root / "artifacts/native/bin/x64/Release/T7.RuntimeTests.exe"
+    host = root / "artifacts/native/bin/x64/Release/T7R.RuntimeTests.exe"
     if not host.is_file():
         raise FileNotFoundError(
             "native integration host is missing; run `python scripts/build.py --project native-tests` first"

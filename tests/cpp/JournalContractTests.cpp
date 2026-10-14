@@ -5,14 +5,14 @@
 #include <thread>
 
 namespace {
-bool verifyLevels(const t7::fs::path& root) {
-    auto filter = std::make_shared<t7::DiagnosticLogFilter>();
-    t7::Journal journal(root, 64 * 1024 * 1024, 160, filter);
+bool verifyLevels(const t7r::fs::path& root) {
+    auto filter = std::make_shared<t7r::DiagnosticLogFilter>();
+    t7r::Journal journal(root, 64 * 1024 * 1024, 160, filter);
     for (uint32_t minimum = 0; minimum <= 3; ++minimum) {
-        filter->minimum.store(static_cast<t7::DiagnosticLogLevel>(minimum));
+        filter->minimum.store(static_cast<t7r::DiagnosticLogLevel>(minimum));
         for (uint32_t level = 0; level <= 3; ++level) {
             const auto before = journal.lines().size();
-            journal.add(static_cast<t7::DiagnosticLogLevel>(level), "BUSINESS", 1, "fixture", "matrix");
+            journal.add(static_cast<t7r::DiagnosticLogLevel>(level), "BUSINESS", 1, "fixture", "matrix");
             if (journal.lines().size() != before + (level >= minimum ? 1u : 0u)) return false;
         }
     }
@@ -27,10 +27,10 @@ bool verifyLevels(const t7::fs::path& root) {
     return count == 16 && journal.lines().size() == 10;
 }
 
-bool verifyFinalRecords(const t7::fs::path& root) {
-    t7::Journal journal(root);
-    t7::fs::create_directory(root / "frames-1.bin");
-    journal.add(t7::DiagnosticLogLevel::Error, "ERROR", 42, "synthetic", "fixture business failure");
+bool verifyFinalRecords(const t7r::fs::path& root) {
+    t7r::Journal journal(root);
+    t7r::fs::create_directory(root / "frames-1.bin");
+    journal.add(t7r::DiagnosticLogLevel::Error, "ERROR", 42, "synthetic", "fixture business failure");
     const auto original = journal.lines().front();
     journal.stop();
     journal.stop();
@@ -45,11 +45,11 @@ bool verifyFinalRecords(const t7::fs::path& root) {
         });
 }
 
-bool verifyWriteFailure(const t7::fs::path& root) {
-    t7::Journal journal(root);
-    t7::fs::create_directory(root / "frames-1.bin");
+bool verifyWriteFailure(const t7r::fs::path& root) {
+    t7r::Journal journal(root);
+    t7r::fs::create_directory(root / "frames-1.bin");
     for (unsigned i = 0; i < 20000; ++i) {
-        journal.add(t7::DiagnosticLogLevel::Info, "TEST", i, "synthetic", "queued");
+        journal.add(t7r::DiagnosticLogLevel::Info, "TEST", i, "synthetic", "queued");
         if (i % 100 == 0) {
             const auto lines = journal.lines();
             if (std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
@@ -73,38 +73,38 @@ bool verifyWriteFailure(const t7::fs::path& root) {
     return false;
 }
 
-bool verifyRetention(const t7::fs::path& data) {
-    t7::RunDirectory active(data);
+bool verifyRetention(const t7r::fs::path& data) {
+    t7r::RunDirectory active(data);
     std::ofstream(active.path() / "active.bin", std::ios::binary) << std::string(1024, 'a');
-    std::vector<t7::fs::path> paths;
+    std::vector<t7r::fs::path> paths;
     for (unsigned i = 0; i < 20; ++i) {
-        t7::RunDirectory ended(data);
-        t7::fs::create_directory(ended.path() / "wire");
-        t7::fs::create_directory(ended.path() / "revisions");
+        t7r::RunDirectory ended(data);
+        t7r::fs::create_directory(ended.path() / "wire");
+        t7r::fs::create_directory(ended.path() / "revisions");
         std::ofstream(ended.path() / "wire/frame.bin", std::ios::binary) << std::string(20, 'w');
         std::ofstream(ended.path() / "revisions/source.py", std::ios::binary) << std::string(20, 'r');
         paths.push_back(ended.path());
         ended.finish();
         Sleep(1);
     }
-    auto count = std::count_if(paths.begin(), paths.end(), [](const t7::fs::path& path) { return t7::fs::exists(path); });
-    if (count != 16 || t7::fs::exists(paths.front()) || !t7::fs::exists(paths.back())) return false;
-    t7::RunDirectory::prune(data, 16, 80);
-    count = std::count_if(paths.begin(), paths.end(), [](const t7::fs::path& path) { return t7::fs::exists(path); });
-    if (count != 2 || !t7::fs::exists(active.path() / "active.bin")) return false;
+    auto count = std::count_if(paths.begin(), paths.end(), [](const t7r::fs::path& path) { return t7r::fs::exists(path); });
+    if (count != 16 || t7r::fs::exists(paths.front()) || !t7r::fs::exists(paths.back())) return false;
+    t7r::RunDirectory::prune(data, 16, 80);
+    count = std::count_if(paths.begin(), paths.end(), [](const t7r::fs::path& path) { return t7r::fs::exists(path); });
+    if (count != 2 || !t7r::fs::exists(active.path() / "active.bin")) return false;
     // A released lease is collectible even if the process never called finish().
-    t7::fs::path abandoned;
+    t7r::fs::path abandoned;
     {
-        t7::RunDirectory run(data);
+        t7r::RunDirectory run(data);
         abandoned = run.path();
         std::ofstream(abandoned / "large.bin", std::ios::binary) << std::string(100, 'x');
     }
-    t7::RunDirectory::prune(data, 16, 80);
-    return !t7::fs::exists(abandoned) && t7::fs::exists(active.path());
+    t7r::RunDirectory::prune(data, 16, 80);
+    return !t7r::fs::exists(abandoned) && t7r::fs::exists(active.path());
 }
 }
 
-bool verifyJournalContracts(const t7::fs::path& fixtureRoot) {
+bool verifyJournalContracts(const t7r::fs::path& fixtureRoot) {
     return verifyLevels(fixtureRoot / "journal-levels")
         && verifyWriteFailure(fixtureRoot / "journal-failure")
         && verifyFinalRecords(fixtureRoot / "journal-final-records")

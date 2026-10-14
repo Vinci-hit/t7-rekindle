@@ -4,7 +4,7 @@
 #include <thread>
 #include <string_view>
 
-namespace t7 {
+namespace t7r {
 // The client copies browser addresses into a 128-byte shared-memory field.
 struct LobbyNewsHooks {
     Bytes bytes;

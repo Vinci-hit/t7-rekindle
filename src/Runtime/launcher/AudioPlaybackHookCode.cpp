@@ -1,7 +1,7 @@
 #include "AudioPlaybackTrace.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 class Code {
 public:

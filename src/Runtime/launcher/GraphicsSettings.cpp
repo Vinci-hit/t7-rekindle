@@ -4,10 +4,11 @@
 #include "MovementAnimationHookCode.h"
 #include "MovementCommandHookCode.h"
 #include "SprintHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <algorithm>
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 void write(HANDLE process, uint32_t address, const void* data, size_t size) {
     SIZE_T actual = 0;
@@ -18,7 +19,8 @@ void write(HANDLE process, uint32_t address, const void* data, size_t size) {
 }
 }
 void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash,
-                               const MovementAnimationProfile& animation, const fs::path& audioDirectory) {
+                               const MovementAnimationProfile& animation, const std::vector<CombatProfile>& profiles) {
+    const bool movementEnabled = animation.enabled || !profiles.empty();
     if (process_ || !process) throw std::runtime_error("graphics bridge installation state");
     if (readClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL.size()) != GRAPHICS_TICK_ORIGINAL
         || readClientMemory(process, imageBase + 0x6EA040, 5) != Bytes{0x55, 0x8B, 0xEC, 0x6A, 0xFF})
@@ -27,18 +29,14 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         if (readClientMemory(process, imageBase + rva, 6) != Bytes{0x55, 0x8B, 0xEC, 0x8A, 0x45, 0x08})
             throw std::runtime_error("audio setter signature mismatch");
     verifyWorldFunctions(process, imageBase);
-    if (animation.enabled) verifyMovementAnimationFunction(process, imageBase);
-    const auto audioRoot = buildAudioRoot(audioDirectory);
-    Bytes originalAudioRoot{0x68};
-    for (uint32_t value : {imageBase + 0x17799F0, imageBase + 0x16F6080}) {
-        for (unsigned shift = 0; shift < 32; shift += 8)
-            originalAudioRoot.push_back(static_cast<unsigned char>(value >> shift));
-        if (originalAudioRoot.size() == 5) originalAudioRoot.insert(originalAudioRoot.end(), {0xFF, 0x15});
-    }
-    if (!audioRoot.empty() && readClientMemory(process, imageBase + AUDIO_ROOT_INIT_RVA, originalAudioRoot.size()) != originalAudioRoot)
-        throw std::runtime_error("audio directory initialization signature mismatch");
+    if (readClientMemory(process, imageBase + TITLE_REFRESH_RVA, 6) != Bytes{0x55,0x8B,0xEC,0x6A,0xFF,0x68})
+        throw std::runtime_error("title table refresh signature mismatch");
+    if (!profiles.empty() && readClientMemory(process, imageBase + 0xF34F0, 4) != Bytes{0x8B,0x41,0x2C,0xC3})
+        throw std::runtime_error("combat profile hero getter signature mismatch");
+    if (movementEnabled) verifyMovementAnimationFunction(process, imageBase);
     constexpr auto worldOffset = GRAPHICS_PAGE_SIZE + AUDIO_PAGE_SIZE;
-    constexpr auto size = worldOffset + WORLD_PAGE_SIZE;
+    constexpr auto titleOffset = worldOffset + WORLD_PAGE_SIZE;
+    constexpr auto size = titleOffset + TITLE_PAGE_SIZE;
     const auto remote = VirtualAllocEx(process, nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remote) throw std::runtime_error(errorText("graphics mailbox allocation"));
     const auto pointer = reinterpret_cast<uintptr_t>(remote);
@@ -49,22 +47,27 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     bool defenseExitPatched = false;
     bool jumpPhysicsPatched = false;
     bool movementCommandPatched = false;
+    bool airInputPatched = false;
     try {
         if (pointer > UINT32_MAX - size) throw std::runtime_error("settings mailbox outside x86 range");
         const auto base = static_cast<uint32_t>(pointer);
         auto bytes = buildGraphicsHook(base, imageBase, threadId, base + GRAPHICS_PAGE_SIZE + AUDIO_CODE_OFFSET,
-                                       base + worldOffset + WORLD_CODE_OFFSET);
-        const auto audioBytes = buildAudioHook(base + GRAPHICS_PAGE_SIZE, imageBase, threadId, !audioRoot.empty());
+                                  base + worldOffset + WORLD_CODE_OFFSET, base + titleOffset + TITLE_CODE_OFFSET);
+        const auto audioBytes = buildAudioHook(base + GRAPHICS_PAGE_SIZE, imageBase, threadId);
         bytes.insert(bytes.end(), audioBytes.begin(), audioBytes.end());
-        std::copy(audioRoot.begin(), audioRoot.end(), bytes.begin() + GRAPHICS_PAGE_SIZE + AUDIO_ROOT_OFFSET);
-        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId, dash, animation);
+        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId, dash, animation, profiles);
         bytes.insert(bytes.end(), worldBytes.begin(), worldBytes.end());
+        const auto titleBytes = buildTitleHook(base + titleOffset, imageBase, threadId);
+        bytes.insert(bytes.end(), titleBytes.begin(), titleBytes.end());
         write(process, base, bytes.data(), bytes.size());
         DWORD previous = 0;
         if (!VirtualProtectEx(process, reinterpret_cast<void*>(pointer + GRAPHICS_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + titleOffset + TITLE_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + GRAPHICS_PAGE_SIZE + AUDIO_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
-            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + WORLD_CODE_OFFSET), ACTORS_DATA_OFFSET - WORLD_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + WORLD_CODE_OFFSET), WORLD_CODE_END - WORLD_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + CONTACT_CODE_OFFSET), LIVE_ACTORS_OFFSET - CONTACT_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + COMBAT_PROFILE_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + COMBAT_PROFILES_OFFSET), COMBAT_PROFILE_CODE_OFFSET - COMBAT_PROFILES_OFFSET, PAGE_READONLY, &previous)
             || !FlushInstructionCache(process, remote, bytes.size()))
             throw std::runtime_error(errorText("graphics code protection/cache"));
         Bytes jump(7, 0x90); jump[0] = 0xE9;
@@ -73,7 +76,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         roundEndPatched = true;
         for (const auto& entry : roundEndJumps(base + worldOffset, imageBase))
             writeClientMemory(process, imageBase + entry.first, entry.second);
-        if (animation.enabled) {
+        if (movementEnabled) {
             animationPatched = true;
             writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, movementAnimationJump(base + worldOffset, imageBase));
             posePatched = true;
@@ -85,28 +88,24 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         writeClientMemory(process, imageBase + JUMP_PHYSICS_RVA, jumpPhysicsJump(base + worldOffset, imageBase));
         movementCommandPatched = true;
         writeClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, movementCommandJump(base + worldOffset, imageBase));
-        std::vector<MemoryPatch> patches{{GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL, jump}};
-        if (!audioRoot.empty()) {
-            auto replacement = originalAudioRoot;
-            const auto path = base + GRAPHICS_PAGE_SIZE + AUDIO_ROOT_OFFSET;
-            std::memcpy(replacement.data() + 1, &path, sizeof(path));
-            patches.push_back({AUDIO_ROOT_INIT_RVA, originalAudioRoot, replacement});
-        }
-        applyRemotePatches(process, imageBase, patches); patched = true;
+        airInputPatched = true;
+        writeClientMemory(process, imageBase + AIR_INPUT_RVA, airInputJump(base + worldOffset, imageBase));
+        applyRemotePatches(process, imageBase, {{GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL, jump}}); patched = true;
         process_ = process; remote_ = base; imageBase_ = imageBase;
-        audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase, !audioRoot.empty());
+        audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase);
         world_.attach(process, base + worldOffset);
+        titles_.attach(process, base + titleOffset);
     } catch (...) {
         // install() runs before the first ResumeThread, so rollback cannot race execution.
         if (patched) {
             writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL);
-            if (!audioRoot.empty()) writeClientMemory(process, imageBase + AUDIO_ROOT_INIT_RVA, originalAudioRoot);
         }
         if (animationPatched) writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, MOVEMENT_ANIMATION_ORIGINAL);
         if (posePatched) writeClientMemory(process, imageBase + MOVEMENT_POSE_RVA, MOVEMENT_POSE_ORIGINAL);
         if (defenseExitPatched) writeClientMemory(process, imageBase + DEFENSE_EXIT_RVA, DEFENSE_EXIT_ORIGINAL);
         if (jumpPhysicsPatched) writeClientMemory(process, imageBase + JUMP_PHYSICS_RVA, JUMP_PHYSICS_ORIGINAL);
         if (movementCommandPatched) writeClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL);
+        if (airInputPatched) writeClientMemory(process, imageBase + AIR_INPUT_RVA, AIR_INPUT_ORIGINAL);
         if (roundEndPatched)
             for (const auto& entry : roundEndOriginals(imageBase))
                 writeClientMemory(process, imageBase + entry.first, entry.second);
@@ -115,6 +114,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     }
 }
 void GraphicsSettings::clear() {
+    titles_.clear();
     if (process_ && WaitForSingleObject(process_, 0) != WAIT_OBJECT_0)
         throw std::runtime_error("graphics bridge cleanup requires terminated owned client");
     audio_.clear();

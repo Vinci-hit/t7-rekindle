@@ -10,23 +10,44 @@ using System.Windows.Controls;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class DiagnosticLogTests
     {
         internal static void Run(string directory, string output)
         {
+            TestConfiguration(directory);
             TestTimestamps(directory);
             TestForwardedLogs(directory);
             TestSingleExceptionRecord(directory);
             TestDiagnosticScrolling(output);
             TestLiveDiagnostics(directory);
+        }
+
+        private static void TestConfiguration(string directory)
+        {
+            var path = Path.Combine(directory, "log-configuration", "desktop.log");
+            using (var factory = new LogFactory { ThrowConfigExceptions = true, ThrowExceptions = true })
+            {
+                var configuration = new XmlLoggingConfiguration(
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NLog.config"), factory);
+                var target = (FileTarget)configuration.FindTargetByName("file");
+                Assert(target != null, "desktop file log target is missing");
+                target.FileName = path;
+                factory.Configuration = configuration;
+                factory.GetLogger("configuration").Info("configuration fixture");
+                factory.Flush();
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+                using (var reader = new StreamReader(stream))
+                    Assert(reader.ReadToEnd().Contains("|INFO|configuration|configuration fixture"),
+                        "desktop log configuration did not write the record");
+            }
         }
 
         private static void TestTimestamps(string directory)

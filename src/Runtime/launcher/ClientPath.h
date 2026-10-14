@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 
-namespace t7 {
+namespace t7r {
 inline fs::path resolveLauncherPath(const fs::path& launcherDirectory, const fs::path& selected) {
     if (selected.has_root_path() && !selected.is_absolute())
         throw std::runtime_error("客户端目录请使用完整绝对路径，或相对于启动器的路径。");

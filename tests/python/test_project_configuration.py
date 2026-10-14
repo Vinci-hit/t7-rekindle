@@ -40,9 +40,9 @@ def write_sdk(directory, root, marker):
 def configuration(tmp_path):
     for name in ("Directory.Build.props", "Managed.Common.props", "Managed.Common.targets"):
         shutil.copy2(ROOT / name, tmp_path / name)
-    project = tmp_path / "src/Core/T7.Core.csproj"
+    project = tmp_path / "src/Core/T7R.Core.csproj"
     project.parent.mkdir(parents=True)
-    shutil.copy2(ROOT / "src/Core/T7.Core.csproj", project)
+    shutil.copy2(ROOT / "src/Core/T7R.Core.csproj", project)
     fallback = tmp_path / "system-sdk"
     write_sdk(fallback, tmp_path, "system")
     environment = {"MSBuildSDKsPath": str(fallback),
@@ -119,8 +119,8 @@ def test_portable_sdk_preserves_explicit_package_cache(msbuild, configuration):
 
 
 def test_managed_projects_use_matching_explicit_sdk_imports():
-    for path in ("src/Core/T7.Core.csproj", "src/Desktop/T7.Desktop.csproj",
-                 "tests/managed/T7.ManagedHarness.csproj"):
+    for path in ("src/Core/T7R.Core.csproj", "src/Desktop/T7R.Desktop.csproj",
+                 "tests/managed/T7R.ManagedHarness.csproj"):
         project = ET.parse(ROOT / path).getroot()
         assert "Sdk" not in project.attrib
         assert project[0].get("Project") == r"..\..\Managed.Common.props"

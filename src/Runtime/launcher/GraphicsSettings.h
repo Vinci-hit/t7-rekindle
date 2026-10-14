@@ -2,9 +2,10 @@
 #include "../core/Common.h"
 #include "AudioSettings.h"
 #include "ClientWorld.h"
+#include "TitleSettings.h"
 #include <array>
 
-namespace t7 {
+namespace t7r {
 struct GraphicsValues {
     uint32_t width = 1920, height = 1080;
     uint32_t fullScreen = 0, quality = 4, verticalSync = 0, fog = 0;
@@ -29,22 +30,24 @@ constexpr uint32_t GRAPHICS_DISPLAY_REQUEST_OFFSET = 0x90;
 inline const Bytes GRAPHICS_TICK_ORIGINAL{0x56, 0x8B, 0xF1, 0x80, 0x7E, 0x7C, 0x00};
 Bytes buildGraphicsMap(uint32_t address, uint32_t imageBase, const GraphicsValues& values);
 Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
-                        uint32_t audioEntry = 0, uint32_t worldEntry = 0);
+                        uint32_t audioEntry = 0, uint32_t worldEntry = 0, uint32_t titleEntry = 0);
 
 class GraphicsSettings final {
 public:
     void install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash = {},
                  const MovementAnimationProfile& animation = {},
-                 const fs::path& audioDirectory = {});
+                 const std::vector<CombatProfile>& profiles = {});
     void clear(); // Called after the owned process has exited.
     // false means no completed read yet; result: 0 not ready, 1 ready, 2 conflict.
     bool poll(GraphicsValues& values, uint32_t& result, bool& applied);
     void apply(const GraphicsValues& values);
     AudioSettings& audio() { return audio_; }
     ClientWorld& world() { return world_; }
+    TitleSettings& titles() { return titles_; }
 private:
     AudioSettings audio_;
     ClientWorld world_;
+    TitleSettings titles_;
     void request(uint32_t command);
     HANDLE process_ = nullptr;
     uint32_t remote_ = 0, imageBase_ = 0, pending_ = 0;

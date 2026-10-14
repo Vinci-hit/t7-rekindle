@@ -10,12 +10,12 @@ using System.Windows.Media;
 using System.Windows.Input;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static partial class AccountTests
     {
@@ -40,7 +40,7 @@ namespace T7.ManagedHarness
                     var toggleProvider = (IToggleProvider)new ToggleButtonAutomationPeer(toggle).GetPattern(PatternInterface.Toggle);
                     toggleProvider.Toggle(); Pump();
                     Assert(popup.IsOpen && toggle.IsChecked == true && logout.IsKeyboardFocused,
-                        "account activation did not open and focus its single-row menu");
+                        "account activation did not open and focus its menu");
                     var escape = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(popup.Child),
                         Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
                     popup.Child.RaiseEvent(escape); Pump();
@@ -149,7 +149,7 @@ namespace T7.ManagedHarness
                                 try { toggle.IsChecked = interaction == "expanded"; }
                                 finally { synchronizing.SetValue(panel, false); }
                                 string name = "account-" + state + "-" + interaction + (longName ? "-long" : "") + "-" + (int)(scale * 100);
-                                LauncherLayoutTests.Render(root, null, output, name, 400, 190, scale);
+                                LauncherLayoutTests.Render(root, null, output, name, 400, 240, scale);
                                 Assert(Math.Abs(toggle.ActualHeight - 36) < 1, "capsule height changed with state or DPI");
                                 Assert(model.IsSignedIn ? toggle.ActualWidth >= 144 && toggle.ActualWidth <= 224 : toggle.ActualWidth == 96,
                                     "capsule width does not preserve guest/member bounds");
@@ -182,11 +182,12 @@ namespace T7.ManagedHarness
             var nickname = (TextBlock)panel.FindName("AccountNickname");
             var number = (TextBlock)panel.FindName("AccountNumber");
             var logout = (Button)panel.FindName("LogoutButton");
-            Assert(Math.Abs(menu.ActualHeight - 58) <= 1 && menu.ActualWidth == 280, "account menu is not a single compact row");
+            Assert(menu.ActualHeight >= 96 && menu.ActualHeight <= 128 && menu.ActualWidth == 280, "account menu lost its compact identity/title rows");
             Assert(number.Text == "（" + ((AccountViewModel)panel.DataContext).QqNumber + "）" && number.TextTrimming == TextTrimming.None,
                 "QQ number was shortened");
             Assert(nickname.TextTrimming == TextTrimming.CharacterEllipsis && logout.IsEnabled, "offline menu lost usable content");
-            LauncherLayoutTests.AssertWithin(logout, root, 400, 190);
+            LauncherLayoutTests.AssertWithin(logout, root, 400, 240);
+            LauncherLayoutTests.AssertWithin((Button)panel.FindName("TitlesButton"), root, 400, 240);
             LauncherLayoutTests.AssertWithin(number, menu, 280, 58);
             Assert(number.TranslatePoint(new Point(number.ActualWidth, 0), menu).X + 12
                 <= logout.TranslatePoint(new Point(), menu).X + 1, "full QQ number overlaps the logout action");

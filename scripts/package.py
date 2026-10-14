@@ -23,9 +23,10 @@ PYTHON_STDLIB_SHA256 = "310e5f6ce695f0ab95782a6c4824ac86d793f4f5a79837968a15b642
 PYTHON_FILE_VERSION = (3, 14, 4150, 1013)  # VS_FIXEDFILEINFO for CPython 3.14.4 final.
 FORBIDDEN_PRODUCT_NAMES = {
     "t7.server.exe", "server.exe", "server.ini", "tiejiclient.exe", "protocalhandler.dll",
+    "t7.core.dll", "t7.nativebridge.dll",
 }
 FORBIDDEN_ARCHIVE_NAMES = FORBIDDEN_PRODUCT_NAMES | {
-    "t7-rekindle.exe", "t7.core.dll", "t7.nativebridge.dll", "manifest.json",
+    "t7-rekindle.exe", "t7r.core.dll", "t7r.nativebridge.dll", "manifest.json",
     "license", "third-party.txt",
 }
 RESERVED_PACKAGE_NAMES = {"manifest.json", "license", "third-party.txt"}
@@ -38,7 +39,7 @@ WINDOWS_INVALID_NAME_CHARS = set('<>"|?*')
 REQUIRED_RELEASE_FILES = {
     "T7-Rekindle.exe",
     "T7-Rekindle.exe.config",
-    "T7.Core.dll",
+    "T7R.Core.dll",
     "CommunityToolkit.Mvvm.dll",
     "Microsoft.Bcl.AsyncInterfaces.dll",
     "Microsoft.Web.WebView2.Core.dll",
@@ -53,7 +54,7 @@ REQUIRED_RELEASE_FILES = {
     "System.Numerics.Vectors.dll",
     "System.Runtime.CompilerServices.Unsafe.dll",
     "System.Threading.Tasks.Extensions.dll",
-    "T7.NativeBridge.dll",
+    "T7R.NativeBridge.dll",
     "THIRD-PARTY.txt",
 }
 
@@ -277,7 +278,7 @@ def copy_product_output(source: Path, destination: Path) -> None:
         canonical = canonical_package_path(validate_windows_parts(relative.as_posix()))
         previous = existing.get(canonical)
         if previous is not None:
-            if canonical == "t7.nativebridge.dll" and sha256_file(path) == sha256_file(previous):
+            if canonical == "t7r.nativebridge.dll" and sha256_file(path) == sha256_file(previous):
                 continue
             raise ValueError(f"package source collision: {target.relative_to(destination)}")
         if target.exists():
@@ -397,8 +398,8 @@ def _package(output: Path, python_archive: Path | None = None, release: bool = F
         raise FileExistsError(f"refusing to overwrite existing output: {output}")
     if release and python_archive is None:
         raise ValueError("release packaging requires --python-archive")
-    native = ROOT / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll"
-    desktop = ROOT / "artifacts/bin/T7.Desktop/x64/Release/net48"
+    native = ROOT / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll"
+    desktop = ROOT / "artifacts/bin/T7R.Desktop/x64/Release/net48"
     if not native.is_file() or not (desktop / "T7-Rekindle.exe").is_file():
         raise FileNotFoundError("build artifacts are missing; run scripts/build.py first")
     output.mkdir(parents=True)

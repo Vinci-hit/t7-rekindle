@@ -2,9 +2,10 @@
 
 
 def contact(target=2, *, time=1., along=.5, position=(1., 0., 1.),
-            normal=(-1., 0., 0.), direction=(1., 0., 0.), material=0):
+            normal=(-1., 0., 0.), direction=(1., 0., 0.), material=0, defenceWeaponId=0):
     return dict(targetId=target, ready=True, hit=True, material=material,
-                position=list(position), normal=list(normal), direction=list(direction), time=time, along=along)
+                position=list(position), normal=list(normal), direction=list(direction), time=time, along=along,
+                defenceWeaponId=defenceWeaponId)
 
 
 def publish(flow, actorId, hits, *, ready=True, spanMs=20):

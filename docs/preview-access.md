@@ -31,15 +31,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/preview-access.p
 
 ## 配置发布公钥
 
-将公钥文件的内容设置为仓库 Actions **variable** `T7_PREVIEW_ACCESS_PUBLIC_KEY`。正式和预览渠道使用同一变量；私钥不上传至 CI。
+将公钥文件的内容设置为仓库 Actions **variable** `T7R_PREVIEW_ACCESS_PUBLIC_KEY`。正式和预览渠道使用同一变量；私钥不上传至 CI。
 
 本地构建使用同名环境变量：
 
 ```powershell
 $publicPath = Join-Path $env:LOCALAPPDATA 'T7-Rekindle-Authority\preview.public.txt'
-$env:T7_PREVIEW_ACCESS_PUBLIC_KEY = [System.IO.File]::ReadAllText($publicPath, [System.Text.Encoding]::UTF8).Trim()
+$env:T7R_PREVIEW_ACCESS_PUBLIC_KEY = [System.IO.File]::ReadAllText($publicPath, [System.Text.Encoding]::UTF8).Trim()
 python scripts/build.py --project managed
-& '.\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe' --preview-key-check
+& '.\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe' --preview-key-check
 ```
 
 公钥通过程序集元数据内置，运行时不读取环境变量或外部公钥文件。修改公钥后必须重新构建。默认分支发布及 tag 发布会在打包之前检查实际编译进启动器的公钥；缺失或无效时停止发布。普通本地／PR 构建允许未配置公钥，此时正式渠道正常使用，预览授权保持关闭。
@@ -78,6 +78,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/preview-access.p
 定向测试：
 
 ```powershell
-& '.\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe' --preview-access-tests
+& '.\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe' --preview-access-tests
 python -m pytest -q tests/python/test_preview_access.py
 ```

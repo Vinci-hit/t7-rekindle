@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json.Linq;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal sealed class PreviewAccessState
     {

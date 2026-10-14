@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-using T7.Rekindle.Core;
+using T7R.Core;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public sealed class ClientDirectoryResult
     {

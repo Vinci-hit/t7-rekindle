@@ -95,7 +95,7 @@ updates/preview.json
 
 - “设置 → 启动器设置”选择正式版（默认）或预览版，统一保存到 `settings.json` 的 `updateChannel` 字段，旧渠道配置自动迁移。保存后清除旧渠道状态并立即检查；检查、下载（含暂停）、安装期间禁用切换。迁移与回退约束见[设置格式](runtime-contracts.md#设置格式)。
 - 进入预览须验证管理员离线签发的本机当前 Windows 用户授权，固定 7 天；有效期内复用，切入时仍确认风险。首次门禁升级重置存量预览渠道，到期停止新操作并在当前操作收尾后回正式，不强制安装正式版。签发和故障规则见[离线授权](preview-access.md)。
-- 发布前配置 Actions variable `T7_PREVIEW_ACCESS_PUBLIC_KEY`，正式与预览共用公钥。CI 检查编译后的公钥，缺失或无效时停止发布；私钥只保存在管理员侧。更新源、公开产物访问方式及清单协议不变。
+- 发布前配置 Actions variable `T7R_PREVIEW_ACCESS_PUBLIC_KEY`，正式与预览共用公钥。CI 检查编译后的公钥，缺失或无效时停止发布；私钥只保存在管理员侧。更新源、公开产物访问方式及清单协议不变。
 - 当前构建身份来自程序集，不随用户设置变化。预览转正式时任何正式版均视为更新；正式转预览同样提供最新可用预览。安装后恢复同渠道比较。本地及其他分支构建没有可比预览身份时，提供所选渠道最新版本。
 - 预览仅请求 `updates/preview.json`；404 显示暂无预览构建，其他错误保留明确失败状态，不回退正式渠道。预览及跨渠道仅显示目标版本说明，正式渠道内部继续按以下规则汇总日志。
 
@@ -123,9 +123,9 @@ updates/preview.json
 
 只有便携包清单明确声明 `rollbackProtocol: 1`、构建身份一致且安装器／便携包均验证成功的版本才加入历史。没有协议标记的旧包仍可按原流程发布，但不补录历史。较旧预览任务补发时可以上传其不可变产物并增加历史，不改变最新版本入口；发布失败可幂等重跑，不以空列表覆盖损坏的历史清单，不自动清理历史。
 
-安装器使用 `/ROLLBACK=1 /RESETSETTINGS=0|1 /UPDATECHANNEL=stable|preview`，同时要求现有 `/LAUNCHERPID`。普通更新不传回退参数。设置备份与恢复见[运行契约](runtime-contracts.md#回退设置契约)。安装仍覆盖同名文件并新增文件，不清空安装目录、不删除目标版本未包含的文件。
+安装器使用 `/ROLLBACK=1 /RESETSETTINGS=0|1 /UPDATECHANNEL=stable|preview`，同时要求现有 `/LAUNCHERPID`。普通更新不传回退参数。安装覆盖同名文件并新增文件，不清空安装目录；T7R 安装包仅在安装及设置处理成功后清理安装根目录中的 `T7.Core.dll`、`T7.NativeBridge.dll`，其他文件保留。设置备份、清理失败和旧版回退行为见[运行契约](runtime-contracts.md#回退设置契约)。
 
-先部署支持协议的安装器与发布脚本，再验证客户端历史入口。每个渠道至少需要两个支持协议的构建，才可完成同渠道回退验收。可运行 `T7.ManagedHarness.exe --rollback-tests`，以及 `python -m pytest -q tests/python/test_rollback_history.py tests/python/test_installer_update.py`；安装集成测试使用临时目录和隔离注册表项。
+先部署支持协议的安装器与发布脚本，再验证客户端历史入口。每个渠道至少需要两个支持协议的构建，才可完成同渠道回退验收。可运行 `T7R.ManagedHarness.exe --rollback-tests`，以及 `python -m pytest -q tests/python/test_rollback_history.py tests/python/test_installer_update.py`；安装集成测试使用临时目录和隔离注册表项。
 
 ## 5. 上线验收与用量
 

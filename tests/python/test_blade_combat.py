@@ -7,7 +7,7 @@ from test_melee_combat import arena, hp, swing
 
 
 def contact(target=2, *, time=.5, along=.5):
-    return {"targetId": target, "ready": True, "hit": True, "material": 0,
+    return {"targetId": target, "ready": True, "hit": True, "material": 0, 'defenceWeaponId': 0,
             "position": [1., 0., 1.], "normal": [-1., 0., 0.], "direction": [1., 0., 0.],
             "time": time, "along": along}
 

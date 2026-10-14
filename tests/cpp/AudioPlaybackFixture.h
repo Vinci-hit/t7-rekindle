@@ -12,15 +12,15 @@ constexpr uint32_t COMMAND = DATA, DONE = DATA + 4, BANK_ID = DATA + 8, CALLS = 
 constexpr uint32_t STATS = DATA + 0x20, ARGUMENTS = DATA + 0x80, WORKERS = DATA + 0xB0;
 constexpr uint32_t NAME = DATA + 0x100, BANK_NAME = DATA + 0x200, RTPC_NAME = DATA + 0x300;
 inline void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-inline void word(t7::Bytes& bytes, uint32_t value) {
+inline void word(t7r::Bytes& bytes, uint32_t value) {
     const auto at = bytes.size(); bytes.resize(at + 4); std::memcpy(bytes.data() + at, &value, 4);
 }
 inline uint32_t read(HANDLE process, uint32_t at) {
-    const auto bytes = t7::readClientMemory(process, at, 4); uint32_t result; std::memcpy(&result, bytes.data(), 4); return result;
+    const auto bytes = t7r::readClientMemory(process, at, 4); uint32_t result; std::memcpy(&result, bytes.data(), 4); return result;
 }
-inline void write(HANDLE process, uint32_t at, uint32_t value) { t7::Bytes bytes; word(bytes, value); t7::writeClientMemory(process, at, bytes); }
+inline void write(HANDLE process, uint32_t at, uint32_t value) { t7r::Bytes bytes; word(bytes, value); t7r::writeClientMemory(process, at, bytes); }
 struct Code {
-    t7::Bytes bytes;
+    t7r::Bytes bytes;
     uint32_t base;
     explicit Code(uint32_t address) : base(address) {}
     void emit(std::initializer_list<unsigned char> values) { bytes.insert(bytes.end(), values); }
@@ -38,22 +38,22 @@ struct Code {
         emit({0x83,0xC4,static_cast<unsigned char>(args.size() * 4)});
     }
 };
-inline const t7::ClientImportModule& module(const char* name) {
-    for (const auto& value : t7::clientImportModules()) if (value.dll == name) return value;
+inline const t7r::ClientImportModule& module(const char* name) {
+    for (const auto& value : t7r::clientImportModules()) if (value.dll == name) return value;
     throw std::runtime_error("fixture import module missing");
 }
-inline uint32_t iat(const t7::ClientImportModule& imports, const char* prefix) {
+inline uint32_t iat(const t7r::ClientImportModule& imports, const char* prefix) {
     for (size_t i = 0; i < imports.symbols.size(); ++i)
         if (imports.symbols[i].rfind(prefix, 0) == 0) return BASE + imports.iatRva + static_cast<uint32_t>(i * 4);
     throw std::runtime_error("fixture import symbol missing");
 }
-inline void put(t7::Bytes& image, uint32_t rva, const t7::Bytes& data) {
+inline void put(t7r::Bytes& image, uint32_t rva, const t7r::Bytes& data) {
     require(rva + data.size() <= image.size(), "fixture image bounds");
     std::memcpy(image.data() + rva, data.data(), data.size());
 }
-inline void pe(const t7::fs::path& path, const t7::Bytes& image, uint32_t base, uint32_t entry,
+inline void pe(const t7r::fs::path& path, const t7r::Bytes& image, uint32_t base, uint32_t entry,
                IMAGE_DATA_DIRECTORY imports, IMAGE_DATA_DIRECTORY exports, bool dll) {
-    t7::Bytes file(0x200, 0);
+    t7r::Bytes file(0x200, 0);
     IMAGE_DOS_HEADER dos{}; dos.e_magic = IMAGE_DOS_SIGNATURE; dos.e_lfanew = 0x80;
     std::memcpy(file.data(), &dos, sizeof(dos));
     IMAGE_NT_HEADERS32 nt{}; nt.Signature = IMAGE_NT_SIGNATURE;
@@ -83,10 +83,10 @@ inline void pe(const t7::fs::path& path, const t7::Bytes& image, uint32_t base, 
     output.write(reinterpret_cast<const char*>(image.data() + 0x1000), static_cast<std::streamsize>(image.size() - 0x1000));
     require(output.good(), "audio fixture write");
 }
-inline void dll(const t7::fs::path& root) {
+inline void dll(const t7r::fs::path& root) {
     auto names = module("aksoundenginedll.dll").symbols;
     std::sort(names.begin(), names.end()); names.erase(std::unique(names.begin(), names.end()), names.end());
-    t7::Bytes image(0x10000, 0);
+    t7r::Bytes image(0x10000, 0);
     IMAGE_EXPORT_DIRECTORY exports{}; exports.Base = 1;
     exports.NumberOfNames = exports.NumberOfFunctions = static_cast<DWORD>(names.size());
     exports.AddressOfFunctions = 0x5100; exports.AddressOfNames = 0x5300; exports.AddressOfNameOrdinals = 0x5500;
@@ -121,14 +121,14 @@ inline void dll(const t7::fs::path& root) {
     std::memcpy(image.data() + 0x5000, &exports, sizeof(exports));
     pe(root / "aksoundenginedll.dll", image, 0x10000000, 0, {}, {0x5000, 0x4000}, true);
 }
-inline t7::fs::path create(const t7::fs::path& root) {
+inline t7r::fs::path create(const t7r::fs::path& root) {
     dll(root);
     const auto& audio = module("aksoundenginedll.dll"); auto kernel = module("KERNEL32.dll");
     kernel.symbols.push_back("ExitProcess");
     const auto post = iat(audio, "?PostEvent@SoundEngine@AK@@YAKPBD");
     const auto sleep = iat(kernel, "Sleep"), exit = iat(kernel, "ExitProcess");
-    t7::Bytes memory(0x1700000, 0);
-    const auto imports = t7::writeClientImports(memory, 0x6000, 0x10000, {audio, kernel});
+    t7r::Bytes memory(0x1700000, 0);
+    const auto imports = t7r::writeClientImports(memory, 0x6000, 0x10000, {audio, kernel});
     std::memcpy(memory.data() + NAME - BASE, "Play_voice_fixture", 19);
     std::memcpy(memory.data() + BANK_NAME - BASE, "Media_Vox_System.bnk", 21);
     std::memcpy(memory.data() + RTPC_NAME - BASE, "Voice_Volume", 13);

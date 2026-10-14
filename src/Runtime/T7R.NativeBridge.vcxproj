@@ -20,18 +20,18 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\..\Native.Common.props" />
   <PropertyGroup>
-    <TargetName>T7.NativeBridge</TargetName>
+    <TargetName>T7R.NativeBridge</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><PreprocessorDefinitions>T7_NATIVE_BRIDGE_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ClCompile><PreprocessorDefinitions>T7R_NATIVE_BRIDGE_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <ModuleDefinitionFile>bridge\T7NativeBridge.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>bridge\T7RNativeBridge.def</ModuleDefinitionFile>
       <AdditionalDependencies>python314.lib;ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bridge\T7NativeBridge.cpp" />
+    <ClCompile Include="bridge\T7RNativeBridge.cpp" />
     <ClCompile Include="bridge\Session.cpp" />
     <ClCompile Include="core\Common.cpp" />
     <ClCompile Include="core\DiagnosticLog.cpp" />
@@ -44,12 +44,15 @@
     <ClCompile Include="launcher\GraphicsValues.cpp" />
     <ClCompile Include="launcher\GraphicsHookCode.cpp" />
     <ClCompile Include="launcher\AudioSettings.cpp" />
+    <ClCompile Include="launcher\TitleSettings.cpp" />
+    <ClCompile Include="launcher\AudioResourcePaths.cpp" />
     <ClCompile Include="launcher\AudioDiagnostics.cpp" />
     <ClCompile Include="launcher\AudioPlaybackTrace.cpp" />
     <ClCompile Include="launcher\AudioPlaybackHookCode.cpp" />
     <ClCompile Include="launcher\AudioHookCode.cpp" />
     <ClCompile Include="launcher\ClientWorld.cpp" />
     <ClCompile Include="launcher\WorldHookCode.cpp" />
+    <ClCompile Include="launcher\CombatProfileHookCode.cpp" />
     <ClCompile Include="launcher\SprintHookCode.cpp" />
     <ClCompile Include="launcher\MovementAnimationHookCode.cpp" />
     <ClCompile Include="launcher\MovementCommandHookCode.cpp" />
@@ -62,6 +65,7 @@
     <ClCompile Include="launcher\WeaponTrailHookCode.cpp" />
     <ClCompile Include="bridge\SessionGraphics.cpp" />
     <ClCompile Include="bridge\SessionAudio.cpp" />
+    <ClCompile Include="bridge\SessionTitles.cpp" />
     <ClCompile Include="launcher\StartupGate.cpp" />
     <ClCompile Include="launcher\EndpointStorage.cpp" />
     <ClCompile Include="launcher\Ap32.cpp" />
@@ -79,10 +83,11 @@
     <ClCompile Include="server\Journal.cpp" />
     <ClCompile Include="server\RunDirectory.cpp" />
     <ClCompile Include="server\PythonHost.cpp" />
+    <ClCompile Include="server\PythonContext.cpp" />
     <ClCompile Include="server\Server.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="bridge\T7NativeBridge.h" />
+    <ClInclude Include="bridge\T7RNativeBridge.h" />
     <ClInclude Include="bridge\Session.h" />
     <ClInclude Include="core\Common.h" />
     <ClInclude Include="core\DiagnosticLog.h" />
@@ -91,6 +96,7 @@
     <ClInclude Include="launcher\Bootstrap.h" />
     <ClInclude Include="launcher\AudioDiagnostics.h" />
     <ClInclude Include="launcher\AudioPlaybackTrace.h" />
+    <ClInclude Include="launcher\AudioResourcePaths.h" />
     <ClInclude Include="launcher\ClientWindowMonitor.h" />
     <ClInclude Include="launcher\OutputDevice.h" />
     <ClInclude Include="launcher\StartupGate.h" />
@@ -114,10 +120,12 @@
     <ClInclude Include="server\Journal.h" />
     <ClInclude Include="server\RunDirectory.h" />
     <ClInclude Include="server\PythonHost.h" />
+    <ClInclude Include="server\PythonContext.h" />
+    <ClInclude Include="server\PythonObjects.h" />
     <ClInclude Include="server\SendQueue.h" />
     <ClInclude Include="server\Server.h" />
     <ClInclude Include="server\ServerTiming.h" />
   </ItemGroup>
-  <ItemGroup><None Include="bridge\T7NativeBridge.def" /><None Include="launcher\ClientImportTable.inc" /></ItemGroup>
+  <ItemGroup><None Include="bridge\T7RNativeBridge.def" /><None Include="launcher\ClientImportTable.inc" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

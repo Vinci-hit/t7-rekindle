@@ -6,12 +6,12 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.Views;
-using T7.Rekindle.Desktop.ViewModels;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using T7R.Desktop.Views;
+using T7R.Desktop.ViewModels;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static partial class AccountTests
     {

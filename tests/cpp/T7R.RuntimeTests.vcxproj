@@ -9,15 +9,17 @@
   <PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\..\Native.Common.props" />
-  <PropertyGroup><TargetName>T7.RuntimeTests</TargetName></PropertyGroup>
+  <PropertyGroup><TargetName>T7R.RuntimeTests</TargetName></PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><PreprocessorDefinitions>T7_NATIVE_BRIDGE_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ClCompile><PreprocessorDefinitions>T7R_NATIVE_BRIDGE_TESTING;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link><SubSystem>Console</SubSystem><AdditionalDependencies>python314.lib;ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ServerLifecycleSmoke.cpp" />
     <ClCompile Include="LobbyNewsTests.cpp" />
     <ClCompile Include="ServerEventOrderTests.cpp" />
+    <ClCompile Include="ServerContextTests.cpp" />
+    <ClCompile Include="TitleRuntimeTests.cpp" />
     <ClCompile Include="ServerAudioDiagnosticsTests.cpp" />
     <ClCompile Include="JournalContractTests.cpp" />
     <ClCompile Include="DiagnosticLogTests.cpp" />
@@ -41,12 +43,15 @@
     <ClCompile Include="../../src/Runtime/launcher/GraphicsValues.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/TitleSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioResourcePaths.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackTrace.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/CombatProfileHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/MovementAnimationHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/MovementCommandHookCode.cpp" />
@@ -59,6 +64,7 @@
     <ClCompile Include="../../src/Runtime/launcher/WeaponTrailHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/bridge/SessionGraphics.cpp" />
     <ClCompile Include="../../src/Runtime/bridge/SessionAudio.cpp" />
+    <ClCompile Include="../../src/Runtime/bridge/SessionTitles.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/StartupGate.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/EndpointStorage.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/Ap32.cpp" />
@@ -76,6 +82,7 @@
     <ClCompile Include="../../src/Runtime/server/Journal.cpp" />
     <ClCompile Include="../../src/Runtime/server/RunDirectory.cpp" />
     <ClCompile Include="../../src/Runtime/server/PythonHost.cpp" />
+    <ClCompile Include="../../src/Runtime/server/PythonContext.cpp" />
     <ClCompile Include="../../src/Runtime/server/Server.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

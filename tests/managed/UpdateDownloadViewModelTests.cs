@@ -4,12 +4,12 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class UpdateDownloadViewModelTests
     {
@@ -17,7 +17,7 @@ namespace T7.ManagedHarness
         {
             var previous = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
-            var directory = Path.Combine(Path.GetTempPath(), "T7-update-view-model-tests-" + Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(Path.GetTempPath(), "T7R-update-view-model-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             try
             {

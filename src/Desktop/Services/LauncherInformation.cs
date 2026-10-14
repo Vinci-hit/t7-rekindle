@@ -8,7 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public sealed class LauncherUpdateInfo
     {
@@ -84,7 +84,7 @@ namespace T7.Rekindle.Desktop.Services
 
         public static string ReadDocument(string name)
         {
-            using (var stream = Assembly.GetManifestResourceStream("T7.Rekindle.Documents." + name))
+            using (var stream = Assembly.GetManifestResourceStream("T7R.Documents." + name))
             {
                 if (stream == null) throw new FileNotFoundException("缺少随应用打包的说明：" + name);
                 using (var reader = new StreamReader(stream, Encoding.UTF8)) return reader.ReadToEnd();

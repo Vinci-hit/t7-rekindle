@@ -2,9 +2,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Automation.Peers;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Desktop.ViewModels;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     public partial class ToastHost : UserControl
     {

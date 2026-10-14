@@ -1,10 +1,10 @@
 using System;
-using T7.Rekindle.Core;
+using T7R.Core;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class AccountViewModel
     {
@@ -36,6 +36,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             _heartbeatHealthy = true;
             _pushHealthy = false;
             UpdateOnlineStatus();
+            _ = RefreshTitlesAsync();
             _ = HeartbeatLoopAsync(_session, connection, generation, cancellation);
             _ = PushLoopAsync(_session, connection, generation, cancellation);
         }
@@ -64,9 +65,11 @@ namespace T7.Rekindle.Desktop.ViewModels
                     {
                         if (!IsCurrent(generation) || HandleTerminal(error)) return;
                         _heartbeatHealthy = false;
+                        _titles = AccountTitles.Empty;
                         Record(DiagnosticLogLevel.Warn, "账号心跳暂未完成", error);
                     }
                     UpdateOnlineStatus();
+                    if (IsOnline) _ = RefreshTitlesAsync();
                 }
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }

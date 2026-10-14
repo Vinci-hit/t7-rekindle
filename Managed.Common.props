@@ -1,9 +1,9 @@
 <Project>
   <PropertyGroup>
-    <_T7PortableSdkDirectory>$(MSBuildThisFileDirectory).local\toolchains\dotnet-8.0.425\sdk\8.0.425\Sdks\Microsoft.NET.Sdk\Sdk\</_T7PortableSdkDirectory>
-    <_T7UsePortableSdk Condition="Exists('$(_T7PortableSdkDirectory)Sdk.props')">true</_T7UsePortableSdk>
-    <MSBuildEnableWorkloadResolver Condition="'$(_T7UsePortableSdk)' == 'true'">false</MSBuildEnableWorkloadResolver>
+    <_T7RPortableSdkDirectory>$(MSBuildThisFileDirectory).local\toolchains\dotnet-8.0.425\sdk\8.0.425\Sdks\Microsoft.NET.Sdk\Sdk\</_T7RPortableSdkDirectory>
+    <_T7RUsePortableSdk Condition="Exists('$(_T7RPortableSdkDirectory)Sdk.props')">true</_T7RUsePortableSdk>
+    <MSBuildEnableWorkloadResolver Condition="'$(_T7RUsePortableSdk)' == 'true'">false</MSBuildEnableWorkloadResolver>
   </PropertyGroup>
-  <Import Project="$(_T7PortableSdkDirectory)Sdk.props" Condition="'$(_T7UsePortableSdk)' == 'true'" />
-  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(_T7UsePortableSdk)' != 'true'" />
+  <Import Project="$(_T7RPortableSdkDirectory)Sdk.props" Condition="'$(_T7RUsePortableSdk)' == 'true'" />
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition="'$(_T7RUsePortableSdk)' != 'true'" />
 </Project>

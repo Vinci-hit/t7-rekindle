@@ -12,6 +12,6 @@ enum Control : uint32_t {
 void require(bool condition, const char* message);
 uint32_t readWord(HANDLE process, uint32_t address);
 void writeWord(HANDLE process, uint32_t address, uint32_t value);
-t7::MemoryPatch initializationPatch();
-t7::fs::path create(const t7::fs::path& root, const std::string& name, const std::string& codePage = {});
+t7r::MemoryPatch initializationPatch();
+t7r::fs::path create(const t7r::fs::path& root, const std::string& name, const std::string& codePage = {});
 }

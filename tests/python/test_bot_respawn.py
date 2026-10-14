@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 from pathlib import Path
 import math
@@ -20,7 +21,7 @@ def respawnTimer(rid):
 
 def kill(flow, target=2):
     attacker = 1 if actors.data(flow, target)['camp'] != flow.session['camp'] else 2
-    actors.data(flow, target)['health'] = combat.DAMAGE
+    actors.data(flow, target)['health'] = NORMAL_DAMAGE
     world = sample(flow)
     combat.applyHit(flow, attacker, target, actors.pair(world, attacker, target))
 
@@ -88,7 +89,7 @@ def test_lethal_hit_stops_only_dead_bot_and_schedules_exactly_five_seconds(multi
     assert len(results) == 1
     result = battle_flow.decode_battle_result(results[0]['body'])
     assert (result.target_rid, result.target_result_data, result.target_life_state) == (
-        2, -combat.DAMAGE, battle_flow.LIFE_STATE_KILL)
+        2, -NORMAL_DAMAGE, battle_flow.LIFE_STATE_KILL)
     assert multi.result['send'].index(results[0]) < multi.result['send'].index(notifications[0])
     assert app.validateState(multi.state)
 
@@ -205,7 +206,7 @@ def test_occupied_respawns_wait_then_choose_the_free_own_camp_point(multi, respa
 
 @pytest.mark.parametrize('attacker,target', [(1, 2), (2, 12), (12, 2)])
 def test_actual_contact_kills_and_corpse_does_not_consume_next_swing(multi, attacker, target):
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     other = 3 if target == 2 else 13
     placements = {attacker: ((0, 0, .2), 0), target: ((1, 0, .2), 180), other: ((1.8, 0, .2), 180)}
     sample(multi, placements)
@@ -231,8 +232,9 @@ def test_invalid_life_state_is_rejected(multi, key, value):
     assert not app.validateState(multi.state)
 
 
-def test_previous_revision_and_spawning_state_can_reload(multi):
-    assert app.migrateState(6, multi.state) == multi.state
+def test_old_revision_requires_restart_and_current_spawning_state_can_reload(multi):
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(6, multi.state)
     kill(multi)
     tick(multi, respawnTimer(2), multi.now + 5000)
     assert actors.data(multi, 2)['life']['state'] == 'spawning'

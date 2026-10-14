@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public sealed class UserSettings
     {

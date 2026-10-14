@@ -14,8 +14,8 @@ def test_v11_uses_one_complete_vector_icon_family():
     icons = root.findall(f"{{{WPF}}}DrawingImage")
     assert len(icons) == 44 * 6
     keys = {item.attrib[f"{{{XAML}}}Key"] for item in icons}
-    assert {f"T7.Icon.construction.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
-    assert {f"T7.Icon.hourglass.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
+    assert {f"T7R.Icon.construction.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
+    assert {f"T7R.Icon.hourglass.{color}" for color in ("Ink", "White", "Muted", "Success", "Warning", "Danger")} <= keys
     assert all(p.attrib["Thickness"] == "1.75" for p in root.iter(f"{{{WPF}}}Pen"))
 
 

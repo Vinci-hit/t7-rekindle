@@ -117,9 +117,9 @@
 ```powershell
 python scripts/build.py --project managed
 python -m pytest tests/python/test_login_ui.py tests/python/test_ui_v11.py tests/python/test_ui_contract.py -q
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --account-tests artifacts/login-ui
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --render-ui artifacts/login-ui-full
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --login-ui-native artifacts/login-ui
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --account-tests artifacts/login-ui
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --render-ui artifacts/login-ui-full
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --login-ui-native artifacts/login-ui
 ```
 
 渲染入口覆盖 100%、125%、150%、175%、200% 和小工作区；完整 UI 回归额外覆盖深色、高对比度和 WPF 绑定警告。真实 QQ 扫码/密码授权、不同提供方页面下的遮挡、Runtime 安装后恢复及跨屏混合 DPI，需用实际系统与账号继续验收；离线夹具不替代这部分结果。

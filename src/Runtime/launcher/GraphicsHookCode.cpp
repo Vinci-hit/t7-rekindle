@@ -1,7 +1,7 @@
 #include "GraphicsSettings.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 class Code {
 public:
@@ -33,7 +33,7 @@ constexpr uint32_t RENDERER_RVA = 0x2D20008, RENDERER_VTABLE_RVA = 0x175B188;
 constexpr uint32_t GET_WINDOW_LONG_IMPORT_RVA = 0x16F6A40, SHOW_WINDOW_IMPORT_RVA = 0x16F6A6C;
 }
 
-Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId, uint32_t audioEntry, uint32_t worldEntry) {
+Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId, uint32_t audioEntry, uint32_t worldEntry, uint32_t titleEntry) {
     if (!address || address > UINT32_MAX - GRAPHICS_PAGE_SIZE || !imageBase
         || imageBase > UINT32_MAX - 0x2E37804 || !threadId)
         throw std::runtime_error("graphics hook outside x86 range");
@@ -51,6 +51,7 @@ Bytes buildGraphicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
     c.emit({0x9C, 0x60}); // Preserve the original tick's flags and registers.
     if (audioEntry) c.absoluteCall(audioEntry);
     if (worldEntry) c.absoluteCall(worldEntry);
+    if (titleEntry) c.absoluteCall(titleEntry);
     c.emit({0x64, 0xA1}); c.word(0x24); // TEB.ClientId.UniqueThread
     c.emit({0x3D}); c.word(threadId); const auto wrongThread = c.branch(0x85);
     c.emit({0xA1}); c.word(address);

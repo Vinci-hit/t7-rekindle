@@ -1,8 +1,8 @@
 using System;
 using System.Windows;
-using T7.Rekindle.Desktop;
+using T7R.Desktop;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class ThemeTests
     {
@@ -12,7 +12,7 @@ namespace T7.ManagedHarness
             app.InitializeComponent();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             MarkdownTests.Run();
-            LauncherLayoutTests.Run(renderDirectory);
+            Program.RunGroup("Layout.Light", () => LauncherLayoutTests.Run(renderDirectory));
             var light = app.Resources["WindowBackgroundBrush"];
             foreach (var name in new[] { "Dark", "HighContrast" })
             {
@@ -23,7 +23,8 @@ namespace T7.ManagedHarness
                 app.Resources.MergedDictionaries.Add(theme);
                 if (!ReferenceEquals(app.Resources["WindowBackgroundBrush"], theme["WindowBackgroundBrush"]))
                     throw new InvalidOperationException(name + " theme was shadowed by default resources");
-                LauncherLayoutTests.Run(renderDirectory == null ? null : System.IO.Path.Combine(renderDirectory, name));
+                Program.RunGroup("Layout." + name,
+                    () => LauncherLayoutTests.Run(renderDirectory == null ? null : System.IO.Path.Combine(renderDirectory, name)));
                 app.Resources.MergedDictionaries.Remove(theme);
                 if (!ReferenceEquals(app.Resources["WindowBackgroundBrush"], light))
                     throw new InvalidOperationException("light theme was not restored");

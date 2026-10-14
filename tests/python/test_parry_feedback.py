@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import math
 import struct
@@ -6,6 +7,8 @@ import pytest
 
 from Business.scripts import app, battle, bot, combat, scene
 from test_melee_combat import advance, arena, hp, states, swing
+from blade_fixture import contact, publish
+from Business.scripts import weapons
 
 REACTIONS = [(300560, 300580, 240, 231), (300550, 300610, 246, 234),
              (300570, 300600, 252, 233), (300540, 300590, 258, 232),
@@ -17,6 +20,7 @@ def block(flow, attacker=1, attack=300560, defence=300580):
     battle.startAction(flow, defence, actorId=defender)
     advance(flow, battle.actionTimer(defender))
     swing(flow, attacker, attack)
+    publish(flow, attacker, [contact(defender, defenceWeaponId=weapons.equipped(battle.actorData(flow, defender)))])
     battle.actionState(flow, attacker)["buffered"] = {"intent": 300550, "released": True}
     flow.result["send"].clear()
     advance(flow, combat.hitTimer(attacker))
@@ -61,7 +65,7 @@ def test_lateral_parry_requires_an_unreleased_hold(arena, attacker, attack, defe
         battle.releaseAction(arena, battle.BLOCK_RELEASE, actorId=defender)
     swing(arena, attacker, attack)
     advance(arena, combat.hitTimer(attacker))
-    assert hp(arena, defender) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, defender) == combat.MAX_HEALTH - NORMAL_DAMAGE
     assert battle.actionState(arena, attacker).get("reaction") is None
     assert (defender, combat.HURT_STATE) in states(arena)
 
@@ -83,14 +87,14 @@ def test_defender_keeps_hold_or_finishes_after_success_without_cutting_feedback(
 
 def test_attack_interrupts_hold_only_after_parry_success_finishes(arena):
     block(arena, attacker=2)
-    before = deepcopy(arena.result)
+    before = deepcopy(arena.result['send'])
+    deadline = arena.session['pending'][battle.ACTION_TIMER]
     body = struct.pack(">HIib", 1, 0, 300560, 0)
     assert battle.message(arena, 4, 1, body)
-    assert arena.result == before
+    assert arena.result['send'] == before
+    assert arena.session['pending'][battle.ACTION_TIMER] == deadline
+    assert arena.session['action']['reaction'] == 'parry-success'
     advance(arena, battle.ACTION_TIMER)
-    assert states(arena)[-1] == (1, 223)
-    assert battle.actionState(arena)["index"] == 1
-    assert battle.message(arena, 4, 1, body)
     assert states(arena)[-1] == (1, 235)
     assert battle.actionState(arena)["index"] == 0
 

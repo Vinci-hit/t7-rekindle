@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 
 import pytest
@@ -25,8 +26,10 @@ def native(flow, attacker=2, target=1, *, phaseAt=None, occurredAt=None):
                  state=source['state'], seq=source['seq'], phaseAt=phaseAt, occurredAt=occurredAt,
                  sourcePosition=source['position'], targetPosition=dest['position'],
                  sourceHeading=source['heading'], targetHeading=dest['heading'],
-                 targetState=2, targetSeq=1, targetPhaseAt=phaseAt)
-    raw['contactJournal'] = dict(throughAt=occurredAt + 10, frames=12, dropped=0, batchId=1, events=[event])
+                 targetState=2, targetSeq=1, targetPhaseAt=phaseAt,
+                 bodyIndex=0, region='torso', sourceVelocity=[0., 0., 0.], targetVelocity=[0., 0., 0.],
+                 weaponVelocity=[0., 0., 0.], velocityReady=False, airborne=False, targetAirborne=False)
+    raw['contactJournal'] = dict(damageEvidenceVersion=2, throughAt=occurredAt + 10, frames=12, dropped=0, batchId=1, events=[event])
     return event
 
 
@@ -65,7 +68,7 @@ def test_normal_contact_window_covers_the_full_strike(multi, weaponId, intent, o
         multi.now = raw['sampledAt'] = occurredAt
         publish(multi, 2, [contact(1)])
     combat.worldUpdated(multi)
-    assert hp(multi, 1) == (100 - combat.DAMAGE if hit else 100)
+    assert hp(multi, 1) == (100 - NORMAL_DAMAGE if hit else 100)
 
 
 @pytest.mark.parametrize('nextIntent', [None, 300550, 300580])
@@ -215,6 +218,7 @@ def test_native_hold_at_contact_time_can_parry_after_business_release(multi):
     attack(multi, 2)
     event = native(multi)
     event['targetState'] = battle.BLOCK_CHAINS[300580][1]
+    event['defenceWeaponId'] = wire.WEAPON_ID
     multi.now += 50
     battle.releaseAction(multi, battle.BLOCK_RELEASE)
     combat.worldUpdated(multi)

@@ -8,7 +8,7 @@
 T7-Rekindle.exe (x64, WPF / .NET Framework 4.8)
   ├─ Core：托管契约、设置模型和 ABI 布局
   └─ NativeBridgeService：加载原生模块并调用 C ABI
-      └─ T7.NativeBridge.dll (C++17，与启动器同一进程)
+      └─ T7R.NativeBridge.dll (C++17，与启动器同一进程)
           ├─ Session：会话状态、操作队列和清理
           ├─ Server：登录 / 逻辑 / 实例三条本地通道
           ├─ PythonHost：嵌入式 CPython 3.14.4 与 Business

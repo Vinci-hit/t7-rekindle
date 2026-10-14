@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 void checkCancelled(const std::function<bool()>& cancelled) {
     if (cancelled && cancelled()) throw std::runtime_error("client memory installation cancelled");

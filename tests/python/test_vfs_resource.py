@@ -34,7 +34,7 @@ def test_index_resolves_repacked_entries_read_only(tmp_path, flags, padding, lev
 def test_invalid_directory_records_include_details(tmp_path, field, value):
     archive = tmp_path / 'map.vfs'
     archive.write_bytes(archiveBytes([(PATH, b'content', 3)], change=lambda row: row.__setitem__(field, value)))
-    with pytest.raises(vfs.ResourceError, match=r'\[T7_RESOURCE:directory_invalid\].*map.vfs'):
+    with pytest.raises(vfs.ResourceError, match=r'\[T7R_RESOURCE:directory_invalid\].*map.vfs'):
         vfs.readEntry(archive, PATH)
 
 

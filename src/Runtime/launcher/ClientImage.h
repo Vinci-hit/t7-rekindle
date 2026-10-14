@@ -2,7 +2,7 @@
 #include "ClientCode.h"
 #include "ClientImports.h"
 
-namespace t7 {
+namespace t7r {
 struct ClientMemoryRegion {
     uint32_t rva = 0, size = 0;
     DWORD protection = PAGE_NOACCESS;

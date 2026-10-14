@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cwctype>
 
-namespace t7 {
+namespace t7r {
 namespace {
 using Scope = InputMethodScope;
 using View = InputMethodView;

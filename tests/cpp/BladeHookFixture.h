@@ -10,8 +10,8 @@ constexpr uint32_t NORMALS = OBSTACLES + 0x100;
 constexpr uint32_t OBJECTS = BASE + 0x90000;
 inline uint32_t object(uint32_t index) { return OBJECTS + index * 0x1000; }
 inline void vector(HANDLE process, uint32_t address, std::array<float, 3> value) {
-    t7::Bytes bytes(sizeof(value)); std::memcpy(bytes.data(), value.data(), bytes.size());
-    t7::writeClientMemory(process, address, bytes);
+    t7r::Bytes bytes(sizeof(value)); std::memcpy(bytes.data(), value.data(), bytes.size());
+    t7r::writeClientMemory(process, address, bytes);
 }
 inline void number(HANDLE process, uint32_t address, float value) {
     uint32_t bits; std::memcpy(&bits, &value, 4); writeWord(process, address, bits);
@@ -22,7 +22,7 @@ inline void prepare(HANDLE process) {
         for (const auto& field : std::vector<std::array<uint32_t, 2>>{
             {entity+8,i+100}, {p,BASE+0x1777C54}, {p+0x48,p+0x100},
             {p+0x108,p+0x200}, {p+0x10C,1}, {p+0x254,p+0x300},
-            {p+0x320,2}, {p+0x324,0}, {p+0x33C,p+0x400},
+            {p+0x320,2}, {p+0x324,0}, {p+0x330,i+4}, {p+0x33C,p+0x400}, {p+0x478,p+0xF00},
             {p+0x408,terrainFixture::WORLD}, {p+0x410,p+0x500}, {p+0x60C,p+0x410},
             {p+0x700,BASE+0x178380C}, {p+0x798,1030411}, {p+0x79C,p+0xE00},
             {p+0x738,238}, {p+0x740,17}, {p+0x748,GetTickCount()},
@@ -31,6 +31,9 @@ inline void prepare(HANDLE process) {
             {p+0xA7C,entity}, {p+0xA90,p+0xB00}, {p+0xB00,BASE+0x1773684},
             {p+0xBB0,p+0xD00}, {p+0xBB4,p+0xC00}
         }) writeWord(process, field[0], field[1]);
+        const std::string name = i == 1 ? "Ragdoll_Bip01 Head01" : i == 2 ? "Ragdoll_Bip01 L Calf01" : "Ragdoll_Bip01 Spine01";
+        t7r::Bytes nameBytes(name.begin(), name.end()); nameBytes.push_back(0);
+        t7r::writeClientMemory(process, p + 0xF00, nameBytes);
         // Swoosh visibility remains zero: geometry must not depend on graphical effects.
         vector(process, p + 0xC88, {270,150,1}); vector(process, p + 0xD88, {271,150,1});
     }
@@ -42,7 +45,7 @@ inline void prepare(HANDLE process) {
                   i < 3 ? object(i) + 0x600 : i == 4 ? terrainFixture::ACTOR_CHILD : terrainFixture::CHILD);
         vector(process, NORMALS + i * 16, {-1,0,0});
     }
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x60}); // EDI ray input, ESI collector. Synthetic planes use the native callback ABI.
     for (uint32_t i = 0; i < 6; ++i) {
         std::vector<size_t> skip;
@@ -62,13 +65,13 @@ inline void prepare(HANDLE process) {
         c.emit({0x8B,0xCE,0x8B,0x06,0xFF,0x10});
         for (auto branch : skip) c.bind(branch);
     }
-    c.emit({0x61,0xC3}); t7::writeClientMemory(process, QUERY, c.bytes);
+    c.emit({0x61,0xC3}); t7r::writeClientMemory(process, QUERY, c.bytes);
     number(process, OBSTACLES + 0x80, 1);
 }
-inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
+inline void verify(HANDLE process, t7r::ClientWorld& reader, uint32_t mailbox) {
     auto require = [](bool value, const char* message) { if (!value) throw std::runtime_error(message); };
     writeWord(process, worldFixture::FRAME_GATE, 1); Sleep(30);
-    t7::WorldSnapshot last;
+    t7r::WorldSnapshot last;
     auto step = [&] {
         Sleep(16);
         require(!reader.poll(last), "native fixture expected a fresh consumer request");
@@ -92,24 +95,100 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
             && value.tip == std::array<float,3>{271,150,1}, "native ribbon endpoints/visibility mismatch");
     require(!value.contacts[1].contact.hit && value.contacts[2].contact.hit && value.contacts[3].contact.hit,
             "blade collector lost target roots or admitted self");
+    require(value.contacts[2].bodyIndex == 5 && value.contacts[2].region == 1
+            && value.contacts[3].bodyIndex == 6 && value.contacts[3].region == 3,
+            "blade collector lost original rigid-body identity or region");
     require(value.contacts[2].contact.position == std::array<float,3>{270.5f,150,1}
             && value.contacts[2].contact.normal == std::array<float,3>{-1,0,0}
             && value.contacts[2].along == .5f, "blade native point/normal/fraction mismatch");
     require(!sample().actors[1].blade.ready, "actor without a weapon published a blade");
+    // A separate native equipped-weapon root must coexist with the same actor's hurt body.
+    const auto defender = object(1), guard = object(4);
+    for (const auto& field : std::vector<std::array<uint32_t, 2>>{
+        {worldFixture::ENTITY + 0x100 + 0x8C, defender + 0x700}, {defender + 0x738,223},
+        {defender + 0xE00,defender + 0x800}, {defender + 0xE0D,1},
+        {defender + 0x800,defender + 0xE00}, {defender + 0x804,defender + 0xE00},
+        {defender + 0x808,defender + 0xE00}, {defender + 0x920,1}, {defender + 0xA88,guard},
+        {guard,BASE + 0x1777C54}, {guard + 0x34,guard + 0x100},
+        {guard + 0x108,guard + 0x200}, {guard + 0x10C,1},
+        {guard + 0x200,guard + 0x300}, {guard + 0x20D,1},
+        {guard + 0x300,guard + 0x200}, {guard + 0x304,guard + 0x200}, {guard + 0x308,guard + 0x200},
+        {guard + 0x384,guard + 0x400}, {guard + 0x43C,guard + 0x500},
+        {guard + 0x508,terrainFixture::WORLD}, {guard + 0x510,guard + 0x700},
+        {guard + 0x60C,guard + 0x510}, {OBSTACLES + 3 * 16,1}, {OBSTACLES + 3 * 16 + 8,guard + 0x600}
+    }) writeWord(process, field[0], field[1]);
+    number(process, OBSTACLES + 3 * 16 + 4, 270.4f);
+    value = sample().actors[0].blade;
+    const auto defenceSlot = 2 + t7r::DEFENCE_CONTACT_OFFSET;
+    require(value.contacts[2].contact.hit && value.contacts[defenceSlot].contact.hit
+        && value.contacts[defenceSlot].targetId == 2 && value.contacts[defenceSlot].defenceWeaponId == 1030411
+        && value.contacts[defenceSlot].along < value.contacts[2].along,
+        "native guard geometry was merged with or replaced by the body contact");
+    require(std::any_of(last.contacts.begin(), last.contacts.end(), [](const auto& event) {
+        return event.hit.targetId == 2 && event.hit.defenceWeaponId == 1030411 && event.targetState == 223;
+    }), "defence journal slot lost its target RID, weapon or state");
+    for (uint32_t state : {231u,232u,233u,234u,235u,241u,247u,253u}) {
+        writeWord(process, defender + 0x738, state);
+        require(sample().actors[0].blade.contacts[defenceSlot].contact.hit,
+            "guard feedback or chamber prepare lost the native weapon root");
+    }
+    for (uint32_t state : {237u,243u,249u,255u,305u,35u}) {
+        writeWord(process, defender + 0x738, state);
+        require(!sample().actors[0].blade.contacts[defenceSlot].contact.hit,
+            "held attack or inactive defence admitted a defensive root");
+    }
+    writeWord(process, defender + 0x738, 223);
+    writeWord(process, defender + 0x920, 0);
+    require(!sample().actors[0].blade.contacts[defenceSlot].contact.hit, "sheathed weapon admitted as defence");
+    writeWord(process, defender + 0x920, 1); writeWord(process, guard + 0x508, terrainFixture::WORLD + 0x100);
+    require(!sample().actors[0].blade.contacts[defenceSlot].contact.hit, "foreign-world guard root admitted");
+    writeWord(process, guard + 0x508, terrainFixture::WORLD);
+    writeWord(process, defender + 0x738, 309); writeWord(process, defender + 0x810, 1090311);
+    value = sample().actors[0].blade;
+    require(value.contacts[defenceSlot].defenceWeaponId == 1090311 && value.contacts[defenceSlot].contact.hit,
+        "equipped offhand shield root was omitted");
+    writeWord(process, defender + 0x738, 111);
+    require(sample().actors[0].blade.contacts[defenceSlot].contact.hit, "shield feedback opened an interception gap");
+    writeWord(process, defender + 0x810, 1030411);
+    require(!sample().actors[0].blade.contacts[defenceSlot].contact.hit, "main weapon substituted for shield geometry");
+    writeWord(process, defender + 0x738, 238); writeWord(process, OBSTACLES + 3 * 16, 0);
+    writeWord(process, OBSTACLES + 3 * 16 + 8, terrainFixture::CHILD);
+    number(process, OBSTACLES + 3 * 16 + 4, 271.f);
+    writeWord(process, worldFixture::ENTITY + 0x100 + 0x8C, 0);
+    writeWord(process, object(1) + 0x478, 0);
+    require(sample().actors[0].blade.contacts[2].region == 0, "unknown body inferred region from contact height");
+    writeWord(process, object(1) + 0x478, object(1) + 0xF00);
+    const auto sourcePosition = last.actors[0].position, targetPosition = last.actors[1].position;
+    auto movedSource = sourcePosition, movedTarget = targetPosition;
+    movedSource[0] += .125f; movedTarget[0] -= .125f;
+    vector(process, worldFixture::CONTROLLER + 0x10, movedSource);
+    vector(process, worldFixture::CONTROLLER + 0x110, movedTarget);
+    const auto movingActors = step();
+    require(std::any_of(movingActors.contacts.begin(), movingActors.contacts.end(), [](const auto& event) {
+        return event.actorId == 1 && event.hit.targetId == 2 && event.velocityReady
+            && event.sourceVelocity[0] > 0 && event.targetVelocity[0] < 0
+            && std::abs(event.sourceVelocity[0] + event.targetVelocity[0]) < .001f;
+    }), "contact journal lost relative actor motion");
+    vector(process, worldFixture::CONTROLLER + 0x10, sourcePosition);
+    vector(process, worldFixture::CONTROLLER + 0x110, targetPosition); sample();
     blade({270,150,1}, {270,151,1}); sample();
-    const auto frozen = t7::readClientMemory(process, mailbox + t7::ACTORS_DATA_OFFSET, sizeof(t7::ActorMailbox));
+    const auto frozen = t7r::readClientMemory(process, mailbox + t7r::ACTORS_DATA_OFFSET, sizeof(t7r::ActorMailbox));
     const auto publishedBatch = last.contactBatchId;
     auto frameOnly = [&] {
         Sleep(16); writeWord(process, worldFixture::FRAME_GATE, 2);
         const auto deadline = GetTickCount64() + 3000;
-        while (t7::readClientMemory(process, worldFixture::FRAME_GATE, 4) != t7::Bytes{1,0,0,0}) {
+        while (t7r::readClientMemory(process, worldFixture::FRAME_GATE, 4) != t7r::Bytes{1,0,0,0}) {
             require(GetTickCount64() < deadline, "unrequested native frame timeout"); Sleep(1);
         }
     };
     vector(process, object(0) + 0xC88, {271,150,1}); vector(process, object(0) + 0xD88, {271,151,1});
+    writeWord(process, worldFixture::MOVABLE + 0x20, 1);
+    writeWord(process, worldFixture::MOVABLE + 0x120, 1);
     frameOnly(); // No reader.poll: a complete crossing happens between consumer requests.
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+    writeWord(process, worldFixture::MOVABLE + 0x120, 0);
     for (int i = 0; i < 8; ++i) frameOnly(); // Keep sampling beyond the old 100 ms request-gap limit.
-    require(t7::readClientMemory(process, mailbox + t7::ACTORS_DATA_OFFSET, sizeof(t7::ActorMailbox)) == frozen,
+    require(t7r::readClientMemory(process, mailbox + t7r::ACTORS_DATA_OFFSET, sizeof(t7r::ActorMailbox)) == frozen,
             "native sampling changed the unacknowledged response");
     const auto retained = step();
     require(retained.contactsReady && retained.contactFrames >= 9 && !retained.droppedContacts
@@ -118,18 +197,21 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
             && std::any_of(retained.contacts.begin(), retained.contacts.end(), [&](const auto& event) {
                 return event.actorId == 1 && event.hit.targetId == 2 && event.entity == 100 && event.targetEntity == 101
                     && event.state == 238 && event.sequence == 17 && event.occurredAt < retained.sampledAt - 100
+                    && event.hit.bodyIndex == 5 && event.hit.region == 1 && event.velocityReady && event.airborne && event.targetAirborne
+                    && event.weaponVelocity[0] > 0 && event.sourceVelocity == std::array<float,3>{}
+                    && event.targetVelocity == std::array<float,3>{}
                     && std::abs(event.hit.contact.position[0] - 270.5f) < .0001f;
             }), "native journal lost the swept contact before mailbox acknowledgement");
     require(step().contacts.empty(), "native journal replayed a consumed batch");
     blade({270,150,1}, {271,150,1}); sample();
-    const auto record = t7::readClientMemory(process, mailbox + t7::CONTACTS_DATA_OFFSET, sizeof(t7::ContactEventMailbox));
-    t7::Bytes full(t7::MAX_FRAME_CONTACTS * sizeof(t7::ContactEventMailbox));
-    for (size_t i = 0; i < t7::MAX_FRAME_CONTACTS; ++i)
-        std::copy(record.begin(), record.end(), full.begin() + i * sizeof(t7::ContactEventMailbox));
-    t7::writeClientMemory(process, mailbox + t7::LIVE_CONTACTS_OFFSET, full);
-    writeWord(process, mailbox + t7::FRAME_DATA_OFFSET + offsetof(t7::ContactFrameMailbox, count), t7::MAX_FRAME_CONTACTS);
+    const auto record = t7r::readClientMemory(process, mailbox + t7r::CONTACTS_DATA_OFFSET, sizeof(t7r::ContactEventMailbox));
+    t7r::Bytes full(t7r::MAX_FRAME_CONTACTS * sizeof(t7r::ContactEventMailbox));
+    for (size_t i = 0; i < t7r::MAX_FRAME_CONTACTS; ++i)
+        std::copy(record.begin(), record.end(), full.begin() + i * sizeof(t7r::ContactEventMailbox));
+    t7r::writeClientMemory(process, mailbox + t7r::LIVE_CONTACTS_OFFSET, full);
+    writeWord(process, mailbox + t7r::FRAME_DATA_OFFSET + offsetof(t7r::ContactFrameMailbox, count), t7r::MAX_FRAME_CONTACTS);
     const auto saturated = step();
-    require(saturated.contacts.size() == t7::MAX_FRAME_CONTACTS && saturated.droppedContacts >= 2,
+    require(saturated.contacts.size() == t7r::MAX_FRAME_CONTACTS && saturated.droppedContacts >= 2,
             "native journal overflow was silent or overwrote retained contacts");
     const auto resumed = step();
     require(resumed.contacts.size() == 2 && resumed.droppedContacts == 0, "native journal failed to resume after acknowledgement");
@@ -155,7 +237,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
             value = sample().actors[0].blade;
             require(value.ready && !value.contacts[0].contact.hit && value.contacts[2].contact.hit
                     && value.contacts[3].contact.hit, "ground or slope interrupted a blade or filtered a body contact");
-            const auto& ground = value.contacts.back();
+            const auto& ground = value.contacts[t7r::GROUND_CONTACT_SLOT];
             require(ground.targetId == 0 && ground.contact.hit && ground.contact.material == 4
                     && std::abs(ground.along - .2f) < .0001f && ground.contact.position[2] == height,
                     "ground or slope lost its separate material feedback contact");
@@ -178,9 +260,9 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
             && value.contacts[0].contact.normal == std::array<float,3>{-1,0,0}
             && value.contacts[0].along == .625f, "earlier ground contact hid a later wall");
     auto requireGroundAndWall = [&] {
-        require(value.contacts.back().contact.hit && value.contacts.back().targetId == 0
-                && value.contacts.back().contact.normal == std::array<float,3>{0,0,-1}
-                && std::abs(value.contacts.back().along - .2f) < .0001f,
+        require(value.contacts[t7r::GROUND_CONTACT_SLOT].contact.hit && value.contacts[t7r::GROUND_CONTACT_SLOT].targetId == 0
+                && value.contacts[t7r::GROUND_CONTACT_SLOT].contact.normal == std::array<float,3>{0,0,-1}
+                && std::abs(value.contacts[t7r::GROUND_CONTACT_SLOT].along - .2f) < .0001f,
                 "wall contact replaced earlier ground feedback");
         require(std::count_if(last.contacts.begin(), last.contacts.end(), [](const auto& event) {
             return event.actorId == 1 && event.hit.targetId == 0;
@@ -198,15 +280,15 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
     requireGroundAndWall();
     vector(process, NORMALS + 3 * 16, {0,0,-1});
     value = sample().actors[0].blade;
-    require(!value.contacts[0].contact.hit && value.contacts.back().contact.hit
-            && std::abs(value.contacts.back().along - .2f) < .0001f,
+    require(!value.contacts[0].contact.hit && value.contacts[t7r::GROUND_CONTACT_SLOT].contact.hit
+            && std::abs(value.contacts[t7r::GROUND_CONTACT_SLOT].along - .2f) < .0001f,
             "ground slot did not retain the earliest contact independently");
     writeWord(process, OBSTACLES + 5 * 16, 0);
     blade({270,150,1}, {271,150,1});
     for (const auto& normal : std::array<std::array<float, 3>, 3>{{{.8660831f,0,.4999f}, {0,0,-1}, {0,0,1}}}) {
         vector(process, NORMALS + 3 * 16, normal);
         value = sample().actors[0].blade;
-        require(value.contacts[0].contact.hit && !value.contacts.back().contact.hit,
+        require(value.contacts[0].contact.hit && !value.contacts[t7r::GROUND_CONTACT_SLOT].contact.hit,
                 "steep wall or ceiling was treated as ground or retained stale ground feedback");
     }
     vector(process, NORMALS + 3 * 16, {-1,0,0});
@@ -232,6 +314,8 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
     value = blade({271,150,1}, {271,151,1});
     require(value.ready && value.spanMs == 0 && value.contacts[2].contact.hit,
             "two native frames on one clock tick lost their swept geometry");
+    require(std::none_of(last.contacts.begin(), last.contacts.end(), [](const auto& event) { return event.velocityReady; }),
+            "zero-time samples fabricated damage velocity");
     writeWord(process, sprintFixture::CLOCK_MODE, 0);
     // Missing nodes reset history; restoring them must not connect across the missing frame.
     writeWord(process, object(0) + 0xBB0, 0);

@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <set>
 
-namespace t7 {
+namespace t7r {
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
     int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);

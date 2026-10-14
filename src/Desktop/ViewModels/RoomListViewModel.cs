@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     // The desktop has no room discovery or connection service yet.
     public sealed class RoomListViewModel : ObservableObject

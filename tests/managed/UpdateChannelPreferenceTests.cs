@@ -5,12 +5,12 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class UpdateChannelPreferenceTests
     {

@@ -107,16 +107,15 @@ def test_stopping_a_bot_cancels_its_native_phase_and_late_event(multi, actorId):
 
 
 @pytest.mark.parametrize('intent', [300560, 300580])
-def test_old_batched_phase_deadline_survives_hot_reload(multi, intent):
+def test_current_phase_deadline_survives_hot_reload(multi, intent):
     sample(multi)
     battle.startAction(multi, intent, released=intent in battle.ATTACK_CHAINS, actorId=20)
     multi.later(actors.PULSE_TIMER, bot.MOVE_MS)
-    state = app.migrateState(11, multi.state)
-    # The old revision kept this deadline only in Python, with no native timer.
+    state = app.migrateState(app.STATE_VERSION, multi.state)
     restored = app.Flow({'connection': 1}, state, multi.context)
     name = battle.actionTimer(20)
-    remaining = max(0, restored.session['pending'][name] - restored.now)
-    phaseTimer(restored, 20, remaining)
+    assert restored.session['pending'][name] == multi.session['pending'][name]
+    assert not restored.result['timers']  # Current native timers survive revision replacement.
     restored.now = max(state['sessions']['1']['pending'].values()) + bot.MOVE_MS
     sample(restored)
     app.handleTimer(restored, actors.PULSE_TIMER)

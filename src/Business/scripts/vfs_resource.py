@@ -20,7 +20,7 @@ Entry = namedtuple('Entry', 'flags offset storedSize decodedSize chunkCount')
 class ResourceError(ValueError):
     def __init__(self, code, archive, entry, detail):
         self.code, self.archive, self.entry = code, str(archive), entry
-        super().__init__(f'[T7_RESOURCE:{code}] archive={str(archive)!r} entry={entry!r}: {detail}')
+        super().__init__(f'[T7R_RESOURCE:{code}] archive={str(archive)!r} entry={entry!r}: {detail}')
 
 
 def canonicalPath(path):

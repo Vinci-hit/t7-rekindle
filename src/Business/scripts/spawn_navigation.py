@@ -2,10 +2,10 @@
 from functools import lru_cache
 import math
 
-from . import body_collision
+from . import body_collision, map_data
 from .navigation import EPSILON, cross, height, inside
 
-RESOURCE_IDS = frozenset((1028,))
+RESOURCE_IDS = frozenset((map_data.RESOURCE_ID,))
 MAX_DISTANCE = 32.0
 MAX_CANDIDATES = 8
 GROUND_OFFSET = .2
@@ -14,7 +14,7 @@ SPACING = body_collision.DIAMETER + body_collision.SKIN
 
 
 def enabled(flow):
-    return flow.session.get('resourceId', 1028) in RESOURCE_IDS
+    return flow.session.get('resourceId', map_data.RESOURCE_ID) in RESOURCE_IDS
 
 
 def inset(polygon):

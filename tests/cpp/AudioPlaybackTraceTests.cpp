@@ -7,12 +7,12 @@
 namespace {
 using namespace audioFixture;
 struct Run {
-    t7::AudioPlaybackTrace trace;
+    t7r::AudioPlaybackTrace trace;
     std::mutex mutex;
     std::vector<std::string> lines;
     std::atomic<bool> installed{false};
-    t7::DebugClient client;
-    void log(t7::DiagnosticLogLevel, const std::string& message) {
+    t7r::DebugClient client;
+    void log(t7r::DiagnosticLogLevel, const std::string& message) {
         { std::lock_guard<std::mutex> lock(mutex); lines.push_back(message); }
         if (message.find("Audio playback trace installed;") == 0) installed.store(true);
     }
@@ -20,9 +20,9 @@ struct Run {
         std::lock_guard<std::mutex> lock(mutex);
         return std::any_of(lines.begin(), lines.end(), [&](const auto& line) { return line.find(text) != std::string::npos; });
     }
-    void start(const t7::fs::path& path, bool enabled) {
-        const auto logger = [this](t7::DiagnosticLogLevel level, const std::string& line) { log(level, line); };
-        client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE) { if (enabled) trace.arm(process, logger); },
+    void start(const t7r::fs::path& path, bool enabled) {
+        const auto logger = [this](t7r::DiagnosticLogLevel level, const std::string& line) { log(level, line); };
+        client.start(path, t7r::fileHash(path), {}, [&](HANDLE process, HANDLE) { if (enabled) trace.arm(process, logger); },
             logger, {}, {}, [this](DWORD tid, uintptr_t address) { return trace.handleBreakpoint(tid, address); });
         if (enabled) wait([&] { return installed.load(); });
     }
@@ -53,11 +53,11 @@ void verifyRegisters(Run& run) {
     for (unsigned i = 0; i < 8; ++i) require(read(process, ARGUMENTS + i * 4) == expected[i], "audio callback/cookie/argument changed");
     require(read(process, BANK_ID) == 12345, "audio wrapper changed bank output");
 }
-void verifyTrace(const t7::fs::path& path) {
+void verifyTrace(const t7r::fs::path& path) {
     Run run; run.start(path, true); run.command(1); verifyRegisters(run);
     const auto process = run.client.process();
     const auto queue = read(process, iat(module("aksoundenginedll.dll"), "?SetRTPCValue@SoundEngine@AK@@YA?AW4AKRESULT@@KM"))
-        - t7::AUDIO_PLAYBACK_CODE_OFFSET;
+        - t7r::AUDIO_PLAYBACK_CODE_OFFSET;
     require(read(process, queue + 8) == 8, "audio import coverage count");
     run.trace.poll();
     for (const auto* expected : {"eventName=\"Play_voice_fixture\"", "playingId=456; accepted=1; audible=not-observed",
@@ -76,15 +76,15 @@ void verifyTrace(const t7::fs::path& path) {
     const auto written = read(process, queue + 8), consumed = read(process, queue + 4), dropped = read(process, queue + 12);
     require(read(process, CALLS) - before == 2000, "trace queue dropped original calls");
     require(written - consumed + dropped - 1 == 2000, "concurrent trace accounting mismatch");
-    require(written - consumed == t7::AUDIO_PLAYBACK_CAPACITY, "bounded trace queue did not saturate");
+    require(written - consumed == t7r::AUDIO_PLAYBACK_CAPACITY, "bounded trace queue did not saturate");
     run.trace.poll(); require(run.contains("coverage incomplete; dropped="), "trace overflow omitted warning");
     // Unsigned cursors and sequences must also work across wraparound.
     write(process, queue + 4, UINT32_MAX); write(process, queue + 8, UINT32_MAX);
     run.command(3); run.trace.poll(); require(run.contains("sequence=0;"), "trace cursor wraparound");
     run.command(3); run.trace.poll();
 
-    t7::Bytes debugText{'W','w','i','s','e',':',' ','e','r','r','o','r','\n',0};
-    t7::writeClientMemory(process, NAME, debugText);
+    t7r::Bytes debugText{'W','w','i','s','e',':',' ','e','r','r','o','r','\n',0};
+    t7r::writeClientMemory(process, NAME, debugText);
     OUTPUT_DEBUG_STRING_INFO info{}; info.lpDebugStringData = reinterpret_cast<char*>(static_cast<uintptr_t>(NAME));
     info.nDebugStringLength = static_cast<WORD>(debugText.size()); run.trace.debugString(info);
     require(run.contains("Audio engine debug output; message=\"Wwise: error\\u000a\""), "existing Wwise debug output was not captured");
@@ -92,28 +92,28 @@ void verifyTrace(const t7::fs::path& path) {
     run.finish();
 }
 void verifyFormat() {
-    t7::AudioPlaybackRecord record{}; record.api = static_cast<uint32_t>(t7::AudioPlaybackApi::PostEventName);
+    t7r::AudioPlaybackRecord record{}; record.api = static_cast<uint32_t>(t7r::AudioPlaybackApi::PostEventName);
     record.result = 7; record.startedMs = UINT32_MAX - 9; record.completedMs = 10;
-    std::memset(record.name, 'x', sizeof(record.name)); record.flags = t7::AUDIO_PLAYBACK_TRUNCATED;
-    const auto text = t7::describeAudioPlayback(record);
+    std::memset(record.name, 'x', sizeof(record.name)); record.flags = t7r::AUDIO_PLAYBACK_TRUNCATED;
+    const auto text = t7r::describeAudioPlayback(record);
     require(text.find("durationMs=20;") != std::string::npos && text.find("nameTruncated=1") != std::string::npos,
             "bounded name/timestamp formatting");
     record.api = 999; bool rejected = false;
-    try { t7::describeAudioPlayback(record); } catch (const std::runtime_error&) { rejected = true; }
+    try { t7r::describeAudioPlayback(record); } catch (const std::runtime_error&) { rejected = true; }
     require(rejected, "unknown playback record accepted");
 }
 }
 bool verifyAudioPlaybackTrace() {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-audio-trace-" + std::to_wstring(GetCurrentProcessId())
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-audio-trace-" + std::to_wstring(GetCurrentProcessId())
                                                    + L"-" + std::to_wstring(GetTickCount64()));
     bool ownsRoot = false;
     const auto cleanup = [&] {
         if (!ownsRoot) return;
-        require(t7::fs::weakly_canonical(root).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "audio fixture cleanup extent");
-        t7::fs::remove_all(root);
+        require(t7r::fs::weakly_canonical(root).parent_path() == t7r::fs::canonical(t7r::fs::temp_directory_path()), "audio fixture cleanup extent");
+        t7r::fs::remove_all(root);
     };
     try {
-        verifyFormat(); ownsRoot = t7::fs::create_directory(root); require(ownsRoot, "fresh audio fixture directory");
+        verifyFormat(); ownsRoot = t7r::fs::create_directory(root); require(ownsRoot, "fresh audio fixture directory");
         const auto path = create(root);
         { Run baseline; baseline.start(path, false); baseline.command(1); verifyRegisters(baseline); baseline.finish(); }
         verifyTrace(path); cleanup();

@@ -15,7 +15,7 @@ constexpr uint32_t WORKER = BASE + 0x1500, INITIALIZE = BASE + 0x89090;
 constexpr uint32_t ALLOCATOR = BASE + 0x1C8E2BC, ALLOCATOR_VTABLE = BASE + 0x173432C;
 class Code {
 public:
-    t7::Bytes bytes;
+    t7r::Bytes bytes;
     explicit Code(uint32_t address) : address_(address) {}
     void emit(std::initializer_list<unsigned char> values) { bytes.insert(bytes.end(), values); }
     void word(uint32_t value) {
@@ -36,11 +36,11 @@ public:
 private:
     uint32_t address_;
 };
-void manifest(const t7::fs::path& path, const std::string& codePage) {
+void manifest(const t7r::fs::path& path, const std::string& codePage) {
     if (codePage.empty()) return;
     std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
         "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">"
-        "<assemblyIdentity name=\"T7.StartupFixture\" version=\"1.0.0.0\" type=\"win32\" processorArchitecture=\"x86\"/>"
+        "<assemblyIdentity name=\"T7R.StartupFixture\" version=\"1.0.0.0\" type=\"win32\" processorArchitecture=\"x86\"/>"
         "<application xmlns=\"urn:schemas-microsoft-com:asm.v3\"><windowsSettings>"
         "<activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">" + codePage +
         "</activeCodePage></windowsSettings></application></assembly>";
@@ -55,31 +55,31 @@ void manifest(const t7::fs::path& path, const std::string& codePage) {
 }
 void require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 uint32_t readWord(HANDLE process, uint32_t address) {
-    const auto bytes = t7::readClientMemory(process, address, 4);
+    const auto bytes = t7r::readClientMemory(process, address, 4);
     uint32_t value = 0; std::memcpy(&value, bytes.data(), 4); return value;
 }
 void writeWord(HANDLE process, uint32_t address, uint32_t value) {
-    t7::Bytes bytes(4); std::memcpy(bytes.data(), &value, 4); t7::writeClientMemory(process, address, bytes);
+    t7r::Bytes bytes(4); std::memcpy(bytes.data(), &value, 4); t7r::writeClientMemory(process, address, bytes);
 }
-t7::MemoryPatch initializationPatch() {
-    t7::Bytes image(0x3B54000, 0); size_t offset = 0x1000;
+t7r::MemoryPatch initializationPatch() {
+    t7r::Bytes image(0x3B54000, 0); size_t offset = 0x1000;
     for (const auto* name : {"TerSafe", "TerSafe", "GeTssAntiService", "GeTssAntiService", "GeTssAntiService",
                              "GeTssAntiService", "GeTssAntiService", "QQPCfix.dll"}) {
         std::copy_n(name, std::strlen(name), image.begin() + offset); offset += 32;
     }
-    const auto patches = t7::clientMemoryPatches(image);
+    const auto patches = t7r::clientMemoryPatches(image);
     const auto patch = std::find_if(patches.begin(), patches.end(), [](const auto& item) { return item.rva == 0x890B1; });
     require(patch != patches.end(), "startup fixture initialization patch");
     return *patch;
 }
-t7::fs::path create(const t7::fs::path& root, const std::string& name, const std::string& codePage) {
-    t7::Bytes memory(IMAGE_SIZE, 0);
-    const auto put = [&](uint32_t address, const t7::Bytes& bytes) {
+t7r::fs::path create(const t7r::fs::path& root, const std::string& name, const std::string& codePage) {
+    t7r::Bytes memory(IMAGE_SIZE, 0);
+    const auto put = [&](uint32_t address, const t7r::Bytes& bytes) {
         require(address >= BASE && address - BASE + bytes.size() <= memory.size(), "startup fixture extent");
         std::memcpy(memory.data() + address - BASE, bytes.data(), bytes.size());
     };
     const auto word = [&](uint32_t address, uint32_t value) { std::memcpy(memory.data() + address - BASE, &value, 4); };
-    const auto imports = t7::writeClientImports(memory, 0x6000, 0x1000, {
+    const auto imports = t7r::writeClientImports(memory, 0x6000, 0x1000, {
         {"kernel32.dll", SLEEP - BASE, {"Sleep", "ExitProcess", "CreateThread", "CloseHandle", "GetACP"}},
         {"msvcrt.dll", ALIGNED_MALLOC - BASE, {"_aligned_malloc", "_aligned_free", "malloc", "free"}}
     });
@@ -147,7 +147,7 @@ t7::fs::path create(const t7::fs::path& root, const std::string& name, const std
     Code stringAllocate(BASE + 0x1900); stringAllocate.emit({0xFF,0x25}); stringAllocate.word(MALLOC); put(BASE + 0x1900, stringAllocate.bytes);
     Code stringFree(BASE + 0x1920); stringFree.emit({0xFF,0x25}); stringFree.word(FREE); put(BASE + 0x1920, stringFree.bytes);
 
-    t7::Bytes header(HEADER_SIZE, 0);
+    t7r::Bytes header(HEADER_SIZE, 0);
     IMAGE_DOS_HEADER dos{}; dos.e_magic = IMAGE_DOS_SIGNATURE; dos.e_lfanew = 0x80;
     std::memcpy(header.data(), &dos, sizeof(dos));
     IMAGE_NT_HEADERS32 nt{}; nt.Signature = IMAGE_NT_SIGNATURE;

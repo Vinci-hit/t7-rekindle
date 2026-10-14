@@ -1,9 +1,9 @@
 using System;
 using System.IO;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
+using T7R.Core;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class MainWindowViewModel
     {

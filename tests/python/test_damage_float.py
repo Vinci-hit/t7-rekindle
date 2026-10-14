@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE, DASH_DAMAGE
 import struct
 
 import pytest
@@ -28,7 +29,7 @@ def test_only_local_hits_send_actual_negative_hp_delta_before_death(arena, attac
 
     packets = damagePackets(arena)
     assert len(packets) == (1 if attacker == wire.ACTOR_ID else 0)
-    damage = min(health, combat.DASH_DAMAGE if intent == battle.DASH_ATTACK else combat.DAMAGE)
+    damage = min(health, DASH_DAMAGE if intent == battle.DASH_ATTACK else NORMAL_DAMAGE)
     lifeState = battle_flow.LIFE_STATE_KILL if health == damage else battle_flow.LIFE_STATE_NONE
     assert hp(arena, target) == health - damage
     assert hp(arena, attacker) == combat.MAX_HEALTH
@@ -62,10 +63,10 @@ def test_multi_hit_only_shows_local_damage_once_per_enemy(multi, attacker, inten
         advance(multi, combat.hitTimer(attacker))
 
     results = [battle_flow.decode_battle_result(packet['body']) for packet in damagePackets(multi)]
-    damage = combat.DASH_DAMAGE if intent == battle.DASH_ATTACK else combat.DAMAGE
+    damage = DASH_DAMAGE if intent == battle.DASH_ATTACK else NORMAL_DAMAGE
     assert [result.target_rid for result in results] == (list(targets) if attacker == wire.ACTOR_ID else [])
     assert all(result.attacker_rid == attacker and result.attacker_seq_no == sequence
-               and result.target_result_type == battle_flow.RESULT_DATA_DELTA_HP
+               and result.target_result_type == battle_flow.RESULT_DATA_DECAY_DELTA_HP
                and result.target_result_data == -damage for result in results)
     assert hp(multi, ally) == combat.MAX_HEALTH
     assert all(hp(multi, target) == combat.MAX_HEALTH - damage for target in targets)
@@ -81,6 +82,7 @@ def test_non_damaging_contacts_do_not_send_damage_numbers(arena, case):
         elif case == 'parry':
             battle.startAction(arena, 300580, actorId=2)
             advance(arena, battle.actionTimer(2))
+            publish(arena, 1, [contact(2, defenceWeaponId=wire.WEAPON_ID)])
         elif case == 'terrain':
             publish(arena, 1, [contact(0, material=4)])
         elif case == 'friendly':

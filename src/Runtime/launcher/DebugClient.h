@@ -7,7 +7,7 @@
 #include <mutex>
 #include <thread>
 
-namespace t7 {
+namespace t7r {
 struct DllEntryRule {
     std::wstring name;
     std::string sha256;

@@ -3,7 +3,7 @@
 #include "ProcessCleanup.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t PAGE_SIZE = 4096;
 class Code {

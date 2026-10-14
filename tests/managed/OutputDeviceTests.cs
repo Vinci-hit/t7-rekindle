@@ -4,13 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Controls;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class OutputDeviceTests
     {

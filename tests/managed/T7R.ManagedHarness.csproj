@@ -13,8 +13,8 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="UIAutomationProvider" />
     <Reference Include="WindowsBase" />
-    <ProjectReference Include="..\..\src\Core\T7.Core.csproj" />
-    <ProjectReference Include="..\..\src\Desktop\T7.Desktop.csproj" />
+    <ProjectReference Include="..\..\src\Core\T7R.Core.csproj" />
+    <ProjectReference Include="..\..\src\Desktop\T7R.Desktop.csproj" />
   </ItemGroup>
   <Import Project="..\..\Managed.Common.targets" />
 </Project>

@@ -220,7 +220,7 @@ def test_reload_preserves_deadline_of_existing_five_second_life(multi):
     multi.session['life']['respawnAt'] = 6000
     multi.session['pending'][player_life.SELECT_TIMER] = 6000
     before = deepcopy(multi.state)
-    assert app.migrateState(11, before) == before
+    assert app.migrateState(app.STATE_VERSION, before) == before
     tick(multi, player_life.SELECT_TIMER, 5999)
     assert multi.session['life']['state'] == 'dead'
     tick(multi, player_life.SELECT_TIMER, 6000)

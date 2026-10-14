@@ -4,6 +4,35 @@
 
 下面的命令在包含 `T7-Rekindle.sln` 的仓库根目录，用 PowerShell 执行。构建脚本检查前置组件，不自动安装系统工具；首次依赖还原需要访问 NuGet，或已有完整的依赖缓存。
 
+## 项目命名规范
+
+社区项目全称为“铁骑·重燃（T7-Rekindle）”，简称为 `T7R`，小写技术前缀为 `t7r`。`T7` 用于指代原游戏。新增代码、工程、配置和测试遵循下表，不再以原游戏简称作为项目技术前缀。
+
+| 对象 | 当前规范 | 迁移前形式 |
+| --- | --- | --- |
+| C++ 命名空间 | `t7r` 及其子命名空间 | `t7` |
+| 原生类型、常量、导出 | `T7RNative*`、`T7RNB_*`、`t7r_native_*` | `T7Native*`、`T7NB_*`、`t7_native_*` |
+| C# 命名空间 | `T7R.Core`、`T7R.Desktop` 及其子命名空间 | `T7.Rekindle.*` |
+| 工程、库与测试程序 | `T7R.Core`、`T7R.Desktop`、`T7R.NativeBridge`、`T7R.*Tests`、`T7R.ManagedHarness` | `T7.*` |
+| WPF 资源标识 | `T7R.Icon.*`、`T7R.Documents.*` | `T7.Icon.*`、`T7.Rekindle.Documents.*` |
+| 跨语言资源错误标记 | `[T7R_RESOURCE:code]` | `[T7_RESOURCE:code]` |
+| Python 动态业务包 | `t7r_rev_<随机标识>` | `t7rev_<随机标识>` |
+| 自建移动资源 | `t7r_runtime_movement.btree` | `t7_runtime_movement.btree` |
+| 构建变量与辅助标识 | `T7R_*`、`_T7R*`、`T7RPrepareBusinessScripts`；小写辅助名称使用 `t7r_`／`t7r-` | 对应的 `T7`／`t7` 技术前缀 |
+
+以下是明确保留项，不属于待替换的旧简称：
+
+- **完整产品与安装身份**：`T7-Rekindle`、仓库名 `t7-rekindle`、解决方案名、主程序及其 `.config`、安装器文件名和 AppId、Mutex、注册表启动项、用户数据目录、发布文件名与下载路径。WPF 的 `/T7-Rekindle;component/...` 仍指向主程序集；Java 中 `t7rekindle` 也是完整名称。
+- **v1 预览协议**：`T7PR1`、`T7PA1` 及其签名内容；`T7-Rekindle/preview/v1` 身份摘要前缀，以及 `preview-access/v1`、`preview-authority/v1` 的完整产品名 DPAPI 保护字符串。迁移技术命名不重新签发凭据、不轮换密钥。
+- **原游戏与旧文件处理**：原游戏名称、协议、资源路径及数据不更名；`T7.Core.dll`、`T7.NativeBridge.dll` 仅用于旧库清理、禁止打包及相应测试；既有禁止分发名单中的 `t7.server.exe` 等名称继续保留。
+- **规范与迁移验证**：命名对照、兼容格式的负例和合成旧包测试可使用对应旧名称，不作为新接口或新产品标识。
+
+名称变更须同时更新定义与引用，包括原生导出与 C# 绑定、Python 错误与 UI 识别、XAML、程序集资源、项目引用、构建脚本、CI、测试和当前文档。按语义处理，不替换哈希、凭据、二进制数据或真实历史发布内容。保留项变更、新增例外及旧接口兼容层须先说明影响并取得确认；完成后检查命名和跨层引用的一致性。
+
+NativeBridge 仅提供 `T7R.NativeBridge.dll` 和 `t7r_native_*`，结构布局仍为 ABI 1，但不兼容旧 DLL／导出名称；Desktop、Core、Runtime 与 Business 必须整包升级。主程序仍为 `T7-Rekindle.exe`。新包拒绝混入旧库；安装及既有设置处理成功后，仅清理安装根目录中的上述两个旧 DLL，失败返回 `20` 并停止自动启动，详见[运行契约](runtime-contracts.md#回退设置契约)。
+
+旧构建环境迁移时，将变量名改为 `T7R_*`；已存在的 `T7R_SERVER_BASE_URL` 保持。首次使用新 CI 前，由维护者在 Actions 配置 `T7R_PREVIEW_ACCESS_PUBLIC_KEY`，沿用原公钥值；旧 `T7_*` 构建变量不再读取，不因此变更远端发布对象或凭据格式。
+
 ## 1. 准备工具链
 
 | 组件 | 要求与获取方式 |
@@ -41,7 +70,7 @@ Python 应显示 3.14.4、64 位；`dotnet --list-sdks` 应列出 SDK 8.0.425，
 ```powershell
 python scripts/build.py --project all
 python -m pytest -q
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe
 python scripts/integration_test.py --report artifacts/test-results/integration.json
 ```
 
@@ -52,8 +81,11 @@ python scripts/integration_test.py --report artifacts/test-results/integration.j
 | `build.py --project native-tests` | NativeBridge、三组原生测试，并自动运行原生测试 |
 | `build.py --project managed` | Core、WPF、托管 harness，不自动运行 harness |
 | `python -m pytest -q` | Python 业务、构建、打包和静态界面契约测试 |
-| `T7.ManagedHarness.exe` | 设置、ViewModel、目录选择、主题、布局及生命周期契约 |
+| `T7R.ManagedHarness.exe` | 设置、ViewModel、目录选择、主题、布局及生命周期契约 |
+| `T7R.ManagedHarness.exe --native-contract-tests PACKAGE_ROOT` | 对完整包验证 C# 原生绑定、会话清理及仅有旧 DLL 时的加载失败，不启动游戏 |
 | `integration_test.py` | 使用独立原生宿主验证嵌入式 Python、三通道及模拟客户端生命周期 |
+
+托管默认套件覆盖 Light、Dark、HighContrast 三种主题的完整尺寸／DPI 矩阵，并按测试组、主题输出开始状态、结果及毫秒耗时。命令执行器应为整个托管测试进程预留至少 **300 秒**；CI 对该步骤设置 5 分钟预算。整体执行预算与单用例的等待上限独立。
 
 脚本默认构建 Release/x64，可用 `--configuration Debug` 构建 Debug/x64；省略参数与显式指定 `--configuration Release` 等效。该配置同时用于原生、托管项目及自动运行的原生测试，Debug/Release 产物分别存放。托管和原生编译将警告按错误处理，CI 也检查 Inno 编译警告；Python 测试使用 pytest 默认警告处理。
 
@@ -62,7 +94,19 @@ python scripts/build.py --project all --configuration Debug
 python scripts/build.py --project managed --configuration Debug
 ```
 
-第二条命令仅构建托管项目；它不生成 NativeBridge 或准备 Python 运行时。正式打包和 `integration_test.py` 仍使用 Release 产物，Debug 构建不替代发行前的 Release 构建与验证。
+第二条命令仅构建托管项目，不生成 NativeBridge。配置 `PythonHome` 后，Desktop 的 Debug 构建会同步 Python 运行时；启动前仍需生成相同配置的 NativeBridge。正式打包和 `integration_test.py` 仍使用 Release 产物，Debug 构建不替代发行前的 Release 构建与验证。
+
+### 服务端上下文定向验证
+
+模块回归覆盖 `test_native_dispatch.py`、`test_defence_diagnostics.py`、`test_business_runtime.py`、`test_battle_actions.py`、`test_battle_buffer.py`、`test_battle_recovery.py`、`test_contact_journal.py` 和近战／电脑动作测试。原生宿主提供 `T7R.RuntimeTests.exe --server-context PACKAGE_ROOT`，使用构建脚本生成的合成运行目录，验证缓存身份、接触隔离、版本失效、异常提交、热更新／回滚、引用释放及事件顺序，不启动游戏客户端。
+
+20 角色合成性能对照入口：
+
+```powershell
+python tests/python/benchmark_native_dispatch.py --output artifacts/test-results/dispatch-benchmark.json
+```
+
+默认比较当前序列化入口与对象入口，各预热 100 轮、测量 1000 轮，交替顺序重复 3 次；可使用 `--baseline-ref COMMIT` 从本仓库指定 Git revision 读取旧宿主作基线。报告包括 P50、P95、最大值和输入规模，不设置依赖机器速度的单元测试断言。此基准只测 Python 桥接及业务，不包含 Native 对象构建、队列、网络与渲染；实战需在同机、同场景和相同日志配置下，分别采集至少 100 个四方向均覆盖的完整防御样本，比较入队等待、准备至保持下发间隔和接触投递年龄。
 
 ### QQ 账号服务
 
@@ -80,17 +124,17 @@ python scripts/build.py --project managed --configuration Debug
 未配置时禁用账号登录并使用内置公告，本地游戏功能不受影响。QQ 登录使用 WebView2 Evergreen Runtime；安装器和登录窗口均提供缺失时的官方安装入口。
 SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包检查将验证这些文件。
 
-账号定向测试：`T7.ManagedHarness.exe --account-tests`。服务端迁移、接口、SSE 代理设置及 QQ 实机验证见 [认证服务说明](../server/README.md#qq-扫码登录)。
+账号定向测试：`T7R.ManagedHarness.exe --account-tests`。服务端迁移、接口、SSE 代理设置及 QQ 实机验证见 [认证服务说明](../server/README.md#qq-扫码登录)。
 
-公告定向测试：`T7.ManagedHarness.exe --announcement-tests artifacts/ui-announcements`，覆盖匿名接口、刷新节流、关闭取消、离线兜底及三种主题；省略输出目录时仅执行断言。
+公告定向测试：`T7R.ManagedHarness.exe --announcement-tests artifacts/ui-announcements`，覆盖匿名接口、刷新节流、关闭取消、离线兜底及三种主题；省略输出目录时仅执行断言。
 
-预览授权定向测试：`T7.ManagedHarness.exe --preview-access-tests`，覆盖签名协议、Windows 用户绑定、存量迁移、到期收尾和 PowerShell 5.1 签发互通；完整 UI 测试还覆盖授权弹窗三种主题。发布前运行 `--preview-key-check` 验证编译公钥；配置及管理员脚本见[预览渠道离线授权](preview-access.md)。
+预览授权定向测试：`T7R.ManagedHarness.exe --preview-access-tests`，覆盖签名协议、Windows 用户绑定、存量迁移、到期收尾和 PowerShell 5.1 签发互通；完整 UI 测试还覆盖授权弹窗三种主题。发布前运行 `--preview-key-check` 验证编译公钥；配置及管理员脚本见[预览渠道离线授权](preview-access.md)。
 
-日志定向测试：`T7.ManagedHarness.exe --log-tests artifacts/ui-log-levels`，覆盖等级过滤、中文显示、配置兼容、保存失败回滚及三种主题；省略输出目录时仅执行断言。
+日志定向测试：`T7R.ManagedHarness.exe --log-tests artifacts/ui-log-levels`，覆盖等级过滤、中文显示、配置兼容、保存失败回滚及三种主题；省略输出目录时仅执行断言。
 
 合成集成测试依赖 `native-tests` 的输出，并生成 JSON 报告。`realClient=false` 表示未启动真实客户端；它验证所覆盖的合成流程，不代替进图、移动、AI 或完整对局验收。真实客户端与界面验收项目见[实施计划](planning/implementation-plan.md)。
 
-界面截图可通过 `T7.ManagedHarness.exe --render-ui artifacts/ui-v11-final` 生成；`--native-ui artifacts/ui-v11-final` 另行检查当前显示器的真实窗口边界、弹窗位置与托盘恢复。两者均使用测试数据，不启动真实游戏或修改自启动项。覆盖范围、截图索引及待实机验收项见 [UI 1.1 实施与验收](planning/ui-handoff-v1.1.md)。
+界面截图可通过 `T7R.ManagedHarness.exe --render-ui artifacts/ui-v11-final` 生成；`--native-ui artifacts/ui-v11-final` 另行检查当前显示器的真实窗口边界、弹窗位置与托盘恢复。两者均使用测试数据，不启动真实游戏或修改自启动项。覆盖范围、截图索引及待实机验收项见 [UI 1.1 实施与验收](planning/ui-handoff-v1.1.md)。
 
 客户端异常退出后，“本地服务未运行”表示会话清理后的状态，不是端口分配失败的诊断。应查看日志中的首个错误；未处理的客户端异常会记录模块名、RVA 和线程寄存器，并从最多 32 个栈槽中记录指向映像的地址候选。这些候选不是完整展开的调用栈，也不包含原始栈正文。诊断采集失败另行记录，不覆盖原始异常；分享日志前仍需检查个人信息。
 
@@ -102,7 +146,7 @@ SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包�
 
 覆盖范围仅为已支持客户端的上述导入调用，不包含 DLL 内部调用或其他 CG 播放链路。已有 Wwise 调试输出会标记为 `Audio engine debug output`，不强制启用或替换引擎 Monitor 回调；没有调试输出不代表没有内部错误。`PostEvent` 的非零播放 ID 仅代表请求被接受，不证明实际出声。默认端点也不是已确认的游戏实际路由；`sysFx` 不代表所有 APO 的运行状态。模块加载、采样率不同或设置邮箱超时均不单独证明声音缺失的原因。
 
-请先切换“调试”等级并重新启动游戏，保留开场动画，再由本机玩家触发一次连杀；分别记录 CG、提示音、人声和 BGM 是否有声及发生时间。通过“查看详情 → 打开日志目录”反馈该次 `native.log`、`desktop.log`（跨日时附对应归档）。定向验证：`T7.NativeTests.exe --audio-playback-tests`、`T7.RuntimeTests.exe --audio-notifications` 与 `python -m pytest -q tests/python/test_kill_notifications.py`。
+请先切换“调试”等级并重新启动游戏，保留开场动画，再由本机玩家触发一次连杀；分别记录 CG、提示音、人声和 BGM 是否有声及发生时间。通过“查看详情 → 打开日志目录”反馈该次 `native.log`、`desktop.log`（跨日时附对应归档）。定向验证：`T7R.NativeTests.exe --audio-playback-tests`、`T7R.RuntimeTests.exe --audio-notifications` 与 `python -m pytest -q tests/python/test_kill_notifications.py`。
 
 ### 在 Visual Studio 中构建
 
@@ -123,7 +167,9 @@ SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包�
 
 托管项目通过 `Managed.Common.props` / `Managed.Common.targets` 成对导入 SDK：优先使用下方约定的便携 SDK，目录不存在时使用系统 SDK。便携 net48 引用程序集也会自动检测；显式设置的 `TargetFrameworkRootPath` 和 NuGet 缓存路径保持优先。WPF 支持仍由 Desktop 项目的 `UseWPF` 启用。
 
-配置完成后直接打开 `T7-Rekindle.sln`，选择 Debug/x64 或 Release/x64 生成；已经打开的解决方案需重新加载，无需从环境脚本启动 VS。此配置只解决构建，运行完整启动器仍需按下一节打包。
+配置完成后直接打开 `T7-Rekindle.sln`，选择 Debug/x64，将 `T7R.Desktop` 设为启动项目并生成解决方案，即可按 F5 调试；已经打开的解决方案需重新加载，无需从环境脚本启动 VS。
+
+Debug 构建从 `PythonHome` 同步运行时 DLL、标准库及扩展模块到当前输出目录，不依赖旧项目名的输出目录，也不复制 `site-packages`、标准库测试或字节码缓存。VS 会跟踪这些复制项，缺失输出会在构建时补齐；已配置但不完整的 Python 安装会使构建失败。未配置 `PythonHome` 时仍可仅编译托管代码，但运行前需补齐该配置和原生构建。Release 构建保持原有行为，完整运行目录按下一节打包。
 
 ### Python 脚本同步与生效
 
@@ -181,7 +227,7 @@ Compress-Archive -Path artifacts/package/* -DestinationPath dist/T7-Rekindle-win
 
 ### 版本与关于页
 
-本地启动器默认版本来自 `src/Desktop/T7.Desktop.csproj`；正式 tag 构建通过 `T7_RELEASE_VERSION` 将同一数字版本写入程序集和安装器。本地单独设置 `MyAppVersion` 仍只影响安装器。内置版本日志由维护者更新。
+本地启动器默认版本来自 `src/Desktop/T7R.Desktop.csproj`；正式 tag 构建通过 `T7R_RELEASE_VERSION` 将同一数字版本写入程序集和安装器。本地单独设置 `MyAppVersion` 仍只影响安装器。内置版本日志由维护者更新。
 
 CI 通过 `GITHUB_SHA` 写入 Git 提交元数据。项目文件同时生成项目名称、介绍及仓库、发布页、CI 构建和 Issues 的地址元数据。
 
@@ -212,7 +258,7 @@ GitHub Release 的文件名为 `T7-Rekindle-{tag}-Setup.exe` 和 `T7-Rekindle-wi
 | VS 报 `Python.h` 缺失 | 按上方 VS 配置设置 `.local/Build.props` 中的 `PythonHome`，然后重新加载项目 |
 | 原生阶段成功，随后提示缺少 SDK 或 Targeting Pack | `--project all` 先构建和测试原生部分，再检查托管前置；补齐 .NET SDK 与 net48 Developer Pack 后重试 |
 | NuGet 锁定还原失败 | 检查源访问及项目与 lock file 是否匹配；不要默认解除锁定 |
-| 托管输出缺少 NativeBridge 或 Python | 先完成相同配置的原生构建；完整产品仍按 Release 流程打包，不手工拼接零散运行时文件 |
+| Debug 启动时报加载 NativeBridge 失败 | 先完成 Debug/x64 原生构建，核对 `PythonHome` 后重新生成 Desktop；完整产品仍按 Release 流程打包 |
 | Python 修改后仍是旧行为 | 核对 EXE 所在配置，构建 Desktop 确认 Business 同步成功，再结束并重新启动游戏会话 |
 | 打包输出已存在 | 使用已确认的新目录或先保留旧产物；安装器输入路径须与产品目录一致 |
 

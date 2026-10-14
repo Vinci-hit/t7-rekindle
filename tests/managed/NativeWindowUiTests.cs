@@ -8,14 +8,14 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Collections.Generic;
 using Newtonsoft.Json;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Core;
+using T7R.Desktop;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class NativeWindowUiTests
     {
@@ -23,7 +23,7 @@ namespace T7.ManagedHarness
         {
             var previous = System.Threading.SynchronizationContext.Current;
             System.Threading.SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext());
-            var directory = Path.Combine(Path.GetTempPath(), "T7-native-ui-" + Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(Path.GetTempPath(), "T7R-native-ui-" + Guid.NewGuid().ToString("N"));
             var app = new App(false);
             app.InitializeComponent();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;

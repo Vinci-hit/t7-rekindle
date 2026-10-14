@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -176,7 +177,7 @@ def test_death_or_leave_discards_recovery_input_and_obsolete_timers(arena, kind,
     deadline = arena.session['pending'][name]
     sendAction(arena, 300550)
     if transition == 'death':
-        arena.session['health'] = combat.DAMAGE
+        arena.session['health'] = NORMAL_DAMAGE
         combat.applyHit(arena, 2, 1, arena.context['botWorld'], intent=300560)
     else:
         scene.leave(arena, struct.pack('>Hb', 2, 0))

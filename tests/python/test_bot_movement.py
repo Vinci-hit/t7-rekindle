@@ -220,11 +220,11 @@ def test_arrival_and_observed_position_correction_clear_warmup(walking):
     assert value.get("forwardMs", 0) == 0
 
 
-def test_old_state_defaults_to_jog_and_current_warmup_survives_migration(walking):
+def test_missing_warmup_defaults_to_jog_and_current_warmup_survives_reload(walking):
     value = walking.session["bot"]
     value.pop("forwardMs", None)
     value.pop("lastTurnAt", None)
-    assert app.migrateState(5, walking.state) == walking.state
+    assert app.migrateState(app.STATE_VERSION, walking.state) == walking.state
     step(walking)
     assert lastMove(walking).current_velocity == 3000
     original = deepcopy(walking.state)

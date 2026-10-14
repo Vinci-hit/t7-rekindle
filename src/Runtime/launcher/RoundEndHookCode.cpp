@@ -2,7 +2,7 @@
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t INSTANCE_RVA = 0x2E37804, ROOM_RVA = 0x2E3A4C4, SCENE_RVA = 0x2E3CB88;
 constexpr uint32_t FILE_TELL_RVA = 0x71570, FILE_LENGTH_RVA = 0x71580, FILE_READ_RVA = 0x717C0;

@@ -3,12 +3,13 @@ from copy import deepcopy
 import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
-from . import battle_clock, settlement, weapons
+from . import battle_clock, settlement, weapons, loadouts, player_profile, hero_resources
+from . import titles
 from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 16
+STATE_VERSION = 19
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -17,8 +18,15 @@ def createState(context):
     runtimeMovement = context.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)
     if type(runtimeMovement) is not bool:
         raise ValueError("runtimeMovement must be a bool")
-    return {"phase": "waiting", "sessions": {}, "roomId": 1, "actorId": 1,
-            "playerName": playerName, "runtimeMovement": runtimeMovement}
+    state = {"phase": "waiting", "sessions": {}, "roomId": 1, "actorId": 1,
+             "playerName": playerName, "runtimeMovement": runtimeMovement}
+    if context.get('playerProfilePath'):
+        catalogue = hero_resources.loadCatalogue(context['clientDirectory'])
+        profile = context.get('playerProfile') or player_profile.create(catalogue)
+        if not player_profile.validate(profile, catalogue):
+            raise ValueError('saved formation does not match the current client catalogue')
+        state['playerProfile'] = deepcopy(profile)
+    return state
 
 
 def validateState(state):
@@ -30,7 +38,11 @@ def validateState(state):
         wire.encodePlayerName(state.get("playerName", wire.USER_NAME.decode("gbk")))
     except (ValueError, TypeError):
         return False
-    if type(state.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)) is not bool or not settlement.validState(state):
+    if type(state.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)) is not bool or not settlement.validState(state) or not titles.valid(state):
+        return False
+    if 'playerProfile' in state and not player_profile.validate(state['playerProfile']):
+        return False
+    if 'matchedProfile' in state and not player_profile.validate(state['matchedProfile']):
         return False
     return all(type(key) is str and type(session) is dict
                and session.get("role") in ("login", "logic", "instance")
@@ -40,6 +52,7 @@ def validateState(state):
                and roster.validState(session)
                and combat.validState(session)
                and weapons.validState(session)
+               and ('loadoutProfile' not in session or player_profile.validate(session['loadoutProfile']))
                and all(battle.validAction(data) for data in (session, *actors.bots(session).values()))
                and player_life.validState(session)
                and battle_clock.validState(session)
@@ -50,6 +63,9 @@ def validateState(state):
 
 
 def migrateState(fromVersion, state):
+    if fromVersion < 19 and any(session.get('role') == 'instance' and (session.get('initialized') or session.get('battleEntered'))
+                               for session in state.get('sessions', {}).values()):
+        raise ValueError('damage contract changed; leave the battle and restart Runtime before upgrading')
     if fromVersion not in range(1, STATE_VERSION + 1) or not validateState(state):
         raise ValueError("no migration for this state version")
     result = deepcopy(state)
@@ -159,7 +175,9 @@ def handleTimer(flow, name):
         del pending[name]
     if name != 'round-end' and scene.expire(flow):
         return
-    if name == "version":
+    if name == 'title-request-timeout':
+        titles.timeout(flow)
+    elif name == "version":
         flow.send(1, protocol.encode_version_check_response(0), "version-response")
     elif name == "login":
         identity = protocol.MinimalLoginIdentity(
@@ -169,6 +187,7 @@ def handleTimer(flow, name):
     elif name == "sync":
         flow.send(0x2C, flow.syncBody(), "sync-login")
         flow.phase("hydrating")
+        titles.publish(flow)
     elif name == "match-result":
         flow.send(0x20, struct.pack(">Hi", 3, 0), "match-result-notify")
     elif name == "match-enter":
@@ -214,6 +233,8 @@ def handleMessage(flow, event):
     if type(body) is not bytes or len(body) < 2:
         raise ValueError("business message requires a two-byte selector")
     selector = int.from_bytes(body[:2], "big")
+    if titles.message(flow, command, selector, body, event):
+        return
     if command == 0x1D and selector == 1:
         flow.send(command, wire.heartbeat(body), "heart-beat-response")
         return
@@ -226,6 +247,8 @@ def handleMessage(flow, event):
             flow.session["unifyAt"] = flow.now
         return
     if scene.message(flow, command, selector, body):
+        return
+    if loadouts.message(flow, command, selector, body):
         return
     if controls.message(flow, command, selector, body):
         return
@@ -261,7 +284,9 @@ def handleEvent(event, state, context):
     state = deepcopy(state)
     flow = Flow(event, state, context)
     eventType, key = event["type"], str(event["connection"])
-    if eventType == "operator":
+    if eventType == "titles":
+        titles.sync(flow, event)
+    elif eventType == "operator":
         if event.get("name") != "diagnostic":
             raise ValueError("only the diagnostic command is implemented; no speculative correction bundle")
         flow.log("DEBUG", f"diagnostic phase={state['phase']} sessions={len(state['sessions'])} "
@@ -288,6 +313,8 @@ def handleEvent(event, state, context):
         state["sessions"][key] = {"role": event["role"], "hydration": [], "pending": {}, "camp": 1,
                                   "authenticated": False}
     elif eventType == "closed":
+        if state.get('titlePending', {}).get('connection') == event['connection']:
+            state.pop('titlePending')
         state["sessions"].pop(key, None)
         if 'settlement' in state:
             state['phase'] = 'settlement'

@@ -33,7 +33,7 @@ def test_parry_sends_dedicated_sound_and_weapon_hit_once_with_contact_time(
     advance(multi, battle.actionTimer(defender))
     attack(multi, attacker, intent)
     hit = contact(defender, position=(.75, .25, 1.4), direction=(.6, .8, 0.),
-                  normal=(0., 0., 1.), material=4)
+                  normal=(0., 0., 1.), material=4, defenceWeaponId=wire.WEAPON_ID)
     if journal:
         event = native(multi, attacker, defender)
         event.update(hit, targetState=battle.BLOCK_CHAINS[guard][1])
@@ -67,9 +67,9 @@ def test_parry_sends_dedicated_sound_and_weapon_hit_once_with_contact_time(
     assert struct.unpack_from('>i', body, 47)[0] == hit['material']
     assert body[87] == 1  # Weapon contact is feedback, not body damage.
     assert hp(multi, attacker) == hp(multi, defender) == combat.MAX_HEALTH
-    assert states(multi) == [(attacker, blocked), (defender, success)]
+    assert states(multi) == ([(attacker, blocked)] if journal else [(attacker, blocked), (defender, success)])
     assert battle.actionState(multi, attacker)['reaction'] == 'parried'
-    assert battle.actionState(multi, defender)['reaction'] == 'parry-success'
+    assert battle.actionState(multi, defender).get('reaction') == (None if journal else 'parry-success')
     assert not any(packet['reason'].startswith(('combat-health-', 'combat-damage'))
                    for packet in multi.result['send'])
     assert combat.hitTimer(attacker) not in multi.session['pending']
@@ -81,7 +81,8 @@ def test_parry_sends_dedicated_sound_and_weapon_hit_once_with_contact_time(
         combat.worldUpdated(multi)
     else:
         app.handleTimer(multi, combat.hitTimer(attacker))
-    advance(multi, battle.actionTimer(defender))
+    if not journal:
+        advance(multi, battle.actionTimer(defender))
     advance(multi, battle.actionTimer(attacker))
     assert hitPackets(multi) == sent
     assert defensePackets(multi) == sounds

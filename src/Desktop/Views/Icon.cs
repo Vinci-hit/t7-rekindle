@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     // Use the handoff's geometry unchanged; inherit the control's semantic color.
     public sealed class Icon : FrameworkElement
@@ -20,7 +20,7 @@ namespace T7.Rekindle.Desktop.Views
         protected override void OnRender(DrawingContext drawing)
         {
             base.OnRender(drawing);
-            var image = (DrawingImage)FindResource("T7.Icon." + Kind + ".Ink");
+            var image = (DrawingImage)FindResource("T7R.Icon." + Kind + ".Ink");
             var group = (DrawingGroup)image.Drawing;
             var scale = Math.Min(ActualWidth, ActualHeight) / 24;
             drawing.PushTransform(new TranslateTransform((ActualWidth - scale * 24) / 2, (ActualHeight - scale * 24) / 2));

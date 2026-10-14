@@ -2,7 +2,7 @@ using System;
 using System.Linq;
 using System.Text;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public static class PlayerNameRules
     {

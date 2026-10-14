@@ -1,6 +1,6 @@
 using System;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public enum DiagnosticLogLevel : uint { Debug = 0, Info = 1, Warn = 2, Error = 3 }
 

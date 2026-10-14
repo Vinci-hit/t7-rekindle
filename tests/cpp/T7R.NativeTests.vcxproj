@@ -9,24 +9,28 @@
   <PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\..\Native.Common.props" />
-  <PropertyGroup><TargetName>T7.NativeTests</TargetName></PropertyGroup>
+  <PropertyGroup><TargetName>T7R.NativeTests</TargetName></PropertyGroup>
   <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem><AdditionalDependencies>ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AbiLayoutTests.cpp" />
     <ClCompile Include="GraphicsSettingsTests.cpp" />
     <ClCompile Include="AudioDiagnosticsTests.cpp" />
     <ClCompile Include="AudioPlaybackTraceTests.cpp" />
+    <ClCompile Include="AudioResourcePathsTests.cpp" />
     <ClCompile Include="OutputDeviceTests.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/OutputDevice.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsValues.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/TitleSettings.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioResourcePaths.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackTrace.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/CombatProfileHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/MovementAnimationHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/MovementCommandHookCode.cpp" />
@@ -45,6 +49,7 @@
     <ClCompile Include="ClientAdaptationTests.cpp" />
     <ClCompile Include="CameraInputTests.cpp" />
     <ClCompile Include="DefenseAssistTests.cpp" />
+    <ClCompile Include="PingDisplayTests.cpp" />
     <ClCompile Include="RemoteImageTests.cpp" />
     <ClCompile Include="DebugClientTests.cpp" />
     <ClCompile Include="ClientWindowMonitorTests.cpp" />

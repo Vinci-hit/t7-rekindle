@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal static class DiagnosticSanitizer
     {

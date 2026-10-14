@@ -13,6 +13,8 @@ import uuid
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+LEGACY_LIBRARIES = ("T7.Core.dll", "T7.NativeBridge.dll")
+CURRENT_LIBRARIES = ("T7R.Core.dll", "T7R.NativeBridge.dll")
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows installer integration")
 
 
@@ -21,7 +23,7 @@ def update_installer(tmp_path_factory):
     return _compile_installer(tmp_path_factory.mktemp("update-installer"))
 
 
-def _compile_installer(work, settings_directory=None, startup_key=None, fail_reset=False):
+def _compile_installer(work, settings_directory=None, startup_key=None, fail_reset=False, legacy=False):
     candidates = [
         shutil.which("ISCC.exe"),
         ROOT / ".local/toolchains/InnoSetup-7.1.0/ISCC.exe",
@@ -35,13 +37,19 @@ def _compile_installer(work, settings_directory=None, startup_key=None, fail_res
         pytest.skip(".NET Framework C# compiler is not installed")
     payload = work / "payload"
     payload.mkdir()
-    (payload / "payload.txt").write_text("new release", encoding="utf-8")
+    (payload / "payload.txt").write_text("old release" if legacy else "new release", encoding="utf-8")
     (payload / "added.txt").write_text("new file", encoding="utf-8")
+    libraries = LEGACY_LIBRARIES if legacy else CURRENT_LIBRARIES
+    for name in libraries:
+        (payload / name).write_bytes(b"old library" if legacy else b"current library")
+    library_names = ", ".join(json.dumps(name) for name in libraries)
     launcher_source = work / "Launcher.cs"
     launcher_source.write_text(
         'using System;\nusing System.IO;\n'
         'class Launcher { static void Main() {\n'
         '    string directory = AppDomain.CurrentDomain.BaseDirectory;\n'
+        f'    foreach (var name in new[] {{ {library_names} }})\n'
+        '        if (!File.Exists(Path.Combine(directory, name))) throw new FileNotFoundException(name);\n'
         '    File.AppendAllText(Path.Combine(directory, "launches.txt"),\n'
         '        File.ReadAllText(Path.Combine(directory, "payload.txt")) + Environment.NewLine);\n'
         '} }\n', encoding="utf-8",
@@ -55,6 +63,9 @@ def _compile_installer(work, settings_directory=None, startup_key=None, fail_res
     source = (ROOT / "installer/T7-Rekindle.iss").read_text(encoding="utf-8")
     run_entries = source.split("[Run]", 1)[1].split("[Code]", 1)[0]
     code = source.split("[Code]", 1)[1]
+    if legacy:
+        code = ('function AllowLauncherRun(): Boolean; begin Result := True; end;\n'
+                'function WebView2Missing(): Boolean; begin Result := False; end;\n')
     if fail_reset:
         code = code.replace("RollbackReady := True;", "RaiseException('reset failure fixture');\n    RollbackReady := True;")
     definitions = ""
@@ -64,8 +75,8 @@ def _compile_installer(work, settings_directory=None, startup_key=None, fail_res
     script = work / "fixture.iss"
     script.write_text(
         definitions + '#define MyAppExeName "T7-Rekindle.exe"\n'
-        '[Setup]\nAppId=T7.Update.Installation.Test\nAppName=T7 update test\nAppVersion=1.0\n'
-        'DefaultDirName={tmp}\\T7-update-test\nPrivilegesRequired=lowest\nUninstallable=no\n'
+        '[Setup]\nAppId=T7R.Update.Installation.Test\nAppName=T7R update test\nAppVersion=1.0\n'
+        'DefaultDirName={tmp}\\T7R-update-test\nPrivilegesRequired=lowest\nUninstallable=no\n'
         'DisableProgramGroupPage=yes\nOutputBaseFilename=Setup\n'
         f'OutputDir={work}\n[Files]\nSource: "{payload}\\*"; DestDir: "{{app}}"; Flags: ignoreversion\n'
         f'[Run]\n{run_entries}\n[Code]\n{code}', encoding="utf-8-sig",
@@ -81,6 +92,10 @@ def _target(work):
     target.mkdir()
     (target / "payload.txt").write_text("old release", encoding="utf-8")
     (target / "legacy.txt").write_text("keep", encoding="utf-8")
+    for name in LEGACY_LIBRARIES:
+        (target / name).write_bytes(b"old library")
+    (target / "nested").mkdir()
+    (target / "nested/T7.Core.dll").write_bytes(b"unrelated library")
     return target
 
 
@@ -101,12 +116,19 @@ def _assert_unchanged(target):
     assert (target / "payload.txt").read_text(encoding="utf-8") == "old release"
     assert not (target / "added.txt").exists()
     assert not (target / "launches.txt").exists()
+    for name in LEGACY_LIBRARIES:
+        assert (target / name).read_bytes() == b"old library"
+    assert all(not (target / name).exists() for name in CURRENT_LIBRARIES)
 
 
 def _assert_installed(target):
     assert (target / "payload.txt").read_text(encoding="utf-8") == "new release"
     assert (target / "added.txt").read_text(encoding="utf-8") == "new file"
     assert (target / "legacy.txt").read_text(encoding="utf-8") == "keep"
+    assert all(not (target / name).exists() for name in LEGACY_LIBRARIES)
+    for name in CURRENT_LIBRARIES:
+        assert (target / name).read_bytes() == b"current library"
+    assert (target / "nested/T7.Core.dll").read_bytes() == b"unrelated library"
 
 
 def _assert_relaunched(target):
@@ -149,6 +171,93 @@ def test_installer_waits_for_launcher_before_writing(update_installer, tmp_path)
 
 def test_installer_handles_an_already_exited_launcher(update_installer, tmp_path):
     target = _target(tmp_path)
+    with _start_launcher() as launcher:
+        launcher.communicate(timeout=5)
+        installer, _ = _start_installer(update_installer, target, launcher.pid)
+        with installer:
+            assert installer.wait(timeout=30) == 0
+    _assert_installed(target)
+    _assert_relaunched(target)
+
+
+def test_installer_handles_missing_old_libraries_and_repeat_install(update_installer, tmp_path):
+    target = _target(tmp_path)
+    for name in LEGACY_LIBRARIES:
+        (target / name).unlink()
+    for _ in range(2):
+        with _start_launcher() as launcher:
+            launcher.communicate(timeout=5)
+            installer, _ = _start_installer(update_installer, target, launcher.pid)
+            with installer:
+                assert installer.wait(timeout=30) == 0
+        _assert_installed(target)
+
+
+def test_old_package_can_restore_old_libraries_after_t7r_upgrade(update_installer, tmp_path):
+    target = _target(tmp_path)
+    work = tmp_path / "old-installer"
+    work.mkdir()
+    old_installer = _compile_installer(work, legacy=True)
+    with _start_launcher() as launcher:
+        launcher.communicate(timeout=5)
+        process, _ = _start_installer(update_installer, target, launcher.pid)
+        with process:
+            assert process.wait(timeout=30) == 0
+        _assert_installed(target)
+        _assert_relaunched(target)
+        process, _ = _start_installer(old_installer, target, launcher.pid)
+        with process:
+            assert process.wait(timeout=30) == 0
+    assert (target / "payload.txt").read_text(encoding="utf-8") == "old release"
+    assert all((target / name).read_bytes() == b"old library" for name in LEGACY_LIBRARIES)
+    assert all((target / name).read_bytes() == b"current library" for name in CURRENT_LIBRARIES)
+    assert (target / "legacy.txt").read_text(encoding="utf-8") == "keep"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if (target / "launches.txt").read_text(encoding="utf-8-sig").splitlines() == ["new release", "old release"]:
+            return
+        time.sleep(0.05)
+    pytest.fail("restored launcher did not find its old libraries")
+
+
+@pytest.mark.parametrize("failure", ["directory", "locked"])
+def test_legacy_library_cleanup_failure_stops_restart_and_can_retry(update_installer, tmp_path, failure):
+    import ctypes
+    from ctypes import wintypes
+    target = _target(tmp_path)
+    blocked = target / LEGACY_LIBRARIES[0]
+    handle = None
+    if failure == "directory":
+        blocked.unlink()
+        blocked.mkdir()
+        (blocked / "keep.txt").write_text("keep", encoding="utf-8")
+    else:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                      ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        handle = kernel.CreateFileW(str(blocked), 0x80000000, 1, None, 3, 0, None)
+        assert handle != ctypes.c_void_p(-1).value, ctypes.get_last_error()
+    try:
+        with _start_launcher() as launcher:
+            launcher.communicate(timeout=5)
+            installer, log = _start_installer(update_installer, target, launcher.pid)
+            with installer:
+                assert installer.wait(timeout=30) == 20
+        assert not (target / "launches.txt").exists()
+        assert blocked.exists()
+        assert (target / "legacy.txt").read_text(encoding="utf-8") == "keep"
+        assert all((target / name).read_bytes() == b"current library" for name in CURRENT_LIBRARIES)
+        assert LEGACY_LIBRARIES[0] in log.read_text(encoding="utf-8-sig")
+    finally:
+        if handle is not None:
+            assert kernel.CloseHandle(handle)
+    if failure == "directory":
+        assert (blocked / "keep.txt").read_text(encoding="utf-8") == "keep"
+        (blocked / "keep.txt").unlink()
+        blocked.rmdir()
     with _start_launcher() as launcher:
         launcher.communicate(timeout=5)
         installer, _ = _start_installer(update_installer, target, launcher.pid)
@@ -204,8 +313,8 @@ def rollback_installation(tmp_path, request):
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
 
 
-def _rollback(installer, tmp_path, reset=True):
-    target = _target(tmp_path)
+def _rollback(installer, tmp_path, reset=True, target=None):
+    target = _target(tmp_path) if target is None else target
     with _start_launcher() as launcher:
         launcher.communicate(timeout=5)
         process, _ = _start_installer(installer, target, launcher.pid,
@@ -249,12 +358,28 @@ def test_rollback_backup_failure_does_not_install_or_reset(rollback_installation
     assert {name: (data / name).read_bytes() for name in originals} == originals
 
 
+def test_cleanup_failure_preserves_completed_settings_reset(rollback_installation, tmp_path):
+    installer, data, _, originals = rollback_installation
+    target = _target(tmp_path)
+    blocked = target / LEGACY_LIBRARIES[0]
+    blocked.unlink()
+    blocked.mkdir()
+    code, _ = _rollback(installer, tmp_path, target=target)
+    assert code == 20 and not (target / "launches.txt").exists()
+    assert json.loads((data / "settings.json").read_text()) == {"schemaVersion": 1, "updateChannel": "preview"}
+    backups = list((data / "settings-backups").glob("*.backup"))
+    assert len(backups) == 1
+    assert {name: (backups[0] / name).read_bytes() for name in originals} == originals
+    assert blocked.is_dir()
+
+
 @pytest.mark.parametrize("rollback_installation", ["fail-reset"], indirect=True)
 def test_rollback_reset_failure_restores_settings_and_does_not_restart(rollback_installation, tmp_path):
     import winreg
     installer, data, key, originals = rollback_installation
     code, target = _rollback(installer, tmp_path)
     assert code == 20 and not (target / "launches.txt").exists()
+    assert all((target / name).read_bytes() == b"old library" for name in LEGACY_LIBRARIES)
     assert {name: (data / name).read_bytes() for name in originals} == originals
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
         assert winreg.QueryValueEx(handle, "T7-Rekindle")[0] == "fixture-launcher.exe"

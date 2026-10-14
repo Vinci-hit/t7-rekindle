@@ -3,7 +3,7 @@
 #include "ProcessCleanup.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 Bytes signature(uint32_t base, bool armed) {
     Bytes bytes{0x55,0x8B,0xEC,0x6A,0xFF,0x68,0,0,0,0,0x64,0xA1,0,0,0,0};

@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE, DASH_DAMAGE
 from copy import deepcopy
 import math
 import struct
@@ -57,7 +58,7 @@ def test_each_attack_places_feedback_on_the_targets_incoming_surface(arena, atta
                   (dx, dy, 0.), (-dx, -dy, 0.))
     hit = battle_flow.decode_battle_hit_point_notify(body)
     assert (hit.attacker_mid, hit.target_mid, hit.server_time_ms) == (attacker, 3 - attacker, arena.now)
-    damage = combat.DASH_DAMAGE if intent == battle.DASH_ATTACK else combat.DAMAGE
+    damage = DASH_DAMAGE if intent == battle.DASH_ATTACK else NORMAL_DAMAGE
     assert hp(arena, 3 - attacker) == 100 - damage
     before['sampledAt'] = world['sampledAt']
     assert world == before
@@ -137,7 +138,7 @@ def test_charged_hit_uses_the_targets_surface_at_impact(arena, attacker, intent,
     advance(arena, combat.hitTimer(attacker))
     assertContact(hitBody(arena, 3 - attacker), (4. + 1.15 * dx, -3. + 1.15 * dy, 1.2),
                   (dx, dy, 0.), (-dx, -dy, 0.))
-    assert hp(arena, 3 - attacker) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, 3 - attacker) == combat.MAX_HEALTH - NORMAL_DAMAGE
 
 
 @pytest.mark.parametrize('attacker', [1, 2, 12])
@@ -168,7 +169,7 @@ def test_lethal_feedback_does_not_replace_the_victims_ground_position(arena, att
     victim = 3 - attacker
     position = (1.5, 0., .2)
     placePair(arena, attacker, (0., 0., .2), position)
-    actors.data(arena, victim)['health'] = combat.DAMAGE
+    actors.data(arena, victim)['health'] = NORMAL_DAMAGE
     attack(arena, attacker)
     advance(arena, combat.hitTimer(attacker))
     assertContact(hitBody(arena, victim), (1.15, 0., 1.2), (1., 0., 0.), (-1., 0., 0.))

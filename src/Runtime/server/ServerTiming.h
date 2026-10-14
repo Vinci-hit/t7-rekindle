@@ -3,7 +3,7 @@
 #include <chrono>
 #include <algorithm>
 
-namespace t7::detail {
+namespace t7r::detail {
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 inline bool animationTimer(const std::string& id) {

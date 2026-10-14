@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using Newtonsoft.Json;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal sealed class PreviewAccessService
     {

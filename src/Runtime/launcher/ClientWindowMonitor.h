@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <optional>
 
-namespace t7 {
+namespace t7r {
 class ClientWindowMonitor final {
 public:
     bool observed() const noexcept { return window_ != nullptr; }

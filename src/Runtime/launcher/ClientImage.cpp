@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t IMAGE_BASE = 0x00400000, IMAGE_SIZE = 0x03B54000;
 constexpr uint32_t ENTRY_RVA = 0x01220739, IMPORT_RVA = 0x03443000, IMPORT_CAPACITY = 0x00020000;

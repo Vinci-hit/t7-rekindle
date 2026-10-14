@@ -3,7 +3,7 @@
 #include <map>
 #include <string_view>
 
-namespace t7::resourceXml {
+namespace t7r::resourceXml {
 constexpr size_t NO_PARENT = SIZE_MAX;
 struct Element {
     size_t begin, content, closing, end, parent;

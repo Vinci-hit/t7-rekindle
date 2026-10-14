@@ -8,7 +8,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace t7 {
+namespace t7r {
 namespace {
 std::string hexValue(uintptr_t value) {
     std::ostringstream output; output << "0x" << std::hex << std::uppercase << value; return output.str();

@@ -3,7 +3,7 @@
 #include <iostream>
 #include <utility>
 
-namespace t7 {
+namespace t7r {
 struct ServerEventOrderTests {
     using Item = std::pair<std::string, std::string>;
 
@@ -36,6 +36,53 @@ struct ServerEventOrderTests {
     }
 
     static bool verify(const fs::path& fixtureRoot) {
+        {
+            Server server; initialize(server);
+            WorldSnapshot world;
+            server.updateWorld(world);
+            const auto empty = server.world_;
+            if (!empty || empty->version != 1 || !server.events_.empty()) return false;
+            world.ready = true; world.sampledAt = GetTickCount64(); world.instanceStartedAt = 123;
+            server.sessions_[1].authenticated = true; server.sessions_[1].role = "instance";
+            server.updateWorld(world);
+            const auto published = server.world_;
+            if (published->version != 2 || !published->snapshot.ready || !server.worldPending_
+                || server.events_.size() != 1 || server.events_.front().world != published
+                || empty->snapshot.ready) return false;
+            bool rejected = false;
+            try { server.updateWorld(world); } catch (const std::exception&) { rejected = true; }
+            if (!rejected || server.world_ != published) return false;
+            Server::Timers timers;
+            Server::QueuedEvent event; std::vector<uint64_t> live;
+            if (!server.nextEvent(timers, event, live) || event.world != published) return false;
+            server.worldPending_ = false;
+            server.updateWorld(WorldSnapshot{});
+            if (server.world_->version != 3 || server.world_->snapshot.ready || !server.events_.empty()
+                || !event.world->snapshot.ready) return false;
+            world.sampledAt = GetTickCount64() - 251;
+            server.updateWorld(world);
+            if (server.world_->version != 4 || server.world_->snapshot.ready || !server.events_.empty()) return false;
+        }
+        {
+            Server server; initialize(server);
+            server.journal_ = std::make_unique<Journal>(fixtureRoot / "context-rejection-journal");
+            Server::QueuedEvent event; event.type = "message"; event.connection = 1;
+            Transition transition; transition.state = "changed";
+            transition.send.push_back({1, 4, {1}, "dead-target"});
+            transition.timers.push_back({"1:battle-action-phase", 0, "new", 1});
+            Server::Timers timers{{"old", {detail::Clock::now(), 1, "old"}}};
+            std::string state = "original"; bool committed = false, rejected = false;
+            try { server.commit(transition, event, "test", "", detail::Clock::now(), 0, state, timers, committed); }
+            catch (const std::exception&) { rejected = true; }
+            if (!rejected || committed || state != "original" || timers.size() != 1 || !timers.count("old")) return false;
+            server.sessions_[1] = {};
+            transition.timers[0].connection = 2;
+            rejected = false;
+            try { server.commit(transition, event, "test", "", detail::Clock::now(), 0, state, timers, committed); }
+            catch (const std::exception&) { rejected = true; }
+            if (!rejected || committed || state != "original" || !server.sessions_[1].send.empty()
+                || server.sessions_[1].queued != 0 || timers.size() != 1 || !timers.count("old")) return false;
+        }
         const Item decision{"timer", "1:actors-decision"}, pulse{"timer", "1:actors-pulse"};
         const Item action{"timer", "1:battle-action-phase"}, hurt{"timer", "1:combat-hurt-1"};
         const Item input{"message", ""};
@@ -96,6 +143,6 @@ struct ServerEventOrderTests {
 };
 }
 
-bool verifyServerEventOrder(const t7::fs::path& fixtureRoot) {
-    return t7::ServerEventOrderTests::verify(fixtureRoot);
+bool verifyServerEventOrder(const t7r::fs::path& fixtureRoot) {
+    return t7r::ServerEventOrderTests::verify(fixtureRoot);
 }

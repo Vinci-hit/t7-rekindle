@@ -1,19 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class Program
     {
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--native-contract-tests")
+            {
+                try
+                {
+                    NativeBridgeServiceTests.RunNativeContract(args[1]);
+                    Console.WriteLine("packaged native bindings and old DLL rejection checks passed");
+                    return 0;
+                }
+                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+            }
             if (args.Length == 1 && args[0] == "--preview-key-check")
             {
                 try
@@ -22,17 +33,18 @@ namespace T7.ManagedHarness
                     Console.WriteLine("compiled preview authorization public key is valid");
                     return 0;
                 }
-                catch (Exception) { Console.Error.WriteLine("A valid T7_PREVIEW_ACCESS_PUBLIC_KEY is required before publishing. Rebuild after configuring it."); return 1; }
+                catch (Exception) { Console.Error.WriteLine("A valid T7R_PREVIEW_ACCESS_PUBLIC_KEY is required before publishing. Rebuild after configuring it."); return 1; }
             }
             if (args.Length >= 1 && args[0] == "--preview-access-tests")
             {
-                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-preview-tests-" + Guid.NewGuid().ToString("N"));
+                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7R-preview-tests-" + Guid.NewGuid().ToString("N"));
                 try
                 {
                     PreviewAccessTests.Run(directory);
                     PreviewAccessWorkflowTests.Run(System.IO.Path.Combine(directory, "workflow"));
                     PreviewSigningScriptTests.Run(System.IO.Path.Combine(directory, "signing"));
-                    Console.WriteLine("preview access protocol, persistence and migration checks passed");
+                    PreviewAccessUiTests.RunStandalone(directory, args.Length == 2 ? args[1] : null);
+                    Console.WriteLine("preview access protocol, persistence, migration and UI checks passed");
                     return 0;
                 }
                 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
@@ -40,8 +52,8 @@ namespace T7.ManagedHarness
             }
             if (args.Length >= 1 && args[0] == "--announcement-tests")
             {
-                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-announcement-tests-" + Guid.NewGuid().ToString("N"));
-                var app = new T7.Rekindle.Desktop.App(false);
+                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7R-announcement-tests-" + Guid.NewGuid().ToString("N"));
+                var app = new T7R.Desktop.App(false);
                 app.InitializeComponent();
                 app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                 var previousContext = SynchronizationContext.Current;
@@ -75,8 +87,8 @@ namespace T7.ManagedHarness
             }
             if (args.Length >= 1 && args[0] == "--log-tests")
             {
-                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7-log-tests-" + Guid.NewGuid().ToString("N"));
-                var app = new T7.Rekindle.Desktop.App(false);
+                var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "T7R-log-tests-" + Guid.NewGuid().ToString("N"));
+                var app = new T7R.Desktop.App(false);
                 app.InitializeComponent();
                 app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                 var previousContext = SynchronizationContext.Current;
@@ -114,17 +126,17 @@ namespace T7.ManagedHarness
                 try { LoginNativeUiTests.Run(args[1]); return 0; }
                 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
             }
-            if (args.Length >= 1 && args[0] == "--account-tests")
+            if (args.Length >= 1 && (args[0] == "--account-tests" || args[0] == "--title-tests"))
             {
                 try
                 {
-                    AccountTests.Run();
+                    if (args[0] == "--title-tests") AccountTests.RunTitles(); else AccountTests.Run();
                     if (args.Length == 2)
                     {
-                        var app = new T7.Rekindle.Desktop.App(false);
+                        var app = new T7R.Desktop.App(false);
                         app.InitializeComponent();
                         app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
-                        AccountTests.Render(args[1]);
+                        if (args[0] == "--title-tests") AccountTests.RenderTitles(args[1]); else AccountTests.Render(args[1]);
                         foreach (var theme in new[] { "Dark", "HighContrast" })
                         {
                             var resources = new System.Windows.ResourceDictionary
@@ -132,7 +144,10 @@ namespace T7.ManagedHarness
                                 Source = new Uri("/T7-Rekindle;component/Resources/Theme." + theme + ".xaml", UriKind.Relative)
                             };
                             app.Resources.MergedDictionaries.Add(resources);
-                            try { AccountTests.Render(System.IO.Path.Combine(args[1], theme)); }
+                            try {
+                                if (args[0] == "--title-tests") AccountTests.RenderTitles(System.IO.Path.Combine(args[1], theme));
+                                else AccountTests.Render(System.IO.Path.Combine(args[1], theme));
+                            }
                             finally { app.Resources.MergedDictionaries.Remove(resources); }
                         }
                         app.Shutdown();
@@ -149,7 +164,7 @@ namespace T7.ManagedHarness
                     Console.WriteLine("Checking rollback services and state...");
                     ReleaseHistoryTests.Run();
                     Console.WriteLine("Checking rollback layout...");
-                    var app = new T7.Rekindle.Desktop.App(false);
+                    var app = new T7R.Desktop.App(false);
                     app.InitializeComponent();
                     app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                     ReleaseHistoryTests.Render(args.Length == 2 ? args[1] : null);
@@ -192,19 +207,33 @@ namespace T7.ManagedHarness
                 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
             }
             NativeAbiLayout.Validate();
-            AccountTests.Run();
-            NativeBridgeServiceTests.Run();
-            GitHubReleaseUpdateTests.Run();
-            UpdateFeedTests.Run();
-            UpdateChannelTests.Run();
-            ReleaseNotesTests.Run();
-            ReleaseHistoryTests.Run();
-            UpdateDownloadTests.Run();
-            UpdateDownloadViewModelTests.Run();
-            LauncherTests.Run();
-            ThemeTests.Run(args.Length == 2 && args[0] == "--render-ui" ? args[1] : null);
+            RunGroup(nameof(HarnessProgressTests), HarnessProgressTests.Run);
+            RunGroup(nameof(AccountTests), AccountTests.Run);
+            RunGroup(nameof(NativeBridgeServiceTests), NativeBridgeServiceTests.Run);
+            RunGroup(nameof(GitHubReleaseUpdateTests), GitHubReleaseUpdateTests.Run);
+            RunGroup(nameof(UpdateFeedTests), UpdateFeedTests.Run);
+            RunGroup(nameof(UpdateChannelTests), UpdateChannelTests.Run);
+            RunGroup(nameof(ReleaseNotesTests), ReleaseNotesTests.Run);
+            RunGroup(nameof(ReleaseHistoryTests), ReleaseHistoryTests.Run);
+            RunGroup(nameof(UpdateDownloadTests), UpdateDownloadTests.Run);
+            RunGroup(nameof(UpdateDownloadViewModelTests), UpdateDownloadViewModelTests.Run);
+            RunGroup(nameof(LauncherTests), LauncherTests.Run);
+            RunGroup(nameof(ThemeTests), () => ThemeTests.Run(args.Length == 2 && args[0] == "--render-ui" ? args[1] : null));
             Console.WriteLine("managed contract checks passed");
             return 0;
+        }
+
+        internal static void RunGroup(string name, Action run)
+        {
+            Console.WriteLine("[RUN] " + name);
+            var elapsed = Stopwatch.StartNew();
+            try { run(); }
+            catch
+            {
+                Console.WriteLine("[FAIL] {0} ({1} ms)", name, elapsed.ElapsedMilliseconds);
+                throw;
+            }
+            Console.WriteLine("[PASS] {0} ({1} ms)", name, elapsed.ElapsedMilliseconds);
         }
 
     }
