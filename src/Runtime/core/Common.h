@@ -37,6 +37,7 @@ struct Config {
     unsigned short ports[3] = {0, 0, 0};
     fs::path clientRoot;
     fs::path clientDirectory;
+    fs::path lobbyNewsPath;
     // Startup resource snapshot shared by business timing and native movement.
     DashAttackProfile dashAttack;
     MovementAnimationProfile movementAnimation;
