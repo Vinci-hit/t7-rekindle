@@ -21,6 +21,7 @@ namespace T7.Rekindle.Desktop.Services
                 throw new ArgumentOutOfRangeException(nameof(channel));
             var settings = Load();
             settings.UpdateChannel = channel == UpdateChannel.Preview ? "preview" : "stable";
+            if (channel == UpdateChannel.Preview) settings.LogLevel = DiagnosticLogLevels.Name(DiagnosticLogLevel.Debug);
             Save(settings);
         }
 

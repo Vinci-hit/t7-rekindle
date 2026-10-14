@@ -33,3 +33,17 @@ def test_no_preview_gate_fields_added_to_settings_schema():
     assert "PreviewAccess" not in settings and "GrantCode" not in settings
     store = (ROOT / "src/Desktop/Services/PreviewAccessStore.cs").read_text(encoding="utf-8")
     assert '"preview-access.json"' in store and "DataProtectionScope.CurrentUser" in store
+
+
+def test_request_copy_feedback_uses_dialog_toast_overlay():
+    root = ET.parse(ROOT / "src/Desktop/Views/PreviewAccessDialog.xaml").getroot()
+    ns = "{http://schemas.microsoft.com/winfx/2006/xaml/presentation}"
+    host = root.find(".//{clr-namespace:T7.Rekindle.Desktop.Views}ToastHost")
+    assert host is not None, "copy feedback must use the shared ToastHost inside the dialog"
+    scroll = root.find(".//" + ns + "ScrollViewer")
+    parents = {child: parent for parent in root.iter() for child in parent}
+    assert parents[host] is parents[scroll]
+    assert host.attrib["Grid.Row"] == scroll.attrib["Grid.Row"]
+    assert host.attrib["VerticalAlignment"] == "Top"
+    assert int(host.attrib["Panel.ZIndex"]) > 0
+    assert not any(item.attrib.get("Text") == "{Binding Feedback}" for item in root.iter(ns + "TextBlock"))

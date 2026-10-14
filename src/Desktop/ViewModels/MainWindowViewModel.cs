@@ -76,9 +76,6 @@ namespace T7.Rekindle.Desktop.ViewModels
             _readGraphicsResolutions = readOutputDeviceResolutions ?? (readGraphicsResolutions == null
                 ? new Func<Guid, IReadOnlyList<string>>(Direct3DEnvironment.ReadResolutions) : _ => readGraphicsResolutions());
             var loaded = initial ?? new UserSettings();
-            _selectedLogLevel = DiagnosticLogLevels.Parse(loaded.LogLevel);
-            _bridge.SetLogLevel(_selectedLogLevel);
-            LogService.SetMinimumLevel(_selectedLogLevel);
             _clientDirectory = loaded.ClientDirectory;
             _playerName = loaded.PlayerName;
             _savedDirectory = loaded.ClientDirectory;
@@ -94,6 +91,10 @@ namespace T7.Rekindle.Desktop.ViewModels
             _previewAccess = previewAccess ?? new PreviewAccessService(settings.DirectoryPath);
             _requestPreviewAccess = requestPreviewAccess ?? DesktopInteraction.RequestPreviewAccess;
             _updateChannel = _previewAccess.InitializeChannel(settings, out var channelWarning);
+            _selectedLogLevel = _updateChannel == UpdateChannel.Preview
+                ? DiagnosticLogLevel.Debug : DiagnosticLogLevels.Parse(loaded.LogLevel);
+            _bridge.SetLogLevel(_selectedLogLevel);
+            LogService.SetMinimumLevel(_selectedLogLevel);
             _previewAccessStatus = _previewAccess.StatusText;
             _preferenceError = channelWarning;
             _settingsFeedback = string.Empty;

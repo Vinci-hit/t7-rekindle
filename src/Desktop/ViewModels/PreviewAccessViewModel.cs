@@ -18,7 +18,12 @@ namespace T7.Rekindle.Desktop.ViewModels
             _access = access;
             CopyRequestCommand = new RelayCommand(() =>
             {
-                try { copy(RequestCode); Feedback = "申请码已复制，请发给管理员获取 7 天授权码。"; }
+                try
+                {
+                    copy(RequestCode);
+                    Feedback = "申请码已复制，请发给管理员获取 7 天授权码。";
+                    Notices.Publish("preview-access.request-copied", Feedback, NoticeSeverity.Success);
+                }
                 catch (Exception) { Error = "复制失败，请选中申请码后手动复制。"; }
             }, () => RequestCode.Length != 0);
             AuthorizeCommand = new RelayCommand(() =>
@@ -42,6 +47,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         }
         public string Error { get => _error; private set => SetProperty(ref _error, value); }
         public string Feedback { get => _feedback; private set => SetProperty(ref _feedback, value); }
+        public NoticeCenter Notices { get; } = new NoticeCenter();
         public RelayCommand CopyRequestCommand { get; }
         public RelayCommand AuthorizeCommand { get; }
     }

@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Windows.Threading;
+using T7.Rekindle.Core;
 using T7.Rekindle.Desktop.Services;
 
 namespace T7.Rekindle.Desktop.ViewModels
@@ -43,17 +44,27 @@ namespace T7.Rekindle.Desktop.ViewModels
                     if (!confirmed || !_previewAccess.IsAuthorized || !CanChangeUpdateChannel) { RestoreUpdateChannelSelection(); return; }
                 }
                 PreferenceError = string.Empty;
+                var previousLogLevel = _selectedLogLevel;
+                var logLevelApplied = false;
                 try
                 {
+                    if (value == UpdateChannel.Preview && previousLogLevel != DiagnosticLogLevel.Debug)
+                    {
+                        _bridge.SetLogLevel(DiagnosticLogLevel.Debug);
+                        logLevelApplied = true;
+                        LogService.SetMinimumLevel(DiagnosticLogLevel.Debug);
+                    }
                     _settings.SaveUpdateChannel(value);
                 }
                 catch (Exception error)
                 {
-                    _log.Error("保存更新渠道失败", error);
                     PreferenceError = "更新渠道未保存，请重试";
+                    if (logLevelApplied) RestoreLogLevel(previousLogLevel);
+                    _log.Error("保存更新渠道失败", error);
                     RestoreUpdateChannelSelection();
                     return;
                 }
+                if (value == UpdateChannel.Preview) _selectedLogLevel = DiagnosticLogLevel.Debug;
                 ApplyUpdateChannel(value);
                 TriggerUpdateCheck();
                 var channelName = value == UpdateChannel.Preview ? "预览版" : "正式版";
@@ -76,6 +87,8 @@ namespace T7.Rekindle.Desktop.ViewModels
                 Notices.Resolve("暂无正式发布版本");
                 Notices.Resolve("暂无预览构建");
                 OnPropertyChanged(nameof(SelectedUpdateChannel));
+                OnPropertyChanged(nameof(SelectedLogLevel));
+                OnPropertyChanged(nameof(CanChangeLogLevel));
                 RefreshPreviewAccessStatus();
                 About.RefreshAccess();
             }

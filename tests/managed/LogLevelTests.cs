@@ -27,6 +27,8 @@ namespace T7.ManagedHarness
                 TestSettings(Path.Combine(directory, "log-level-schema"));
                 TestFilters(Path.Combine(directory, "log-level-file"));
                 TestPreference(Path.Combine(directory, "log-level-preference"), output);
+                TestPreviewStartup(Path.Combine(directory, "log-level-preview-startup"));
+                TestPreviewChannel(Path.Combine(directory, "log-level-preview-channel"), output);
                 TestPolling(Path.Combine(directory, "log-level-polling"));
             }
             finally
@@ -101,9 +103,12 @@ namespace T7.ManagedHarness
             Assert(service.WriteRecord("unstructured") == null, "unstructured fallback escaped INFO filtering");
         }
 
-        private static MainWindowViewModel CreateModel(FakeLauncherBridge bridge, SettingsService service, UserSettings settings)
+        private static MainWindowViewModel CreateModel(FakeLauncherBridge bridge, SettingsService service, UserSettings settings,
+            PreviewAccessService previewAccess = null, FakeDesktopInteraction interaction = null)
             => new MainWindowViewModel(bridge, service, settings, null,
-                path => Task.FromResult(ValidDirectory(path)), new FakeDesktopInteraction());
+                path => Task.FromResult(ValidDirectory(path)), interaction ?? new FakeDesktopInteraction(),
+                checkChannelUpdate: channel => Task.FromResult(new LauncherUpdateInfo { Channel = channel }),
+                previewAccess: previewAccess);
 
         private static void TestPreference(string directory, string output)
         {
@@ -157,6 +162,122 @@ namespace T7.ManagedHarness
             }
             using (var restarted = CreateModel(new FakeLauncherBridge(), service, service.Load()))
                 Assert(restarted.SelectedLogLevel == DiagnosticLogLevel.Info, "restart lost selected log level");
+        }
+
+        private static void TestPreviewStartup(string directory)
+        {
+            foreach (var level in new[] { "DEBUG", "INFO", "WARN", "ERROR" })
+            {
+                var service = new SettingsService(Path.Combine(directory, level));
+                service.Save(new UserSettings { UpdateChannel = "preview", LogLevel = level });
+                var access = PreviewAccessFixture.Authorized(service.DirectoryPath);
+                var bridge = new FakeLauncherBridge();
+                using (var model = CreateModel(bridge, service, service.Load(), access))
+                {
+                    RunTask(model.ValidationTask);
+                    Assert(model.SelectedUpdateChannel == UpdateChannel.Preview
+                        && model.SelectedLogLevel == DiagnosticLogLevel.Debug && bridge.LogLevel == DiagnosticLogLevel.Debug
+                        && LogService.MinimumLevel == DiagnosticLogLevel.Debug, "preview startup did not force DEBUG");
+                    model.SelectedLogLevel = DiagnosticLogLevel.Error;
+                    model.MinimizeToTray = true;
+                    model.SaveSettings();
+                    Assert(model.SelectedLogLevel == DiagnosticLogLevel.Debug && service.Load().LogLevel == "DEBUG",
+                        "preview startup allowed another level to be applied or saved");
+                }
+            }
+        }
+
+        private static void TestPreviewChannel(string directory, string output)
+        {
+            var service = new SettingsService(directory);
+            service.Save(new UserSettings { LogLevel = "WARN", PlayerName = "保留玩家" });
+            var bridge = new FakeLauncherBridge();
+            var interaction = new FakeDesktopInteraction { ConfirmResult = false };
+            using (var fixture = new PreviewAccessFixture())
+            {
+                var access = fixture.Create(directory);
+                Assert(access.TryImport(fixture.Issue(), out _), "preview log fixture authorization failed");
+                using (var model = CreateModel(bridge, service, service.Load(), access, interaction))
+                {
+                    RunTask(model.ValidationTask);
+                    model.IsSettingsSelected = true;
+                    model.SettingsTabIndex = 1;
+                    var window = new T7.Rekindle.Desktop.MainWindow { DataContext = model };
+                    var page = (GameSettingsPage)window.FindName("SettingsPage");
+                    LauncherLayoutTests.Render((System.Windows.FrameworkElement)window.Content, window, null, "", 1200, 900);
+                    var selector = (ComboBox)page.FindName("LogLevelSelector");
+                    Assert(selector.IsEnabled, "stable channel locked the log selector");
+
+                    model.SelectedUpdateChannel = UpdateChannel.Preview;
+                    Pump();
+                    Assert(model.SelectedUpdateChannel == UpdateChannel.Stable && selector.IsEnabled
+                        && model.SelectedLogLevel == DiagnosticLogLevel.Warn && service.Load().LogLevel == "WARN",
+                        "cancelled preview switch changed the log level");
+                    interaction.ConfirmResult = true;
+                    bridge.RejectedLogLevel = DiagnosticLogLevel.Debug;
+                    model.SelectedUpdateChannel = UpdateChannel.Preview;
+                    Pump();
+                    Assert(model.SelectedUpdateChannel == UpdateChannel.Stable && service.Load().UpdateChannel == "stable"
+                        && model.SelectedLogLevel == DiagnosticLogLevel.Warn && bridge.LogLevel == DiagnosticLogLevel.Warn
+                        && LogService.MinimumLevel == DiagnosticLogLevel.Warn && model.PreferenceError.Length != 0,
+                        "preview switch ignored native log level failure");
+                    bridge.RejectedLogLevel = null;
+                    using (File.Open(Path.Combine(directory, "settings.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        model.SelectedUpdateChannel = UpdateChannel.Preview;
+                        Pump();
+                        Assert(model.SelectedUpdateChannel == UpdateChannel.Stable && selector.IsEnabled
+                            && model.SelectedLogLevel == DiagnosticLogLevel.Warn && bridge.LogLevel == DiagnosticLogLevel.Warn
+                            && LogService.MinimumLevel == DiagnosticLogLevel.Warn && service.Load().LogLevel == "WARN"
+                            && model.PreferenceError.Length != 0, "failed preview save did not restore runtime log levels");
+                    }
+
+                    model.SelectedUpdateChannel = UpdateChannel.Preview;
+                    RunTask(model.About.CheckUpdateCommand.ExecutionTask);
+                    model.IsSettingsSelected = true;
+                    LauncherLayoutTests.Render((System.Windows.FrameworkElement)window.Content, window, output,
+                        "preview-log-level-settings", 1200, 900);
+                    Assert(model.SelectedUpdateChannel == UpdateChannel.Preview && !selector.IsEnabled
+                        && (DiagnosticLogLevel)selector.SelectedValue == DiagnosticLogLevel.Debug
+                        && bridge.LogLevel == DiagnosticLogLevel.Debug && LogService.MinimumLevel == DiagnosticLogLevel.Debug
+                        && service.Load().LogLevel == "DEBUG" && service.Load().UpdateChannel == "preview"
+                        && service.Load().PlayerName == "保留玩家", "preview switch did not lock and persist DEBUG");
+                    foreach (var level in new[] { DiagnosticLogLevel.Info, DiagnosticLogLevel.Warn, DiagnosticLogLevel.Error })
+                    {
+                        model.SelectedLogLevel = level;
+                        selector.SelectedValue = level;
+                        Pump();
+                        Assert(model.SelectedLogLevel == DiagnosticLogLevel.Debug
+                            && (DiagnosticLogLevel)selector.SelectedValue == DiagnosticLogLevel.Debug
+                            && bridge.LogLevel == DiagnosticLogLevel.Debug && LogService.MinimumLevel == DiagnosticLogLevel.Debug
+                            && service.Load().LogLevel == "DEBUG", "preview log lock accepted a lower verbosity");
+                    }
+                    model.MinimizeToTray = true;
+                    model.SaveSettings();
+                    Assert(service.Load().LogLevel == "DEBUG", "saving preview preferences lost the log lock");
+
+                    model.SelectedUpdateChannel = UpdateChannel.Stable;
+                    RunTask(model.About.CheckUpdateCommand.ExecutionTask);
+                    Pump();
+                    Assert(selector.IsEnabled, "returning to stable did not unlock log selection");
+                    selector.SelectedValue = DiagnosticLogLevel.Error;
+                    Pump();
+                    Assert(model.SelectedLogLevel == DiagnosticLogLevel.Error && bridge.LogLevel == DiagnosticLogLevel.Error
+                        && LogService.MinimumLevel == DiagnosticLogLevel.Error && service.Load().LogLevel == "ERROR",
+                        "stable channel could not change the log level after leaving preview");
+
+                    model.SelectedUpdateChannel = UpdateChannel.Preview;
+                    RunTask(model.About.CheckUpdateCommand.ExecutionTask);
+                    Pump();
+                    Assert(!selector.IsEnabled && bridge.LogLevel == DiagnosticLogLevel.Debug, "re-entering preview lost the log lock");
+                    fixture.Now = fixture.Now.AddDays(8);
+                    model.CheckPreviewAccess();
+                    RunTask(model.About.CheckUpdateCommand.ExecutionTask);
+                    Pump();
+                    Assert(model.SelectedUpdateChannel == UpdateChannel.Stable && selector.IsEnabled,
+                        "expired preview access left the log selector locked");
+                }
+            }
         }
 
         private static void TestPolling(string directory)

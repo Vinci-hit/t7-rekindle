@@ -26,12 +26,14 @@ namespace T7.Rekindle.Desktop.ViewModels
             set => SavePreference(value, true);
         }
 
+        public bool CanChangeLogLevel => !_disposed && _updateChannel != UpdateChannel.Preview;
         public DiagnosticLogLevel SelectedLogLevel
         {
             get => _selectedLogLevel;
             set
             {
                 if (_disposed || _selectedLogLevel == value) return;
+                if (!CanChangeLogLevel) { RestoreLogLevelSelection(); return; }
                 if (!DiagnosticLogLevels.IsValid(value)) throw new ArgumentOutOfRangeException(nameof(value));
                 var previous = _selectedLogLevel;
                 var applied = false;
@@ -50,22 +52,26 @@ namespace T7.Rekindle.Desktop.ViewModels
                 catch (Exception error)
                 {
                     PreferenceError = "日志等级未保存，请重试";
-                    if (applied)
-                    {
-                        // Restore each runtime sink independently when persistence fails.
-                        try { _bridge.SetLogLevel(previous); }
-                        catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
-                        try { LogService.SetMinimumLevel(previous); }
-                        catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
-                    }
+                    if (applied) RestoreLogLevel(previous);
                     _log.Error("保存日志等级失败", error);
                     if (!IsSettingsSelected || SettingsTabIndex != 1)
                         Notices.Publish("preferences.save-failed", PreferenceError, NoticeSeverity.Error, "查看设置",
                             () => { IsSettingsSelected = true; SettingsTabIndex = 1; });
                 }
-                System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
-                    System.Windows.Threading.DispatcherPriority.DataBind, new Action(() => OnPropertyChanged(nameof(SelectedLogLevel))));
+                RestoreLogLevelSelection();
             }
+        }
+
+        private void RestoreLogLevelSelection() => System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.DataBind, new Action(() => OnPropertyChanged(nameof(SelectedLogLevel))));
+
+        private void RestoreLogLevel(DiagnosticLogLevel previous)
+        {
+            // Restore each runtime sink independently when persistence fails.
+            try { _bridge.SetLogLevel(previous); }
+            catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
+            try { LogService.SetMinimumLevel(previous); }
+            catch (Exception restoreError) { ReportLogLevelRestoreFailure(restoreError); }
         }
 
         private void ReportLogLevelRestoreFailure(Exception error)

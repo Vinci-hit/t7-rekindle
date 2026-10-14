@@ -32,7 +32,8 @@ namespace T7.ManagedHarness
                     PreviewAccessTests.Run(directory);
                     PreviewAccessWorkflowTests.Run(System.IO.Path.Combine(directory, "workflow"));
                     PreviewSigningScriptTests.Run(System.IO.Path.Combine(directory, "signing"));
-                    Console.WriteLine("preview access protocol, persistence and migration checks passed");
+                    PreviewAccessUiTests.RunStandalone(directory, args.Length == 2 ? args[1] : null);
+                    Console.WriteLine("preview access protocol, persistence, migration and UI checks passed");
                     return 0;
                 }
                 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
