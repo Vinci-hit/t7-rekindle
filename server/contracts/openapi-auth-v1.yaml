@@ -166,6 +166,54 @@ paths:
         '204': {description: 请求已处理，session 仍然有效}
         '401': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/online/{connectionId}/titles:
+    parameters:
+      - {$ref: '#/components/parameters/ConnectionId'}
+      - {$ref: '#/components/parameters/MachineId'}
+    get:
+      operationId: getAccountTitles
+      summary: 获取当前在线账户的称号目录、持有状态及佩戴选择
+      description: 仅当前有效在线连接可访问；上线和每次成功心跳后读取，不触发发放、不续租。暂停展示保留持有记录。
+      responses:
+        '200':
+          description: 账户称号快照，按 sortOrder、titleId 升序
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountTitles'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/OnlineConflict'}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/online/{connectionId}/titles/equipped:
+    parameters:
+      - {$ref: '#/components/parameters/ConnectionId'}
+      - {$ref: '#/components/parameters/MachineId'}
+    put:
+      operationId: equipAccountTitle
+      summary: 佩戴已持有且开放展示的称号，null 表示卸下
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [titleId]
+              properties:
+                titleId: {type: [integer, 'null'], enum: [1007, 1008, null]}
+      responses:
+        '200':
+          description: 保存后的完整账户称号快照
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountTitles'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409':
+          description: TITLE_NOT_AVAILABLE、ONLINE_TAKEN_OVER 或 NOT_ONLINE；不修改佩戴选择
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/auth/online/{connectionId}/events:
     parameters:
       - {$ref: '#/components/parameters/ConnectionId'}
@@ -208,6 +256,28 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    AccountTitles:
+      type: object
+      required: [titles, equippedTitleId]
+      properties:
+        equippedTitleId: {type: [integer, 'null'], description: 唯一佩戴选择，未佩戴或无效选择返回 null}
+        titles:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [titleId, name, description, rule, sortOrder, enabled, owned, source, grantedAt, revokedAt]
+            properties:
+              titleId: {type: integer, enum: [1007, 1008]}
+              name: {type: string, description: 原游戏名称，不支持后台修改}
+              description: {type: string, maxLength: 64, description: GBK 可编码的纯文本，实际限制为 64 个 GBK 字节}
+              rule: {type: string, description: 固定获取规则与永久有效说明}
+              sortOrder: {type: integer, minimum: 0, maximum: 9999}
+              enabled: {type: boolean, description: 是否允许展示和佩戴}
+              owned: {type: boolean, description: 是否已获授且尚未撤销；不受 enabled 影响}
+              source: {type: [string, 'null'], enum: [ADMIN, OCTOBER_2026_LOGIN, null]}
+              grantedAt: {type: [string, 'null'], format: date-time}
+              revokedAt: {type: [string, 'null'], format: date-time}
     Announcement:
       type: object
       required: [announcementId, title, summary, bodyMarkdown, publishedAt]

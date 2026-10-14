@@ -17,6 +17,7 @@ import static org.mockito.Mockito.*;
 class PresenceServiceTest {
     private final AuthMapper db = mock(AuthMapper.class);
     private final AuthService auth = mock(AuthService.class);
+    private final TitleService titles = mock(TitleService.class);
     private final TransactionTemplate tx = mock(TransactionTemplate.class);
     private final Instant now = Instant.parse("2026-01-01T00:00:00Z");
     private final Identity identity = new Identity("account", "session", "sample", now.plusSeconds(100));
@@ -30,7 +31,7 @@ class PresenceServiceTest {
         doCallRealMethod().when(tx).executeWithoutResult(any());
         when(db.now()).thenReturn(now);
         when(auth.requireLocked(identity)).thenReturn(identity);
-        service = new PresenceService(db, auth, tx, mock(SessionEvents.class), mock(QqGroupService.class));
+        service = new PresenceService(db, auth, tx, mock(SessionEvents.class), mock(QqGroupService.class), titles);
     }
 
     @Test void explicitOnlineCreatesNewConnectionAndClampsDeadline() {
@@ -39,6 +40,7 @@ class PresenceServiceTest {
         assertThat(first.connectionId()).isNotEqualTo(second.connectionId());
         assertThat(first.leaseExpiresAt()).isEqualTo(now.plusSeconds(45));
         assertThat(first.heartbeatIntervalSeconds()).isEqualTo(15);
+        verify(titles, times(2)).rewardOnline("account", now);
         var expiring = new Identity("account", "session", "sample", now.plusSeconds(5));
         when(auth.requireLocked(expiring)).thenReturn(expiring);
         assertThat(service.online(expiring).leaseExpiresAt()).isEqualTo(expiring.expiresAt());
@@ -54,6 +56,7 @@ class PresenceServiceTest {
         assertCode(() -> service.heartbeat(identity, "old"), "ONLINE_TAKEN_OVER");
         assertThat(service.heartbeat(identity, "new").leaseExpiresAt()).isEqualTo(now.plusSeconds(45));
         verify(db, times(1)).savePresence(any());
+        verifyNoInteractions(titles);
     }
 
     @Test void offlineOnlyDeletesExactConnection() {
@@ -63,7 +66,7 @@ class PresenceServiceTest {
     }
     @Test void streamValidationDoesNotRenewLeaseAndTakeoverPushesOldConnection() {
         var events = mock(SessionEvents.class);
-        service = new PresenceService(db, auth, tx, events, mock(QqGroupService.class));
+        service = new PresenceService(db, auth, tx, events, mock(QqGroupService.class), mock(TitleService.class));
         var owner = new Presence("account", "session", "old", now.plusSeconds(10));
         when(db.lockPresence("account")).thenReturn(owner);
         service.checkConnection(identity, "old");

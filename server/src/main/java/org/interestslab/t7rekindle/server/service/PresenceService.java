@@ -15,20 +15,25 @@ public class PresenceService {
     private final TransactionTemplate tx;
     private final SessionEvents events;
     private final QqGroupService groups;
+    private final TitleService titles;
 
-    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx, SessionEvents events, QqGroupService groups) {
+    public PresenceService(AuthMapper db, AuthService auth, TransactionTemplate tx, SessionEvents events, QqGroupService groups, TitleService titles) {
         this.db = db;
         this.auth = auth;
         this.tx = tx;
         this.events = events;
         this.groups = groups;
+        this.titles = titles;
     }
     public OnlineConnection online(Identity identity) {
         groups.require(identity.qqNumber(), false);
         return tx.execute(status -> {
+            titles.lockCatalogue();
             Identity current = auth.requireLocked(identity);
             Presence previous = db.lockPresence(current.accountId());
-            var result = save(current, UUID.randomUUID().toString(), db.now());
+            Instant now = db.now();
+            var result = save(current, UUID.randomUUID().toString(), now);
+            titles.rewardOnline(current.accountId(), now);
             events.kick(previous, "ONLINE_TAKEN_OVER");
             return result;
         });
