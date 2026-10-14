@@ -36,14 +36,17 @@ bool verifyResourcePreflight(const t7::fs::path& packageRoot) {
         t7::Bootstrap::TestAdapter adapter;
         adapter.check = [](const auto&, const auto&, const auto&) {};
         adapter.launch = [&](const auto&, const t7::Config& config, const auto&, const auto&, const auto&) {
+            require(config.combatProfiles.size() == 3 && config.combatProfiles[0].heroId == 1101
+                && config.combatProfiles[0].movement.weaponId == 701 && !config.playerProfilePath.empty(),
+                "Bootstrap lost the hero/weapon-selected profiles or persistence path");
             require(!config.dashAttack.enabled && config.dashAttack.weaponId == 1030411,
                 "Bootstrap lost the disabled weapon resource profile");
-            require(config.movementAnimation.enabled == expectAnimation
+            require(config.movementAnimation.enabled
                 && config.movementAnimation.weaponId == 1030411
-                && config.movementAnimation.forwardSlow == (expectAnimation ? 2.25f : 0.f)
-                && config.movementAnimation.lateralSlow == (expectAnimation ? 1.75f : 0.f)
-                && config.movementAnimation.backwardSlow == (expectAnimation ? .75f : 0.f)
-                && config.movementAnimation.forwardSprint == (expectAnimation ? 4.25f : 0.f),
+                && config.movementAnimation.forwardSlow == (expectAnimation ? 2.25f : 2.5f)
+                && config.movementAnimation.lateralSlow == (expectAnimation ? 1.75f : 1.8f)
+                && config.movementAnimation.backwardSlow == (expectAnimation ? .75f : 1.f)
+                && config.movementAnimation.forwardSprint == (expectAnimation ? 4.25f : 3.6f),
                 "Bootstrap lost the selected movement animation profile");
             launched = true;
         };
@@ -74,8 +77,8 @@ bool verifyResourcePreflight(const t7::fs::path& packageRoot) {
         require(session->readLogs(cursor, buffer.data(), required, required, flags) == T7NB_OK,
             "resource diagnostic read failed");
         const std::string logs(buffer.begin(), buffer.end());
-        require(logs.find("[T7_RESOURCE:entry_missing]") != std::string::npos
-            && logs.find("dash-disabled") != std::string::npos, "recoverable dash errors were silent");
+        require(logs.find("dash-disabled") == std::string::npos,
+            "static combat profiles unexpectedly read missing client action tables");
         const auto archive = root / "vfs/data1.vfs";
         const auto validArchive = t7::readFile(archive);
         write(archive, {0, 1, 2});

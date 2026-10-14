@@ -1,6 +1,7 @@
 #include "SprintHookCode.h"
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -51,7 +52,7 @@ void writeSprintDirections(Bytes& page) {
     const uint32_t states[]{1,2,6,1,4,3,5,4,8,9,7,8,1,2,6,1};
     std::memcpy(page.data() + STATES_OFFSET, states, sizeof(states));
 }
-Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash) {
+Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash, bool dynamicProfiles) {
     const auto dashMoveMs = dash.enabled ? dash.moveMs : 0;
     const auto dashSpeed = dash.enabled ? static_cast<float>(dash.speedMilli) / 1000.f : 0.f;
     // State contains identities/timestamps, never a pointer reused across frames.
@@ -62,6 +63,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     const auto jumping = data + 48, animationIdentity = data + 52;
     const auto phaseTick = data + 56, dashMoving = data + 60;
     const auto sequence = data + 64, lastSequence = data + 68;
+    const auto selectedMoveMs = data + 72, selectedDashSpeed = data + 76;
     WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
@@ -112,6 +114,14 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x8B,0x70,0x38}); // ESI battle state
     c.emit({0x8B,0x48,0x40,0x89,0x0D}); c.word(sequence);
     c.emit({0x8B,0x48,0x48,0x89,0x0D}); c.word(phaseTick);
+    if (dynamicProfiles) {
+        c.emit({0x8B,0x90}); c.word(0x98); c.emit({0x8B,0xCF});
+        c.call(address + COMBAT_PROFILE_CODE_OFFSET);
+        c.store(selectedMoveMs, 0); c.store(selectedDashSpeed, 0);
+        c.emit({0x85,0xC0}); const auto noProfile = c.branch(0x84);
+        c.emit({0x8B,0x48,24,0x89,0x0D}); c.word(selectedMoveMs);
+        c.emit({0x8B,0x48,28,0x89,0x0D}); c.word(selectedDashSpeed); c.bind(noProfile);
+    }
     component(0x178692C, 0x17868BC);
     c.emit({0x83,0x78,0x60,6}); invalid.push_back(c.branch(0x82));
     c.emit({0x8B,0x40,0x54}); nonzero(0xC0);
@@ -120,12 +130,14 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0xFF,0xD0,0xA3}); c.word(now);
     c.store(speed, floatBits(JOG_SPEED)); c.store(running, 0);
 
-    auto move = [&](float maxSpeed) {
+    auto move = [&](float maxSpeed, bool selectedDash = false) {
         // EAX direction mask; original commands retain collision/gravity and own the movement queue.
         c.emit({0x83,0xE0,0x0F,0x6B,0xC0,24,0x05}); c.word(address + DIRECTIONS_OFFSET);
         c.emit({0x8B,0x0D}); c.word(offline);
         c.emit({0x83,0x78,0x10,0}); const auto stop = c.branch(0x84);
-        c.emit({0x50,0x6A,0,0x68}); c.word(floatBits(maxSpeed));
+        c.emit({0x50,0x6A,0});
+        if (selectedDash && dynamicProfiles) { c.emit({0xFF,0x35}); c.word(selectedDashSpeed); }
+        else { c.emit({0x68}); c.word(floatBits(maxSpeed)); }
         c.emit({0xFF,0x35}); c.word(speed); c.call(imageBase + LINE_MOVE_RVA);
         const auto done = c.jump(); c.bind(stop); c.call(imageBase + STOP_MOVE_RVA); c.bind(done);
     };
@@ -143,7 +155,10 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x8B,0xC7,0x83,0xE0,0x13,0x83,0xF8,1}); reset.push_back(c.branch(0x85));
     // Carry an established run through jump input/takeoff/landing while still moving forward.
     c.emit({0x83,0x3D}); c.word(tracking); c.emit({2}); const auto keepRunning = c.branch(0x84);
-    c.emit({0x80,0x7B,0x20,0}); reset.push_back(c.branch(0x85)); // Native airborne flag, not Space key state.
+    // Terrain contact loss alone is not a physical jump and must retain run warmup.
+    c.emit({0x80,0x7B,0x20,0}); const auto notAirborne = c.branch(0x84);
+    c.emit({0x80,0x7B,0x22,0}); reset.push_back(c.branch(0x85));
+    c.bind(notAirborne);
     c.emit({0xF7,0xC7}); c.word(0x20); reset.push_back(c.branch(0x85)); // No new run starts while jumping.
     c.emit({0x83,0x3D}); c.word(tracking); c.emit({0}); const auto started = c.branch(0x85);
     c.emit({0xA1}); c.word(now); c.emit({0xA3}); c.word(began); c.store(tracking, 1);
@@ -163,8 +178,12 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.store(tracking, 0); c.store(speed, 0);
     c.emit({0x33,0xD2,0x81,0xFE}); c.word(439); const auto preparation = c.branch(0x85);
     c.emit({0xA1}); c.word(now); c.emit({0x2B,0x05}); c.word(phaseTick);
-    c.emit({0x3D}); c.word(dashMoveMs); const auto expired = c.branch(0x83);
-    c.store(speed, floatBits(dashSpeed)); c.emit({0x42});
+    if (dynamicProfiles) { c.emit({0x3B,0x05}); c.word(selectedMoveMs); }
+    else { c.emit({0x3D}); c.word(dashMoveMs); }
+    const auto expired = c.branch(0x83);
+    if (dynamicProfiles) { c.emit({0xA1}); c.word(selectedDashSpeed); c.emit({0xA3}); c.word(speed); }
+    else c.store(speed, floatBits(dashSpeed));
+    c.emit({0x42});
     c.bind(preparation); c.bind(expired);
     c.emit({0x3B,0x35}); c.word(lastDash); const auto phaseChanged = c.branch(0x85);
     c.emit({0xA1}); c.word(sequence); c.emit({0x3B,0x05}); c.word(lastSequence);
@@ -174,7 +193,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.bind(phaseChanged); c.bind(sequenceChanged); c.bind(keysChanged);
     c.emit({0x89,0x35}); c.word(lastDash); c.emit({0x89,0x3D}); c.word(lastKeys);
     c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(lastSequence);
-    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed);
+    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed, true);
     c.bind(sameDash); c.bind(warming); c.bind(armed); c.bind(resetDone);
     // Native infantry turning checks command speed, not velocity. Preserve the
     // stop command's zero speed so the original TurnDir updater can select Turn.

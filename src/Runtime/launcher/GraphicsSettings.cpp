@@ -4,6 +4,7 @@
 #include "MovementAnimationHookCode.h"
 #include "MovementCommandHookCode.h"
 #include "SprintHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <cstring>
 
 namespace t7 {
@@ -17,7 +18,8 @@ void write(HANDLE process, uint32_t address, const void* data, size_t size) {
 }
 }
 void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadId, const DashAttackProfile& dash,
-                               const MovementAnimationProfile& animation) {
+                               const MovementAnimationProfile& animation, const std::vector<CombatProfile>& profiles) {
+    const bool movementEnabled = animation.enabled || !profiles.empty();
     if (process_ || !process) throw std::runtime_error("graphics bridge installation state");
     if (readClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL.size()) != GRAPHICS_TICK_ORIGINAL
         || readClientMemory(process, imageBase + 0x6EA040, 5) != Bytes{0x55, 0x8B, 0xEC, 0x6A, 0xFF})
@@ -26,7 +28,9 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         if (readClientMemory(process, imageBase + rva, 6) != Bytes{0x55, 0x8B, 0xEC, 0x8A, 0x45, 0x08})
             throw std::runtime_error("audio setter signature mismatch");
     verifyWorldFunctions(process, imageBase);
-    if (animation.enabled) verifyMovementAnimationFunction(process, imageBase);
+    if (!profiles.empty() && readClientMemory(process, imageBase + 0xF34F0, 4) != Bytes{0x8B,0x41,0x2C,0xC3})
+        throw std::runtime_error("combat profile hero getter signature mismatch");
+    if (movementEnabled) verifyMovementAnimationFunction(process, imageBase);
     constexpr auto worldOffset = GRAPHICS_PAGE_SIZE + AUDIO_PAGE_SIZE;
     constexpr auto size = worldOffset + WORLD_PAGE_SIZE;
     const auto remote = VirtualAllocEx(process, nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -46,7 +50,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
                                        base + worldOffset + WORLD_CODE_OFFSET);
         const auto audioBytes = buildAudioHook(base + GRAPHICS_PAGE_SIZE, imageBase, threadId);
         bytes.insert(bytes.end(), audioBytes.begin(), audioBytes.end());
-        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId, dash, animation);
+        const auto worldBytes = buildWorldHook(base + worldOffset, imageBase, threadId, dash, animation, profiles);
         bytes.insert(bytes.end(), worldBytes.begin(), worldBytes.end());
         write(process, base, bytes.data(), bytes.size());
         DWORD previous = 0;
@@ -54,6 +58,8 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + GRAPHICS_PAGE_SIZE + AUDIO_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + WORLD_CODE_OFFSET), ACTORS_DATA_OFFSET - WORLD_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
             || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + CONTACT_CODE_OFFSET), LIVE_ACTORS_OFFSET - CONTACT_CODE_OFFSET, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + COMBAT_PROFILE_CODE_OFFSET), 0x1000, PAGE_EXECUTE_READ, &previous)
+            || !VirtualProtectEx(process, reinterpret_cast<void*>(pointer + worldOffset + COMBAT_PROFILES_OFFSET), COMBAT_PROFILE_CODE_OFFSET - COMBAT_PROFILES_OFFSET, PAGE_READONLY, &previous)
             || !FlushInstructionCache(process, remote, bytes.size()))
             throw std::runtime_error(errorText("graphics code protection/cache"));
         Bytes jump(7, 0x90); jump[0] = 0xE9;
@@ -62,7 +68,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         roundEndPatched = true;
         for (const auto& entry : roundEndJumps(base + worldOffset, imageBase))
             writeClientMemory(process, imageBase + entry.first, entry.second);
-        if (animation.enabled) {
+        if (movementEnabled) {
             animationPatched = true;
             writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, movementAnimationJump(base + worldOffset, imageBase));
             posePatched = true;

@@ -90,7 +90,7 @@ def attackChoice(flow, snapshot, reason, actorId=wire.BOT_ID):
     player = actors.data(flow, actors.data(flow, actorId).get("opponentId", wire.ACTOR_ID)).get("action", {})
     blocked = set()
     if (observedFor(flow, actorId) >= bot_profiles.get(value).observationMs and player.get("index", -1) in (0, 1)
-            and player.get("intent") in battle.BLOCK_CHAINS and not player.get("released", False)
+            and player.get("intent") in battle.GUARD_CHAINS and not player.get("released", False)
             and combat.facing(snapshot["player"], snapshot["bot"], snapshot["playerHeading"])):
         blocked = ({300540, 300550} if player["intent"] in (300590, 300610)
                    else {300560} if player["intent"] == 300580 else {300570})

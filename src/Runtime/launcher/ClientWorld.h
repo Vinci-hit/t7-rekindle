@@ -47,7 +47,7 @@ struct ActorMailbox {
 };
 static_assert(offsetof(ActorMailbox, targetTerrain) == 124, "actor mailbox layout");
 constexpr uint32_t ACTORS_DATA_OFFSET = 0x9000;
-constexpr uint32_t WORLD_CODE_OFFSET = 0x1000, WORLD_PAGE_SIZE = 0x270000;
+constexpr uint32_t WORLD_CODE_OFFSET = 0x1000, WORLD_PAGE_SIZE = 0x282000;
 constexpr uint32_t TERRAIN_CODE_OFFSET = 0x2000;
 constexpr uint32_t BLADE_POSE_CODE_OFFSET = 0x5000, BLADE_SWEEP_CODE_OFFSET = 0x6000;
 constexpr uint32_t BLADE_DATA_OFFSET = 0x18000;
@@ -80,7 +80,7 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase);
 void verifyTerrainFunctions(HANDLE process, uint32_t imageBase);
 Bytes buildTerrainHook(uint32_t address, uint32_t imageBase);
 Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
-                     const MovementAnimationProfile& animation = {});
+                     const MovementAnimationProfile& animation = {}, const std::vector<CombatProfile>& profiles = {});
 Bytes buildBladePoseHook(uint32_t address, uint32_t imageBase);
 Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase);
 Bytes buildContactFrameHook(uint32_t address);

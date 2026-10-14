@@ -1,10 +1,9 @@
 """Resource preflight shared by explicit checks and runtime startup."""
 from pathlib import Path
 
-from . import contracts as wire
+from . import combat_resources, hero_resources
 from .bot_names import NAME_PATH, assignNames, loadNames
-from .dash_resources import loadDashAttack
-from .movement_animation import loadMovementAnimation
+from .dash_resources import DashAttackProfile
 from .navmesh_resource import NAV_PATH, loadNavigation
 from .spawn_resource import SPAWN_PATH, loadRespawns, loadSpawns
 from .vfs_resource import ResourceError, clearCache
@@ -37,7 +36,8 @@ def checkResources(clientDirectory, playerName=''):
     loaders = (loadSpawns, loadRespawns, loadNavigation, loadNames)
     for loader in loaders:
         loader.cache_clear()
-    loadDashAttack.cache_clear()
+    hero_resources.loadCatalogue.cache_clear()
+    combat_resources.clearCache()
     checkLayout(directory.parent)
     for loader in loaders:
         loader(clientDirectory)
@@ -45,6 +45,7 @@ def checkResources(clientDirectory, playerName=''):
         assignNames(loadNames(clientDirectory), 19, 0, playerName)
     except ValueError as error:
         raise ResourceError('content_mismatch', 'data1.vfs', NAME_PATH, str(error)) from error
-    result = loadDashAttack(clientDirectory, wire.WEAPON_ID).asDict()
-    animation, diagnostics = loadMovementAnimation(clientDirectory, wire.HERO_ID, wire.WEAPON_ID)
-    return result | {'movementAnimation': animation, 'diagnostics': result['diagnostics'] + diagnostics}
+    selected = combat_resources.defaultProfile()
+    dash = selected['dashAttack'] or vars(DashAttackProfile(weaponId=selected['weaponId']))
+    return {'dashAttack': dash, 'movementAnimation': selected['movementAnimation'],
+            'combatProfiles': combat_resources.nativeProfiles(clientDirectory), 'diagnostics': []}

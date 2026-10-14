@@ -7,6 +7,7 @@
 #include "RoundEndHookCode.h"
 #include "MovementAnimationHookCode.h"
 #include "MovementCommandHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <algorithm>
 #include <cstring>
 
@@ -42,7 +43,7 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
     }
 }
 Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
-                     const MovementAnimationProfile& animation) {
+                     const MovementAnimationProfile& animation, const std::vector<CombatProfile>& profiles) {
     if (!address || address > UINT32_MAX - WORLD_PAGE_SIZE || !imageBase
         || imageBase > UINT32_MAX - LOCAL_ACTOR_RVA - 4 || !threadId)
         throw std::runtime_error("world hook outside x86 range");
@@ -213,7 +214,7 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     std::memcpy(page.data() + WORLD_CODE_OFFSET, c.bytes.data(), c.bytes.size());
     const auto terrain = buildTerrainHook(address, imageBase);
     std::memcpy(page.data() + TERRAIN_CODE_OFFSET, terrain.data(), terrain.size());
-    const auto sprint = buildSprintHook(address, imageBase, dash);
+    const auto sprint = buildSprintHook(address, imageBase, dash, !profiles.empty());
     std::memcpy(page.data() + SPRINT_CODE_OFFSET, sprint.data(), sprint.size());
     const auto jumpPhysics = buildJumpPhysicsHook(address, imageBase, threadId);
     static_assert(JUMP_PHYSICS_CODE_OFFSET + 0x400 <= CHAT_INPUT_CODE_OFFSET, "jump physics code capacity");
@@ -231,7 +232,7 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     const auto movementCommand = buildMovementCommandHook(address, imageBase, threadId);
     static_assert(MOVEMENT_COMMAND_CODE_OFFSET + 0x1000 <= MOVEMENT_ANIMATION_CODE_OFFSET, "movement command code capacity");
     std::copy(movementCommand.begin(), movementCommand.end(), page.begin() + MOVEMENT_COMMAND_CODE_OFFSET);
-    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation);
+    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation, !profiles.empty());
     static_assert(MOVEMENT_ANIMATION_CODE_OFFSET + 0x1000 <= ROUND_END_CODE_OFFSET, "movement animation code capacity");
     std::copy(movementAnimation.begin(), movementAnimation.end(), page.begin() + MOVEMENT_ANIMATION_CODE_OFFSET);
     writeSprintDirections(page);
@@ -242,6 +243,10 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     const auto weaponTrail = buildWeaponTrailHook(address, imageBase);
     std::memcpy(page.data() + WEAPON_TRAIL_CODE_OFFSET, weaponTrail.data(), weaponTrail.size());
     writeWeaponTrailPreset(page);
+    writeCombatProfiles(page, profiles);
+    const auto lookup = buildCombatProfileLookup(address, imageBase);
+    if (lookup.size() > WORLD_PAGE_SIZE - COMBAT_PROFILE_CODE_OFFSET) throw std::runtime_error("combat profile code capacity");
+    std::copy(lookup.begin(), lookup.end(), page.begin() + COMBAT_PROFILE_CODE_OFFSET);
     return page;
 }
 }

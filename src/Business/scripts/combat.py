@@ -1,8 +1,9 @@
 """Local melee contact and health; original client messages render the result."""
 import math
+from copy import deepcopy
 
 from . import actors, battle, blade_contacts, body_collision, bot, bot_life, bot_roaming, contact_journal, contracts as wire
-from . import dash_resources, player_life, weapons
+from . import dash_resources, player_life, weapons, loadouts
 from .codec import attr_flow, battle_flow, kill_flow
 
 MAX_HEALTH, DAMAGE = 100, 20
@@ -27,7 +28,10 @@ def initialize(flow):
     for actorId in actors.ids(flow.session):
         data = battle.actorData(flow, actorId)
         data["health"] = MAX_HEALTH
-        data.pop('weaponId', None)
+        if actorId == wire.ACTOR_ID:
+            loadouts.resetWeapons(flow)
+        else:
+            data.pop('weaponId', None)
         data['contactLifeAt'] = flow.now
         data.pop('contactSwings', None)
         data['killStreak'] = 0
@@ -104,15 +108,18 @@ def cancelSwing(flow, actorId, *, reason=None):
         flow.log("DEBUG", f"combat-miss attacker={actorId} reason={detail}")
 
 
-def contactEndMs(intent, *, dash=None, weaponId=None):
+def contactEndMs(intent, *, dash=None, weaponId=None, profile=None):
     if intent == battle.DASH_ATTACK:
         return dash['contactEndMs'] if dash is not None else battle.missingDash()
+    if profile is not None:
+        return profile['attacks'][str(intent)]['contactEndMs']
     return battle.phaseMs(intent, battle.strikeIndex(intent), weaponId=weaponId)
 
 
 def contactWindow(swing):
     return (swing.get('contactStartMs', 0), swing['contactEndMs'] if 'contactEndMs' in swing
-            else contactEndMs(swing['intent'], dash=swing.get('dash'), weaponId=swing.get('weaponId')))
+            else contactEndMs(swing['intent'], dash=swing.get('dash'), weaponId=swing.get('weaponId'),
+                              profile=swing.get('weaponProfile')))
 
 
 def actionChanged(flow, actorId, state):
@@ -125,23 +132,31 @@ def actionChanged(flow, actorId, state):
             or chain is None or action.get("index") != strike or state != chain[strike]):
         return
     dash = action.get('dash') if action['intent'] == battle.DASH_ATTACK else None
-    start = dash['contactStartMs'] if dash is not None else 0
+    profile = action.get('weaponProfile')
+    start = (dash['contactStartMs'] if dash is not None else
+             profile['attacks'][str(action['intent'])]['contactStartMs'] if profile is not None else 0)
     weaponId = weapons.equipped(data)
-    end = contactEndMs(action['intent'], dash=dash, weaponId=weaponId)
+    end = contactEndMs(action['intent'], dash=dash, weaponId=weaponId, profile=profile)
     data["swing"] = {"seq": action["seq"], "epoch": flow.session["instanceStartedAt"],
                      "until": flow.now + end, 'contactStartMs': start, 'contactEndMs': end,
                      "beganAt": flow.now, "intent": action['intent'], "state": state,
                      "hits": [], 'weaponId': weaponId}
     if dash is not None:
         data['swing']['dash'] = dict(dash)
+    if profile is not None:
+        data['swing']['weaponProfile'] = deepcopy(profile)
     flow.later(hitTimer(actorId), start)
 
 
-def facing(position, target, heading):
+def facingCosine(position, target, heading):
     dx, dy = target[0] - position[0], target[1] - position[1]
     length = math.hypot(dx, dy)
     yaw = math.radians(heading)
-    return length < 0.01 or (dx * math.cos(yaw) - dy * math.sin(yaw)) / length >= FACING_COS
+    return 1.0 if length < 0.01 else (dx * math.cos(yaw) - dy * math.sin(yaw)) / length
+
+
+def facing(position, target, heading):
+    return facingCosine(position, target, heading) >= FACING_COS
 
 
 def heading(snapshot, actorId):
@@ -256,6 +271,23 @@ def publishCampScore(flow):
         kill_target=flow.session.get('killTarget')), 'combat-camp-score')
 
 
+def parryCheck(attack, defence, snapshot, attacker, defender):
+    if defence['index'] != 1 or defence['released']:
+        return 'not-holding', None
+    lateral = attack["intent"] in (300540, 300550)
+    acceptsAttack = (defence['intent'] == battle.SHIELD_GUARD or
+                     (defence["intent"] in (300590, 300610) if lateral
+                      else defence["intent"] == bot.PARRY_FOR_ATTACK[attack["intent"]]))
+    if not acceptsAttack:
+        return 'direction-mismatch', None
+    origin, target = snapshot[actors.positionName(snapshot, defender)], snapshot[actors.positionName(snapshot, attacker)]
+    yaw = heading(snapshot, defender)
+    if yaw is None:
+        return 'heading-unavailable', None
+    cosine = facingCosine(origin, target, yaw)
+    return ('success' if cosine >= FACING_COS else 'facing-mismatch'), cosine
+
+
 def parry(flow, attacker, defender, snapshot, *, contact=None, attackIntent=None, defenceIntent=None, dash=None,
           weaponId=None):
     attack = battle.actionState(flow, attacker)
@@ -263,21 +295,25 @@ def parry(flow, attacker, defender, snapshot, *, contact=None, attackIntent=None
     if attackIntent is not None:
         attack = dict(attack, intent=attackIntent)
     if defenceIntent is not None:
-        defence = dict(defence, intent=defenceIntent, index=1, released=False)
-    lateral = attack["intent"] in (300540, 300550)
-    acceptsAttack = (defence["intent"] in (300590, 300610) if lateral
-                     else defence["intent"] == bot.PARRY_FOR_ATTACK[attack["intent"]])
-    if defence["index"] != 1 or defence["released"] or not acceptsAttack:
+        defence = dict(defence, intent=defenceIntent,
+                       index=1 if defenceIntent in battle.GUARD_CHAINS else -1, released=False)
+    if defence['intent'] == battle.SHIELD_GUARD and not actors.data(flow, defender).get('offhandId'):
         return False
-    origin, target = snapshot[actors.positionName(snapshot, defender)], snapshot[actors.positionName(snapshot, attacker)]
-    yaw = heading(snapshot, defender)
-    if yaw is None or not facing(origin, target, yaw):
+    reason, cosine = parryCheck(attack, defence, snapshot, attacker, defender)
+    if contact is not None and 'targetState' in contact and wire.ACTOR_ID in (attacker, defender):
+        occurredAt = contact['occurredAt']
+        flow.log('DEBUG', f"combat-guard attacker={attacker} target={defender} attack={attack['intent']} "
+                 f"defence={defence['intent']} targetState={contact['targetState']} targetSeq={contact['targetSeq']} "
+                 f"targetPhaseAt={contact['targetPhaseAt']} occurredAt={occurredAt} dispatchAt={flow.now} "
+                 f"contactAgeMs={flow.now - occurredAt} facingCos={cosine} reason={reason}")
+    if reason != 'success':
         return False
     for rid in (attacker, defender):
         if rid != wire.ACTOR_ID:
             battle.actorData(flow, rid)['forwardMs'] = 0
     weaponId = weapons.equipped(actors.data(flow, attacker)) if weaponId is None else weaponId
-    defenderWeapon = weapons.equipped(actors.data(flow, defender))
+    defenderWeapon = (actors.data(flow, defender)['offhandId'] if defence['intent'] == battle.SHIELD_GUARD
+                      else weapons.equipped(actors.data(flow, defender)))
     battle.parryReaction(flow, attacker, defender, success=False, intent=attack['intent'], dash=dash, weaponId=weaponId)
     battle.parryReaction(flow, defender, attacker, success=True, intent=defence['intent'])
     hitPosition, hitDirection, hitNormal = (bodyContact(snapshot, attacker, defender) if contact is None
@@ -369,9 +405,11 @@ def applyHit(flow, attacker, target, snapshot, *, contact=None, intent=None, wea
         data['forwardMs'] = 0
         flow.cancel(actors.timerName(bot.RELEASE_TIMER, target))
         data["reactAt"] = None
-    data["hurtUntil"] = flow.now + HURT_MS
-    battle.syncState(flow, HURT_STATE, target, targetId=attacker)
-    flow.later(hurtTimer(target), HURT_MS)
+    profile = weapons.profile(data)
+    duration = profile.get('hurtMs', HURT_MS) if profile is not None else HURT_MS
+    data["hurtUntil"] = flow.now + duration
+    battle.syncState(flow, HURT_STATE, target, targetId=attacker, durationMs=duration)
+    flow.later(hurtTimer(target), duration)
 
 
 def checkHit(flow, attacker):

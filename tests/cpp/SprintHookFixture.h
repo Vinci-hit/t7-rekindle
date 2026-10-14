@@ -275,6 +275,45 @@ inline void verifyJumpAttack(HANDLE process) {
     writeWord(process, worldFixture::MOVABLE + 0x20, 0); pump(process);
     writeWord(process, KEYS, 0); setFightState(process, 2); pump(process);
 }
+inline void verifyTerrainWarmup(HANDLE process) {
+    uint32_t tick = readWord(process, CLOCK);
+    auto time = [&](uint32_t delta) { tick += delta; writeWord(process, CLOCK, tick); };
+    const auto events = readWord(process, ANIMATION_EVENTS);
+    const auto moves = readWord(process, MOVES), jumps = readWord(process, JUMP_COMMANDS);
+    for (uint32_t keys : {1u, 5u, 9u}) {
+        writeWord(process, KEYS, 0); pump(process);
+        writeWord(process, KEYS, keys); expect(process, 3, false, "terrain warmup setup");
+        time(400); expect(process, 3, false, "terrain warmup armed early");
+        for (uint32_t flags : {1u, 0u, 1u, 0u}) {
+            writeWord(process, worldFixture::MOVABLE + 0x20, flags);
+            time(100); expect(process, 3, false, "terrain contact change armed running early");
+        }
+        time(199); expect(process, 3, false, "terrain warmup armed before 1000 ms");
+        time(1); expect(process, 5, true, "terrain contact changes reset or paused run warmup");
+    }
+    writeWord(process, KEYS, 0); pump(process);
+    writeWord(process, KEYS, 1); expect(process, 3, false, "airborne deadline setup");
+    time(600); expect(process, 3, false, "airborne deadline armed early");
+    writeWord(process, worldFixture::MOVABLE + 0x20, 1);
+    time(399); expect(process, 3, false, "airborne deadline armed before 1000 ms");
+    time(1); expect(process, 5, false, "terrain airborne flag blocked the run deadline");
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+    expect(process, 5, true, "terrain landing restarted completed run warmup");
+
+    // Defense still cancels running; fresh warmup can start during terrain contact loss.
+    writeWord(process, worldFixture::MOVABLE + 0x20, 1);
+    setFightState(process, 223); expect(process, 3, false, "airborne defense retained running");
+    time(1500); expect(process, 3, false, "airborne defense accumulated run time");
+    setFightState(process, 2); expect(process, 3, false, "defense release reused run warmup");
+    time(400); expect(process, 3, false, "defense recovery armed running early");
+    writeWord(process, worldFixture::MOVABLE + 0x20, 0);
+    time(599); expect(process, 3, false, "defense recovery armed before 1000 ms");
+    time(1); expect(process, 5, true, "terrain contact loss delayed defense recovery warmup");
+    if (readWord(process, ANIMATION_EVENTS) != events || readWord(process, MOVES) != moves
+        || readWord(process, JUMP_COMMANDS) != jumps)
+        throw std::runtime_error("terrain run warmup replayed native animation or movement commands");
+    writeWord(process, KEYS, 0); pump(process);
+}
 inline void verify(HANDLE process) {
     const auto config = profile();
     const float initialSpeed = static_cast<float>(config.speedMilli) / 1000.f;
@@ -291,6 +330,7 @@ inline void verify(HANDLE process) {
             : forward < 0 ? (right > 0 ? 4 : right < 0 ? 6 : 5) : right > 0 ? 3 : right < 0 ? 7 : 0;
         expectDirection(process, direction, false);
     }
+    verifyTerrainWarmup(process);
     verifyJump(process);
     verifyJumpAttack(process);
     tick = readWord(process, CLOCK);

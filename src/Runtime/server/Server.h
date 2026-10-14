@@ -58,7 +58,11 @@ private:
         TimePoint blockedUntil{};
     };
     struct Timer { TimePoint due; uint64_t connection; std::string event; };
-    struct QueuedEvent : Event { TimePoint queuedAt{}, due = TimePoint::max(); std::string timerId; };
+    struct QueuedEvent : Event {
+        TimePoint queuedAt{}, due = TimePoint::max();
+        std::string timerId;
+        std::shared_ptr<const PublishedWorld> world;
+    };
     using Timers = std::map<std::string, Timer>;
     Config config_;
     fs::path root_, writableRoot_, run_;
@@ -78,7 +82,8 @@ private:
     detail::ServerClock clock_;
     std::unique_ptr<detail::ServerSignals> signals_;
     ServerSnapshot snapshot_;
-    WorldSnapshot world_;
+    std::shared_ptr<const PublishedWorld> world_;
+    uint64_t worldVersion_ = 0;
     bool worldPending_ = false;
     std::vector<std::string> lastLines_;
     std::unique_ptr<Journal> journal_;

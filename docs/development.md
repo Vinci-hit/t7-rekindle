@@ -47,10 +47,12 @@ python scripts/integration_test.py --report artifacts/test-results/integration.j
 
 | 入口 | 构建或验证范围 |
 | --- | --- |
-| `build.py --project all` | 全部原生、托管项目，并自动运行三组原生测试 |
+| `build.py --project all` | 全部原生、托管项目，并运行三组既有原生测试及战斗模块测试 |
 | `build.py --project native` | 仅 NativeBridge，不运行测试 |
 | `build.py --project native-tests` | NativeBridge、三组原生测试，并自动运行原生测试 |
-| `build.py --project managed` | Core、WPF、托管 harness，不自动运行 harness |
+| `build.py --project managed` | Core、WPF、战斗宿主与托管 harness，不自动运行 harness |
+| `build.py --project battle` | NativeBridge、BattleServer 与 BattleHarness，不构建 WPF、不运行测试 |
+| `build.py --project battle-tests` | 战斗宿主 C++/托管模块测试，使用独立合成资源，不启动游戏 |
 | `python -m pytest -q` | Python 业务、构建、打包和静态界面契约测试 |
 | `T7.ManagedHarness.exe` | 设置、ViewModel、目录选择、主题、布局及生命周期契约 |
 | `integration_test.py` | 使用独立原生宿主验证嵌入式 Python、三通道及模拟客户端生命周期 |
@@ -63,6 +65,18 @@ python scripts/build.py --project managed --configuration Debug
 ```
 
 第二条命令仅构建托管项目；它不生成 NativeBridge 或准备 Python 运行时。正式打包和 `integration_test.py` 仍使用 Release 产物，Debug 构建不替代发行前的 Release 构建与验证。
+
+### 服务端上下文定向验证
+
+模块回归覆盖 `test_native_dispatch.py`、`test_defence_diagnostics.py`、`test_business_runtime.py`、`test_battle_actions.py`、`test_battle_buffer.py`、`test_battle_recovery.py`、`test_contact_journal.py` 和近战／电脑动作测试。原生宿主提供 `T7.RuntimeTests.exe --server-context PACKAGE_ROOT`，使用构建脚本生成的合成运行目录，验证缓存身份、接触隔离、版本失效、异常提交、热更新／回滚、引用释放及事件顺序，不启动游戏客户端。
+
+20 角色合成性能对照入口：
+
+```powershell
+python tests/python/benchmark_native_dispatch.py --output artifacts/test-results/dispatch-benchmark.json
+```
+
+默认比较当前序列化入口与对象入口，各预热 100 轮、测量 1000 轮，交替顺序重复 3 次；可使用 `--baseline-ref COMMIT` 从本仓库指定 Git revision 读取旧宿主作基线。报告包括 P50、P95、最大值和输入规模，不设置依赖机器速度的单元测试断言。此基准只测 Python 桥接及业务，不包含 Native 对象构建、队列、网络与渲染；实战需在同机、同场景和相同日志配置下，分别采集至少 100 个四方向均覆盖的完整防御样本，比较入队等待、准备至保持下发间隔和接触投递年龄。
 
 ### QQ 账号服务
 

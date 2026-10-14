@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "dependencies": {
+    ".NETFramework,Version=v4.8": {
+      "t7.battle": {
+        "type": "Project",
+        "dependencies": {
+          "T7.Core": "[1.0.0, )"
+        }
+      },
+      "t7.core": {
+        "type": "Project"
+      }
+    },
+    ".NETFramework,Version=v4.8/win7-x64": {}
+  }
+}

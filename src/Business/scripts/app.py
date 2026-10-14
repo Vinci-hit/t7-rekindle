@@ -3,12 +3,12 @@ from copy import deepcopy
 import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
-from . import battle_clock, settlement, weapons
+from . import battle_clock, settlement, weapons, loadouts, player_profile, hero_resources
 from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 16
+STATE_VERSION = 17
 STARTUP_STEP_DELAY_MS = 1000
 
 
@@ -17,8 +17,15 @@ def createState(context):
     runtimeMovement = context.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)
     if type(runtimeMovement) is not bool:
         raise ValueError("runtimeMovement must be a bool")
-    return {"phase": "waiting", "sessions": {}, "roomId": 1, "actorId": 1,
-            "playerName": playerName, "runtimeMovement": runtimeMovement}
+    state = {"phase": "waiting", "sessions": {}, "roomId": 1, "actorId": 1,
+             "playerName": playerName, "runtimeMovement": runtimeMovement}
+    if context.get('playerProfilePath'):
+        catalogue = hero_resources.loadCatalogue(context['clientDirectory'])
+        profile = context.get('playerProfile') or player_profile.create(catalogue)
+        if not player_profile.validate(profile, catalogue):
+            raise ValueError('saved formation does not match the current client catalogue')
+        state['playerProfile'] = deepcopy(profile)
+    return state
 
 
 def validateState(state):
@@ -32,6 +39,10 @@ def validateState(state):
         return False
     if type(state.get("runtimeMovement", wire.CLIENT_RUNTIME_MOVEMENT)) is not bool or not settlement.validState(state):
         return False
+    if 'playerProfile' in state and not player_profile.validate(state['playerProfile']):
+        return False
+    if 'matchedProfile' in state and not player_profile.validate(state['matchedProfile']):
+        return False
     return all(type(key) is str and type(session) is dict
                and session.get("role") in ("login", "logic", "instance")
                and type(session.get("hydration")) is list
@@ -40,6 +51,7 @@ def validateState(state):
                and roster.validState(session)
                and combat.validState(session)
                and weapons.validState(session)
+               and ('loadoutProfile' not in session or player_profile.validate(session['loadoutProfile']))
                and all(battle.validAction(data) for data in (session, *actors.bots(session).values()))
                and player_life.validState(session)
                and battle_clock.validState(session)
@@ -226,6 +238,8 @@ def handleMessage(flow, event):
             flow.session["unifyAt"] = flow.now
         return
     if scene.message(flow, command, selector, body):
+        return
+    if loadouts.message(flow, command, selector, body):
         return
     if controls.message(flow, command, selector, body):
         return

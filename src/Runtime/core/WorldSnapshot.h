@@ -56,4 +56,8 @@ struct WorldSnapshot {
     uint32_t contactFrames = 0, droppedContacts = 0, contactBatchId = 0;
     std::vector<BladeContactEvent> contacts{};
 };
+struct PublishedWorld {
+    uint64_t version = 0;
+    WorldSnapshot snapshot;
+};
 }

@@ -6,6 +6,7 @@
 #include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
 #include "MovementAnimationFixture.h"
+#include "CombatProfileFixture.h"
 #include "MovementPoseFixture.h"
 #include "MovementCommandFixture.h"
 #include "JumpPhysicsFixture.h"
@@ -209,7 +210,7 @@ uint32_t readAudio(t7::AudioSettings& audio, t7::AudioValues& values, bool expec
     require(applied == expectApplied, "audio completion command mismatch"); return result;
 }
 }
-bool verifyGraphicsHookExecution() {
+bool verifyGraphicsHookExecution(bool combatOnly) {
     const auto directory = t7::fs::temp_directory_path() / (L"t7-graphics-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     t7::DebugClient client; t7::GraphicsSettings graphics;
     try {
@@ -288,6 +289,15 @@ bool verifyGraphicsHookExecution() {
         });
         t7::GraphicsValues values;
         require(readCompleted(graphics, values, false) == 1 && values.viewDistance == 159 && values.swoosh == 0, "graphics initial snapshot/default");
+        if (combatOnly) {
+            const auto entry = BASE + t7::GRAPHICS_TICK_RVA + 5 + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
+            combatProfileFixture::verify(client.process(), readWord(client.process(), entry + 10) - t7::WORLD_CODE_OFFSET);
+            client.check(); client.stop(); graphics.clear();
+            require(t7::fs::canonical(directory).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()), "combat fixture cleanup boundary");
+            t7::fs::remove_all(directory);
+            std::cout << "x86 hero/weapon-selected movement and dash profiles passed\n";
+            return true;
+        }
         require(readWord(client.process(), STATS + 60) == ADAPTER_ORDINAL && readWord(client.process(), STATS + 64) == ADAPTER_ORDINAL,
             "x86 renderer and resolution hooks selected different adapters");
         require(readWord(client.process(), STATS + 68) == readWord(client.process(), STATS + 72), "output device hooks changed ESP");
@@ -374,6 +384,8 @@ bool verifyGraphicsHookExecution() {
         require(readCompleted(graphics, values, true) == 0, "failed display reset was acknowledged as applied");
         require(readCompleted(graphics, values, false) == 1 && values.fullScreen == 1,
             "failed reset hid the effective fullscreen state");
+        combatProfileFixture::verify(client.process(), worldMailbox);
+        std::cout << "x86 hero/weapon-selected movement and dash profiles, unknown-key isolation passed\n";
         writeWord(client.process(), RENDERER + 0x11C, 0);
         require(readCompleted(graphics, values, false) == 0, "missing rendering device reported graphics ready");
         client.check(); client.stop(); graphics.clear();

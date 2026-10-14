@@ -2,7 +2,7 @@ import pytest
 
 from Business.scripts.navigation import NavMesh
 from Business.scripts.navmesh_resource import TagReader
-from vfs_fixture import NAV_PATH, archiveBytes, syntheticTagfile, vint
+from vfs_fixture import NAV_PATH, archiveBytes, staticMapData, syntheticTagfile, vint
 
 
 def mesh():
@@ -133,23 +133,24 @@ def clientNavigation(tmp_path, monkeypatch):
 def test_resource_reader_never_writes_selected_client(clientNavigation, monkeypatch):
     from Business.scripts import navmesh_resource as resource
     directory, archive, packed = clientNavigation
-    try:
-        assert resource.loadNavigation(str(directory)).findPath((1, 1, 0), (7, 1, 0)).status == "ready"
-        assert archive.read_bytes() == packed
-        resource.loadNavigation.cache_clear()
-        monkeypatch.setattr(resource, "NAV_HASH", "0" * 64)
-        with pytest.raises(ValueError, match="supported client"):
-            resource.loadNavigation(str(directory))
-    finally:
-        resource.loadNavigation.cache_clear()
+    nav = NavMesh.fromResource(resource.readNavigationResource(str(directory)))
+    assert nav.findPath((1, 1, 0), (7, 1, 0)).status == "ready"
+    assert archive.read_bytes() == packed
+    monkeypatch.setattr(resource, "NAV_HASH", "0" * 64)
+    with pytest.raises(ValueError, match="supported client"):
+        resource.readNavigationResource(str(directory))
 
 
-def test_bot_loads_navigation_from_executable_directory_and_starts_moving(clientNavigation):
-    from Business.scripts import bot
+def test_bot_loads_static_navigation_without_client_directory_and_starts_moving(monkeypatch, request):
+    from Business.scripts import bot, map_navigation_data, navmesh_resource, vfs_resource
     from test_bot_player import flowAt, snapshot, tick
-    directory, _, _ = clientNavigation
+    for key, value in staticMapData()['map_navigation_data.py'].items():
+        monkeypatch.setattr(map_navigation_data, key, value)
+    navmesh_resource.loadNavigation.cache_clear()
+    request.addfinalizer(navmesh_resource.loadNavigation.cache_clear)
+    monkeypatch.setattr(vfs_resource, 'readEntry', lambda *args: pytest.fail('unexpected client read'))
     flow = flowAt()
-    flow.context["clientDirectory"] = str(directory)
+    flow.context.pop('clientDirectory', None)
     flow.session["bot"]["position"] = [1., 1., 0.]
     snapshot(flow, player=(7., 1., 0.))
     tick(flow)

@@ -29,6 +29,11 @@ struct MovementAnimationProfile {
     int32_t weaponId = 0;
     float forwardSlow = 0, lateralSlow = 0, backwardSlow = 0, forwardSprint = 0;
 };
+struct CombatProfile {
+    int32_t heroId = 0;
+    MovementAnimationProfile movement;
+    DashAttackProfile dash;
+};
 struct Config {
     std::string bindAddress = "127.0.0.1", advertisedAddress = "127.0.0.1";
     std::string playerName = u8"新玩家";
@@ -40,6 +45,8 @@ struct Config {
     // Startup resource snapshot shared by business timing and native movement.
     DashAttackProfile dashAttack;
     MovementAnimationProfile movementAnimation;
+    std::vector<CombatProfile> combatProfiles;
+    fs::path playerProfilePath;
     // The embedded business layer accepts local movement reports only after
     // the launcher has installed the memory-only client overlay.
     bool runtimeMovement = true;

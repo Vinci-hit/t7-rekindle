@@ -104,10 +104,10 @@ def settle(flow):
                     or occurredAt < defender.get('contactLifeAt', 0)):
                 continue
             snapshot = pair(raw, event)
-            guard = next((key for key, chain in battle.BLOCK_CHAINS.items() if chain[1] == event['targetState']), None)
-            if guard is not None and combat.parry(flow, attacker, target, snapshot, contact=event,
-                                                 attackIntent=intent, defenceIntent=guard, dash=swing.get('dash'),
-                                                 weaponId=swing.get('weaponId')):
+            guard = next((key for key, chain in battle.GUARD_CHAINS.items() if chain[1] == event['targetState']), None)
+            if combat.parry(flow, attacker, target, snapshot, contact=event,
+                            attackIntent=intent, defenceIntent=guard or 0, dash=swing.get('dash'),
+                            weaponId=swing.get('weaponId')):
                 swing['stopped'] = True
             else:
                 swing['hits'] = [*swing['hits'], target]

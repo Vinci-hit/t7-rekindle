@@ -2,7 +2,7 @@
 import struct
 
 from . import actors, roster, contracts as wire, controls, battle, bot, combat, player_life
-from . import battle_clock, settlement
+from . import battle_clock, settlement, loadouts
 from .codec import battle_flow, kill_flow, leave_flow, login_flow, room_flow, vision_flow
 
 END_HOLD_MS = 5000
@@ -30,6 +30,7 @@ def begin(flow):
     flow.session["groundEnabled"] = False
     if controls.runtimeMovement(flow):
         roster.assemble(flow)
+    loadouts.begin(flow)
     flow.phase("instance-data-sent")
     flow.later("instance-game-info", 200)
     flow.later("time-sync", 2000)
@@ -256,7 +257,8 @@ def message(flow, command, selector, body):
         camp = flow.session["camp"]
         flow.send(0x23, struct.pack(">Hi", 4, 0), "instance-camp-choose-ok-result-zero")
         flow.send(0xE, roster.playerVision(flow), "instance-fixed-local-actor-vision-add-before-basic-info")
-        flow.send(0xA, wire.actorInfo(flow.now, camp, flow.playerName), "instance-fixed-local-actor-after-camp-choice")
+        flow.send(0xA, wire.actorInfo(flow.now, camp, flow.playerName, flow.session.get('heroId', wire.HERO_ID)),
+                  "instance-fixed-local-actor-after-camp-choice")
         flow.send(0x23, wire.campExchange(flow.now, camp), "instance-camp-exchange-notify")
         combat.publishScore(flow, wire.ACTOR_ID)
         for key in actors.bots(flow.session):
@@ -286,6 +288,8 @@ def message(flow, command, selector, body):
             controls.activate(flow)
     elif command == 0x29 and selector == 0x65:
         container, sequence = login_flow.decode_item_container_request(b"\0\1" + body[2:])
+        if container == 2 and loadouts.syncInstance(flow, sequence):
+            return True
         response = (wire.battleHeroes(sequence, controls.runtimeMovement(flow))
                     if container == 2 else b"\0\x66" + login_flow.encode_empty_item_container_response(
                         container, sequence)[2:])
@@ -304,7 +308,8 @@ def message(flow, command, selector, body):
             flow.phase("prepare-sent")
     elif command == 0x36 and selector == 0x32:
         position = room_flow.decode_actor_choose_hero_request(body)
-        if not 1 <= position <= len(wire.heroIds(controls.runtimeMovement(flow))):
+        heroes = flow.session.get('loadoutProfile', {}).get('formation', wire.heroIds(controls.runtimeMovement(flow)))
+        if not 1 <= position <= len(heroes):
             raise ValueError("fixed scene exposes the available hero slots")
         if not flow.session.get("loaded"):
             raise ValueError("choose-hero precedes actor-load-ok")
@@ -312,7 +317,8 @@ def message(flow, command, selector, body):
             flow.send(0x36, room_flow.encode_actor_choose_hero_response(result=1), 'player-choose-not-ready')
             return True
         flow.session["heroChosen"] = True
-        flow.session["heroId"] = wire.heroIds(controls.runtimeMovement(flow))[position - 1]
+        if not loadouts.select(flow, position):
+            flow.session['heroId'] = heroes[position - 1]
         flow.send(0x36, room_flow.encode_actor_choose_hero_response(), "actor-choose-hero-result-zero")
         flow.send(0x36, room_flow.encode_actor_choose_hero_message(
             server_time_ms=flow.now, actor_mid=1, hero_resource_id=flow.session["heroId"],

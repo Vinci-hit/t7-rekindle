@@ -11,7 +11,7 @@ inline const Bytes MOVEMENT_POSE_ORIGINAL{0xFF,0x70,0x04,0x8B,0xCE};
 inline const Bytes DEFENSE_EXIT_ORIGINAL{0xFF,0x74,0x24,8,0xFF,0x74,0x24,8};
 void verifyMovementAnimationFunction(HANDLE process, uint32_t imageBase);
 Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
-                                 const MovementAnimationProfile& profile);
+                                 const MovementAnimationProfile& profile, bool dynamicProfiles = false);
 Bytes movementAnimationJump(uint32_t address, uint32_t imageBase);
 Bytes movementPoseJump(uint32_t address, uint32_t imageBase);
 Bytes defenseExitJump(uint32_t address, uint32_t imageBase);

@@ -1,7 +1,5 @@
 """One actor per initial infantry spawn, with the first own-camp point reserved."""
-import struct
-
-from . import actors, body_collision, bot, bot_names, bot_profiles, combat, contracts as wire, controls
+from . import actors, body_collision, bot, bot_names, bot_profiles, combat, contracts as wire, controls, weapons
 from .bot_names import loadNames
 from .spawn_resource import loadRespawns, loadSpawns
 
@@ -38,11 +36,12 @@ def assemble(flow):
 def playerVision(flow):
     ground = flow.session.get("ground", {})
     position = ground.get("position") or flow.session.get("spawnPosition", wire.POSITION)
-    body = wire.actorVision(flow.session.get("camp", 1), flow.session.get("heroId", wire.HERO_ID), flow.playerName,
+    return wire.actorVision(flow.session.get("camp", 1), flow.session.get("heroId", wire.HERO_ID), flow.playerName,
                             runtimeMovement=controls.runtimeMovement(flow), position=tuple(position),
-                            currentHp=flow.session.get("health", 100))
-    heading = ground.get("heading", flow.session.get("spawnHeading", 0))
-    return body[:45] + struct.pack(">h", heading) + body[47:]
+                            currentHp=flow.session.get("health", 100),
+                            heading=ground.get("heading", flow.session.get("spawnHeading", 0)),
+                            equipment=weapons.inventory(flow.session) if 'equipment' in flow.session else None,
+                            weaponId=weapons.equipped(flow.session), offhandId=flow.session.get('offhandId', 0))
 
 
 def validState(session):

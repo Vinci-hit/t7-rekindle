@@ -19,3 +19,9 @@ EXPORTS
     t7_native_apply_audio
     t7_native_set_output_device
     t7_native_set_log_level
+    t7_battle_host_create
+    t7_battle_host_start
+    t7_battle_host_stop
+    t7_battle_host_snapshot
+    t7_battle_host_error
+    t7_battle_host_release

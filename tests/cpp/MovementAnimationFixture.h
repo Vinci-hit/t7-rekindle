@@ -10,7 +10,19 @@ constexpr uint32_t DATA = BASE + 0xF000, DISPATCH = BASE + 0xF100;
 constexpr uint32_t VELOCITY = DATA + 4, WRITES = DATA + 8, VARIABLE = DATA + 12, ACTIVE = DATA + 16;
 constexpr uint32_t TURN_REQUEST = DATA + 20, HEADING = DATA + 24, LAST_HEADING = DATA + 28;
 constexpr uint32_t TURNING = DATA + 32, TURN_UPDATE = BASE + 0xF600, TURN_VARIABLE = 456;
+constexpr uint32_t WORKER = BASE + 0xF800;
 inline t7::MovementAnimationProfile profile() { return {true, 1030411, 2.25f, 1.75f, .75f, 4.25f}; }
+inline void runWorker(HANDLE process, uint32_t dispatch) {
+    t7::WorldHookCode c;
+    c.call(dispatch); c.emit({0x33,0xC0,0xC2,4,0});
+    t7::writeClientMemory(process, WORKER, c.bytes);
+    const auto thread = CreateRemoteThread(process, nullptr, 0,
+        reinterpret_cast<LPTHREAD_START_ROUTINE>(static_cast<uintptr_t>(WORKER)), nullptr, 0, nullptr);
+    if (!thread) throw std::runtime_error(t7::errorText("animation fixture worker"));
+    const auto result = WaitForSingleObject(thread, 3000);
+    CloseHandle(thread);
+    if (result != WAIT_OBJECT_0) throw std::runtime_error("animation fixture worker timeout");
+}
 inline void writeFloat(HANDLE process, uint32_t address, float value) {
     uint32_t bits; std::memcpy(&bits, &value, 4); writeWord(process, address, bits);
 }
@@ -172,12 +184,47 @@ inline void verify(HANDLE process, uint32_t mailbox) {
     writeWord(process, KEYS, 1); setFightState(process, 237); frame(3, 3, 3);
     setFightState(process, 439, tick); frame(3, static_cast<float>(sprintFixture::profile().speedMilli) / 1000.f, 3);
     setFightState(process, 2, tick); frame(3, 3, config.forwardSlow);
-    writeWord(process, MOVABLE + 0x20, 1); frame(3, 3, 3); writeWord(process, MOVABLE + 0x20, 0);
+    for (uint32_t flags : {1u,0x10000u,0x10001u}) {
+        writeWord(process, MOVABLE + 0x20, flags);
+        frame(3, 3, flags == 0x10001 ? 3 : config.forwardSlow);
+    }
+    writeWord(process, MOVABLE + 0x20, 0);
     writeWord(process, MOVABLE + 8, worldFixture::ENTITY + 0x100); frame(3, 3, 3);
     writeWord(process, MOVABLE + 8, worldFixture::ENTITY);
     writeWord(process, FIGHT + 0x98, 100000); frame(3, 3, 3);
     writeWord(process, FIGHT + 0x98, static_cast<uint32_t>(config.weaponId)); frame(3, 3, config.forwardSlow);
-    if (readWord(process, ANIMATION_EVENTS) != eventCount) throw std::runtime_error("gait mapping sent an animation event");
+    auto workerFrame = [&](float velocity, float physical, float animation) {
+        frame(velocity, physical, animation);
+        const auto events = readWord(process, ANIMATION_EVENTS);
+        writeFloat(process, MOVABLE + 0x5C, -1);
+        writeFloat(process, ANIMATION + 0x34, -1);
+        runWorker(process, DISPATCH);
+        if (readFloat(process, worldFixture::CONTROLLER + 0x24) != physical
+            || std::abs(readFloat(process, ANIMATION + 0x34) - animation) > .00001f
+            || readFloat(process, MOVABLE + 0x5C) != readFloat(process, ANIMATION + 0x34)
+            || readWord(process, ANIMATION_EVENTS) != events)
+            throw std::runtime_error("animation worker skipped gait mapping or changed physical speed");
+    };
+    setFightState(process, 308, tick); workerFrame(5, 3, config.forwardSlow);
+    setFightState(process, 224, tick); workerFrame(3, 3, config.forwardSlow);
+    setFightState(process, 2, tick); workerFrame(3, 3, config.forwardSlow);
+    tick += 999; workerFrame(3, 3, config.forwardSlow);
+    ++tick; workerFrame(3, 5, config.forwardSlow); workerFrame(5, 5, config.forwardSprint);
+    setFightState(process, 237, tick); workerFrame(3, 3, 3);
+    setFightState(process, 2, tick); writeWord(process, KEYS, 17); workerFrame(3, 3, 3);
+    writeWord(process, KEYS, 1);
+    for (uint32_t flags : {1u,0x10000u,0x10001u}) {
+        writeWord(process, MOVABLE + 0x20, flags);
+        workerFrame(3, 3, flags == 0x10001 ? 3 : config.forwardSlow);
+    }
+    writeWord(process, MOVABLE + 0x20, 0);
+    writeWord(process, MOVABLE + 8, worldFixture::ENTITY + 0x100); workerFrame(3, 3, 3);
+    writeWord(process, MOVABLE + 8, worldFixture::ENTITY);
+    writeWord(process, FIGHT + 0x98, 100000); workerFrame(3, 3, 3);
+    writeWord(process, FIGHT + 0x98, static_cast<uint32_t>(config.weaponId));
+    // The two physical-jump cases retain their native Jump/EndJump pairs.
+    if (readWord(process, ANIMATION_EVENTS) != eventCount + 4)
+        throw std::runtime_error("gait mapping changed native animation event count");
     writeWord(process, DATA, 0); writeWord(process, KEYS, 0); writeWord(process, CLOCK_MODE, 0);
     writeWord(process, worldFixture::FRAME_GATE, 0);
 }

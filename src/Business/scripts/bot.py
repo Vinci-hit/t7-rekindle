@@ -74,7 +74,7 @@ def refresh(flow, actorId=wire.BOT_ID):
         fields = dict(
             instance_id=actorId, seq_no=action["seq"], state=action["state"],
             state_change_ms=action["changedAt"] - flow.session["instanceStartedAt"],
-            state_time_ms=min(65535, max(0, flow.now - action["changedAt"])))
+            state_time_ms=action.get('durationMs', 0))
         body = (battle_flow.encode_battle_state_sync(**fields, target_rid=action["targetId"])
                 if "targetId" in action else battle_flow.encode_battle_state_sync_simple(**fields))
         flow.send(battle_flow.BATTLE_COMMAND, body, "bot-action-snapshot")
@@ -106,10 +106,7 @@ def validPosition(value):
 
 
 def navigationFor(flow):
-    directory = flow.context.get("clientDirectory")
-    if not directory:
-        raise ValueError("selected client navigation resource is unavailable")
-    return loadNavigation(directory)
+    return loadNavigation(flow.context.get('clientDirectory', ''))
 
 
 def world(flow, actorId=wire.BOT_ID, nav=None):

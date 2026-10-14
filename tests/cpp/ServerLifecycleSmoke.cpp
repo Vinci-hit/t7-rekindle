@@ -12,6 +12,7 @@
 
 bool verifyJournalContracts(const t7::fs::path& fixtureRoot);
 bool verifyServerEventOrder(const t7::fs::path& fixtureRoot);
+bool verifyServerContext(const t7::fs::path& fixtureRoot);
 bool verifyServerAudioDiagnostics();
 bool verifyDiagnosticLogs(const t7::fs::path& fixtureRoot);
 bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel);
@@ -20,7 +21,7 @@ bool verifyWindowCloseCleanup(const t7::fs::path& packageRoot, bool failCleanup)
 bool verifyOperationPublication(const t7::fs::path& packageRoot, uint32_t expectedStatus);
 bool verifyMovementOverlay();
 bool verifyMovementHookExecution();
-bool verifyGraphicsHookExecution();
+bool verifyGraphicsHookExecution(bool combatOnly = false);
 bool verifyGraphicsSession(const t7::fs::path& packageRoot);
 bool verifyResourcePreflight(const t7::fs::path& packageRoot);
 bool verifyAudioSession(const t7::fs::path& packageRoot);
@@ -310,6 +311,8 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 3 && std::wstring(argv[1]) == L"--server-context")
+        return verifyServerContext(argv[2]) && verifyServerEventOrder(argv[2]) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--audio-notifications") return verifyServerAudioDiagnostics() ? 0 : 1;
     const auto dispatched = t7::detail::TimePoint{};
     const auto committed = dispatched + std::chrono::milliseconds(231);
@@ -340,6 +343,10 @@ int wmain(int argc, wchar_t** argv) {
         return verifyAudioSession(t7::fs::path(argv[2])) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
         return verifyGraphicsHookExecution() ? 0 : 1;
+    if (argc == 2 && std::wstring(argv[1]) == L"--combat-profiles")
+        return verifyGraphicsHookExecution(true) ? 0 : 1;
+    if (argc == 3 && std::wstring(argv[1]) == L"--resource-preflight")
+        return verifyResourcePreflight(argv[2]) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")
         return verifyMovementOverlay() && verifyMovementHookExecution() ? 0 : 1;
     if (argc != 2) {
@@ -351,6 +358,7 @@ int wmain(int argc, wchar_t** argv) {
     int result = 0;
     try {
         if (!verifyServerEventOrder(t7::fs::path(argv[1]))) result = 42;
+        if (!verifyServerContext(t7::fs::path(argv[1]))) result = 45;
         if (!verifyServerAudioDiagnostics()) result = 44;
         if (!verifyFakeBootstrapAdapter()) result = 21;
         if (!verifyJobAssignmentOrder()) result = 15;

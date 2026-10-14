@@ -233,7 +233,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
             startupGate_.install(process, static_cast<uint32_t>(base));
             movementOverlay_.install(process, base, log, config.skipStartupAnimation);
             graphicsSettings_.install(process, static_cast<uint32_t>(base), GetThreadId(thread),
-                                      config.dashAttack, config.movementAnimation);
+                                      config.dashAttack, config.movementAnimation, config.combatProfiles);
             if (log) log(DiagnosticLogLevel::Debug, "Client code, imports, TP paths and movement adapted before first ResumeThread; disk binaries unchanged");
         }, log, cancelled, {{fs::absolute(directory / "TieJiWebHelper.exe"), WEB_HELPER_HASH}},
         [this](DWORD threadId, uintptr_t address) {

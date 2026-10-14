@@ -2,6 +2,7 @@
 #include "RemoteImage.h"
 #include "SprintHookCode.h"
 #include "WorldHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <cmath>
 
 namespace t7 {
@@ -39,13 +40,13 @@ Bytes defenseExitJump(uint32_t address, uint32_t imageBase) {
     c.bytes.resize(DEFENSE_EXIT_ORIGINAL.size(), 0x90);
     return c.bytes;
 }
-Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t threadId,
-                                 const MovementAnimationProfile& profile) {
-    if (!profile.enabled) return {};
-    if (profile.weaponId <= 0) throw std::runtime_error("invalid movement animation weapon");
+Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t,
+                                 const MovementAnimationProfile& profile, bool dynamicProfiles) {
+    if (!profile.enabled && !dynamicProfiles) return {};
+    if (!dynamicProfiles && profile.weaponId <= 0) throw std::runtime_error("invalid movement animation weapon");
     for (float value : {profile.forwardSlow, profile.lateralSlow, profile.backwardSlow, profile.forwardSprint})
-        if (!std::isfinite(value) || value <= 0) throw std::runtime_error("invalid movement animation profile");
-    if (profile.forwardSprint <= profile.forwardSlow || profile.forwardSprint <= profile.lateralSlow)
+        if (!dynamicProfiles && (!std::isfinite(value) || value <= 0)) throw std::runtime_error("invalid movement animation profile");
+    if (!dynamicProfiles && (profile.forwardSprint <= profile.forwardSlow || profile.forwardSprint <= profile.lateralSlow))
         throw std::runtime_error("invalid movement animation gait order");
     const auto code = address + MOVEMENT_ANIMATION_CODE_OFFSET, data = address + SPRINT_DATA_OFFSET;
     const auto constants = code + CONSTANTS_OFFSET;
@@ -55,11 +56,17 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
     std::vector<size_t> native;
-    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
+    auto skipPhysicalJump = [&](unsigned char movable) {
+        // Loss of ground contact alone still uses locomotion, not the native jump pose.
+        c.emit({0x80,movable,0x20,0}); const auto grounded = c.branch(0x84);
+        c.emit({0x80,movable,0x22,0}); native.push_back(c.branch(0x85));
+        c.bind(grounded);
+    };
+    // Native animation jobs may run on workers. Scope every hook by the current entity/model, not the startup thread.
     c.emit({0x8B,0x46,8,0x85,0xC0}); native.push_back(c.branch(0x84));
     c.emit({0x3B,0x05}); c.word(data + 8); native.push_back(c.branch(0x85));
     c.emit({0x83,0x3D}); c.word(data + 28); c.emit({4}); native.push_back(c.branch(0x85));
-    c.emit({0x80,0x7E,0x20,0}); native.push_back(c.branch(0x85));
+    skipPhysicalJump(0x7E);
     auto component = [&](uint32_t name, uint32_t table) {
         c.emit({0x8B,0x4E,8,0x68}); c.word(imageBase + name); c.call(imageBase + 0x26A1C0);
         c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
@@ -70,21 +77,40 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x8B,0x40,0x54,0x85,0xC0}); native.push_back(c.branch(0x84));
     c.emit({0xF6,0x00,0x10}); native.push_back(c.branch(0x85)); // Crouch retains its native graph coordinates.
     component(0x1783860, 0x178380C);
-    c.emit({0x81,0xB8}); c.word(0x98); c.word(static_cast<uint32_t>(profile.weaponId));
-    native.push_back(c.branch(0x85)); // Sheathing or switching weapons must not borrow this character's coordinates.
-    c.emit({0x8B,0x58,0x38,0x83,0xFB,2}); const auto idle = c.branch(0x84);
+    c.emit({0x8B,0x58,0x38});
+    if (dynamicProfiles) {
+        c.emit({0x8B,0x90}); c.word(0x98); c.emit({0x8B,0x4E,8});
+        c.call(address + COMBAT_PROFILE_CODE_OFFSET);
+        c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+        c.emit({0x89,0x84,0x24}); c.word(0x204);
+    } else {
+        c.emit({0x81,0xB8}); c.word(0x98); c.word(static_cast<uint32_t>(profile.weaponId));
+        native.push_back(c.branch(0x85));
+    }
+    c.emit({0x83,0xFB,2}); const auto idle = c.branch(0x84);
+    std::vector<size_t> shield;
+    if (dynamicProfiles) for (uint32_t state : {95u, 309u}) {
+        c.emit({0x81,0xFB}); c.word(state); shield.push_back(c.branch(0x84));
+    }
     c.emit({0x8D,0x83}); c.word(static_cast<uint32_t>(-223));
     c.emit({0x83,0xF8,3}); const auto holding = c.branch(0x86);
     c.emit({0x8D,0x83}); c.word(static_cast<uint32_t>(-305));
     c.emit({0x83,0xF8,3}); native.push_back(c.branch(0x87));
     c.bind(idle); c.bind(holding);
+    for (auto branch : shield) c.bind(branch);
     c.emit({0x8B,0x46,0x60,0x8D,0x50,0xFF,0x83,0xFA,7}); native.push_back(c.branch(0x87));
     c.emit({0x33,0xFF}); // EDI selects established running, independently of physical velocity.
-    c.emit({0xBA}); c.word(constants + 16); // Forward diagonals share the lateral Slow property.
+    auto coordinate = [&](uint32_t offset) {
+        if (dynamicProfiles) {
+            c.emit({0x8B,0x94,0x24}); c.word(0x204);
+            c.emit({0x83,0xC2,static_cast<unsigned char>(offset - 4)});
+        } else { c.emit({0xBA}); c.word(constants + offset); }
+    };
+    coordinate(16); // Forward diagonals share the lateral Slow property.
     c.emit({0x83,0xF8,1}); const auto notForward = c.branch(0x85);
-    c.emit({0xBA}); c.word(constants + 12); c.bind(notForward);
+    coordinate(12); c.bind(notForward);
     c.emit({0x8D,0x48,0xFC,0x83,0xF9,2}); const auto notBackward = c.branch(0x87);
-    c.emit({0xBA}); c.word(constants + 20); c.bind(notBackward);
+    coordinate(20); c.bind(notBackward);
     std::vector<size_t> slow;
     c.emit({0x83,0xFB,2}); slow.push_back(c.branch(0x85));
     c.emit({0x83,0x3D}); c.word(data + 16); c.emit({2}); slow.push_back(c.branch(0x85));
@@ -108,7 +134,9 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0xF3,0x0F,0x5C,0x05}); c.word(constants + 4);
     c.emit({0xF3,0x0F,0x5E,0x05}); c.word(constants + 8);
     c.emit({0xF3,0x0F,0x5D,0x05}); c.word(constants + 28);
-    c.emit({0xF3,0x0F,0x10,0x0D}); c.word(constants + 24);
+    if (dynamicProfiles) {
+        c.emit({0x8B,0x8C,0x24}); c.word(0x204); c.emit({0xF3,0x0F,0x10,0x49,20});
+    } else { c.emit({0xF3,0x0F,0x10,0x0D}); c.word(constants + 24); }
     c.emit({0xF3,0x0F,0x5C,0x0B,0xF3,0x0F,0x59,0xC1,0xF3,0x0F,0x58,0x03});
     const auto mapped = c.jump(); c.bind(slowGait); c.bind(slowVelocity);
     // Old running velocity is capped immediately when defense selects Slow.
@@ -131,7 +159,6 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
     native.clear();
-    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
     // The native modifier still sees Parry nodes while the upper layer fades out.
     // Once defense has ended, select ordinary locomotion through its existing writer.
     c.emit({0x83,0x7E,0x18,5}); native.push_back(c.branch(0x82));
@@ -147,16 +174,25 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
         c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
         c.emit({0x81,0x38}); c.word(imageBase + table); native.push_back(c.branch(0x85));
     };
+    auto poseProfile = [&] {
+        if (dynamicProfiles) {
+            c.emit({0x8B,0x90}); c.word(0x98); c.emit({0x8B,0x0D}); c.word(data + 8);
+            c.call(address + COMBAT_PROFILE_CODE_OFFSET);
+            c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+        } else {
+            c.emit({0x81,0xB8}); c.word(0x98); c.word(static_cast<uint32_t>(profile.weaponId));
+            native.push_back(c.branch(0x85));
+        }
+    };
     poseComponent(0x177867C, 0x17784E4);
-    c.emit({0x80,0x78,0x20,0}); native.push_back(c.branch(0x85));
+    skipPhysicalJump(0x78);
     c.emit({0x8B,0x48,0x60,0x49,0x83,0xF9,7}); native.push_back(c.branch(0x87));
     c.emit({0x8B,0x48,0x58,0x85,0xC9}); native.push_back(c.branch(0x84));
     c.emit({0x81,0x39}); c.word(imageBase + 0x177722C); native.push_back(c.branch(0x85));
     c.emit({0x39,0x79,0x30}); native.push_back(c.branch(0x85)); // EDI is this modifier's model.
     poseComponent(0x1783860, 0x178380C);
     c.emit({0x83,0x78,0x38,2}); native.push_back(c.branch(0x85));
-    c.emit({0x81,0xB8}); c.word(0x98); c.word(static_cast<uint32_t>(profile.weaponId));
-    native.push_back(c.branch(0x85));
+    poseProfile();
     poseComponent(0x178692C, 0x17868BC);
     c.emit({0x83,0x78,0x60,6}); native.push_back(c.branch(0x82));
     c.emit({0x8B,0x40,0x54,0x85,0xC0}); native.push_back(c.branch(0x84));
@@ -170,7 +206,6 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
     native.clear();
-    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
     // Idle must still reach Layer; only Action's Parry -> Idle transition is suppressed.
     // The existing layer fade then blends the defense pose directly into locomotion.
     c.emit({0x83,0x7D,0x2C,3}); native.push_back(c.branch(0x85));
@@ -201,7 +236,7 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x8B,0xC8}); c.call(imageBase + 0x64C9D0);
     c.emit({0x84,0xC0}); native.push_back(c.branch(0x85));
     poseComponent(0x177867C, 0x17784E4);
-    c.emit({0x80,0x78,0x20,0}); native.push_back(c.branch(0x85));
+    skipPhysicalJump(0x78);
     c.emit({0x8B,0x48,0x60,0x49,0x83,0xF9,7}); native.push_back(c.branch(0x87));
     c.emit({0x8B,0x48,0x58,0x85,0xC9}); native.push_back(c.branch(0x84));
     c.emit({0x81,0x39}); c.word(imageBase + 0x177722C); native.push_back(c.branch(0x85));
@@ -215,8 +250,7 @@ Bytes buildMovementAnimationHook(uint32_t address, uint32_t imageBase, uint32_t 
     c.emit({0x83,0x3D}); c.word(imageBase + 0x2D37938); c.emit({0}); native.push_back(c.branch(0x8C));
     poseComponent(0x1783860, 0x178380C);
     c.emit({0x83,0x78,0x38,2}); native.push_back(c.branch(0x85));
-    c.emit({0x81,0xB8}); c.word(0x98); c.word(static_cast<uint32_t>(profile.weaponId));
-    native.push_back(c.branch(0x85));
+    poseProfile();
     poseComponent(0x178692C, 0x17868BC);
     c.emit({0x83,0x78,0x60,6}); native.push_back(c.branch(0x82));
     c.emit({0x8B,0x40,0x54,0x85,0xC0}); native.push_back(c.branch(0x84));
