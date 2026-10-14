@@ -122,6 +122,7 @@ Object contactJournal(const WorldSnapshot& world) {
         put(value.get(), "targetPhaseAt", PyLong_FromUnsignedLongLong(event.targetPhaseAt));
         put(value.get(), "occurredAt", PyFloat_FromDouble(event.occurredAt));
         put(value.get(), "along", PyFloat_FromDouble(event.hit.along));
+        put(value.get(), "weaponContact", PyBool_FromLong(event.weaponContact));
         put(value.get(), "sourcePosition", Py_BuildValue("[fff]", event.sourcePosition[0], event.sourcePosition[1], event.sourcePosition[2]));
         put(value.get(), "targetPosition", Py_BuildValue("[fff]", event.targetPosition[0], event.targetPosition[1], event.targetPosition[2]));
         put(value.get(), "sourceHeading", PyFloat_FromDouble(event.sourceHeading));

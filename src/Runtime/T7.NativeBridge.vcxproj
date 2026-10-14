@@ -49,6 +49,7 @@
     <ClCompile Include="launcher\AudioPlaybackHookCode.cpp" />
     <ClCompile Include="launcher\AudioHookCode.cpp" />
     <ClCompile Include="launcher\ClientWorld.cpp" />
+    <ClCompile Include="launcher\BladeParryContacts.cpp" />
     <ClCompile Include="launcher\WorldHookCode.cpp" />
     <ClCompile Include="launcher\SprintHookCode.cpp" />
     <ClCompile Include="launcher\MovementAnimationHookCode.cpp" />

@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 #include "../core/WorldSnapshot.h"
+#include "BladeParryContacts.h"
 
 namespace t7 {
 struct TerrainMailbox {
@@ -98,5 +99,6 @@ private:
     bool pending_ = false;
     std::array<uint32_t, MAX_WORLD_ACTORS> targets_{};
     std::array<uint32_t, MAX_WORLD_ACTORS> targetMasks_{};
+    BladeParryContacts parryContacts_;
 };
 }
