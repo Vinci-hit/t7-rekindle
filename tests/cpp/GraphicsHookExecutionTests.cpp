@@ -366,6 +366,16 @@ bool verifyGraphicsHookExecution() {
         audio.apply(sound);
         require(readAudio(audio, actual, true) == 2 && actual.effectsVolume == 1
             && readWord(client.process(), STATS + 32) == 2, "stale audio write overwrote game changes");
+        writeWord(client.process(), BANK_RESULT, 1); completeBanks(400);
+        require(readWord(client.process(), BANK_COUNT) == 24
+            && std::all_of(banks.begin(), banks.end(), [](uint32_t value) { return value == 1; }),
+            "audio settings cancelled subsequent combat bank loads");
+        for (uint32_t i = 0; i < banks.size(); ++i) {
+            const auto name = readWord(client.process(), BANK_NAMES + i * 4);
+            const auto bytes = t7::readClientMemory(client.process(), name, std::strlen(t7::COMBAT_AUDIO_BANKS[i]) + 1);
+            require(std::memcmp(bytes.data(), t7::COMBAT_AUDIO_BANKS[i], bytes.size()) == 0,
+                "audio settings erased combat bank filenames");
+        }
         const auto graphicsEntry = BASE + t7::GRAPHICS_TICK_RVA + 5
             + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
         const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;

@@ -16,12 +16,14 @@ std::string describeAudioValues(const AudioValues& values);
 constexpr uint32_t AUDIO_CODE_OFFSET = 0x1000, AUDIO_PAGE_SIZE = 0x2000;
 constexpr uint32_t AUDIO_MUSIC_RVA = 0x6ECB20, AUDIO_EFFECTS_RVA = 0x6ECAD0;
 constexpr uint32_t AUDIO_ROOT_OFFSET = 0x800, AUDIO_ROOT_INIT_RVA = 0x3E5FDD;
-constexpr uint32_t COMBAT_AUDIO_OFFSET = 0x400, COMBAT_AUDIO_NAMES_OFFSET = 0x500;
+constexpr uint32_t COMBAT_AUDIO_OFFSET = 0xB00, COMBAT_AUDIO_NAMES_OFFSET = 0xC00;
 constexpr uint32_t AUDIO_LOAD_BANK_IAT_RVA = 0x16F6084;
 inline constexpr std::array<const char*, 6> COMBAT_AUDIO_BANKS{{
     "Media_Weapon.bnk", "Weapon.bnk", "Media_Hit.bnk", "Hit.bnk", "Media_Combat.bnk", "Combat.bnk"
 }};
-static_assert(COMBAT_AUDIO_NAMES_OFFSET + COMBAT_AUDIO_BANKS.size() * 32 <= AUDIO_ROOT_OFFSET, "combat bank names capacity");
+static_assert(AUDIO_ROOT_OFFSET + MAX_PATH * sizeof(wchar_t) <= COMBAT_AUDIO_OFFSET, "audio root/combat mailbox overlap");
+static_assert(COMBAT_AUDIO_OFFSET + 36 <= COMBAT_AUDIO_NAMES_OFFSET, "combat mailbox/names overlap");
+static_assert(COMBAT_AUDIO_NAMES_OFFSET + COMBAT_AUDIO_BANKS.size() * 32 <= AUDIO_CODE_OFFSET, "combat bank names capacity");
 static_assert(AUDIO_ROOT_OFFSET + MAX_PATH * sizeof(wchar_t) < AUDIO_CODE_OFFSET, "audio root capacity");
 Bytes buildAudioRoot(const fs::path& directory);
 Bytes buildAudioMap(uint32_t address, uint32_t imageBase);
