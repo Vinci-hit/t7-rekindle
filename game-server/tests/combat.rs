@@ -89,6 +89,27 @@ fn contacts_are_authorized_once_and_interrupt_the_victim() {
     assert_eq!(reaction.target_actor_id.unwrap().0, 1);
 }
 #[test]
+fn hurt_recovers_once_after_the_native_animation_finishes() {
+    let (mut l, m) = scene();
+    pose(&mut l, &m, 1, 3000);
+    let action = strike(&mut l, &m, 1, 3000);
+    l.contact_input("a", &m, 1, report(action), 3420).unwrap();
+    let reactions = l.take_action_events();
+    assert_eq!(reactions.iter().filter(|e| e.state == 35).count(), 1);
+    // The former 400ms recovery must not interrupt the 550ms native clip.
+    for at in [3820, 3969] {
+        l.advance(at);
+        assert!(l.take_action_events().iter().all(|e| e.actor_id.0 != 2));
+    }
+    l.advance(3970);
+    let recovered = l.take_action_events();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!((recovered[0].actor_id.0, recovered[0].state), (2, 2));
+    l.advance(4100);
+    assert!(l.take_action_events().iter().all(|e| e.actor_id.0 != 2));
+}
+
+#[test]
 fn weapon_contact_parries_without_damage_and_can_remain_held() {
     let (mut l, m) = scene();
     pose(&mut l, &m, 1, 3000);
@@ -124,7 +145,7 @@ fn weapon_contact_parries_without_damage_and_can_remain_held() {
     assert_eq!(l.take_action_events()[0].state, 2);
 }
 #[test]
-fn body_contact_before_weapon_contact_damages_for_every_guard_and_facing() {
+fn directional_guard_resolves_body_contact_once_for_every_guard_and_facing() {
     let attacks = [
         (A::AttackUp, 238),
         (A::AttackRight, 244),
@@ -132,9 +153,11 @@ fn body_contact_before_weapon_contact_damages_for_every_guard_and_facing() {
         (A::AttackLeft, 256),
     ];
     let guards = [A::BlockUp, A::BlockRight, A::BlockDown, A::BlockLeft];
-    for (attack, state) in attacks {
-        for guard in guards {
-            for heading in [180, 0] {
+    for (attack_dir, (attack, state)) in attacks.into_iter().enumerate() {
+        for (guard_dir, guard) in guards.into_iter().enumerate() {
+            for heading in [
+                180, -180, 121, 119, 90, 61, 59, 0, -59, -61, -90, -119, -121,
+            ] {
                 let (mut l, m) = scene();
                 pose(&mut l, &m, 1, 3000);
                 l.pose_input(
@@ -174,12 +197,26 @@ fn body_contact_before_weapon_contact_damages_for_every_guard_and_facing() {
                         lives,
                         ..
                     } => {
+                        let expected = if heading.abs() >= 120 {
+                            match attack_dir {
+                                0 => guard_dir == 0,
+                                1 => guard_dir == 3,
+                                2 => guard_dir == 2,
+                                3 => guard_dir == 1,
+                                _ => unreachable!(),
+                            }
+                        } else if heading.abs() > 60 {
+                            let side = if heading > 0 { 1 } else { 3 };
+                            attack_dir == side && guard_dir == side
+                        } else {
+                            false
+                        };
                         assert_eq!(
-                            parried, false,
+                            parried, expected,
                             "attack={attack:?}, guard={guard:?}, heading={heading}"
                         );
-                        assert_eq!(damage, 20);
-                        assert_eq!(lives[1].health, 80);
+                        assert_eq!(damage, if expected { 0 } else { 20 });
+                        assert_eq!(lives[1].health, if expected { 100 } else { 80 });
                         let mut later = report(action_id);
                         later.state = state;
                         later.weapon_contact = true;
@@ -412,6 +449,23 @@ fn teammates_cannot_damage_each_other_but_a_second_opponent_can_be_hit() {
     assert_eq!(target.unwrap().0, 4);
     assert_eq!(lives[2].health, 100);
     assert_eq!(lives[3].health, 80);
+    assert!(l.contact_input("a", &m, 3, report(action), 3422).unwrap());
+    assert!(!l.contact_input("a", &m, 4, report(action), 3423).unwrap());
+    let mut duplicate = report(action);
+    duplicate.target_actor_id = 4;
+    assert!(!l.contact_input("a", &m, 5, duplicate, 3424).unwrap());
+    let effects = l.take_combat_events();
+    assert_eq!(effects.len(), 1);
+    let reactions = l.take_action_events();
+    for target in [2, 4] {
+        assert_eq!(
+            reactions
+                .iter()
+                .filter(|e| e.actor_id.0 == target && e.state == 35)
+                .count(),
+            1
+        );
+    }
 }
 
 #[test]
@@ -478,11 +532,11 @@ fn hurt_buffers_a_released_followup_until_recovery() {
     l.action_input("b", &m, 1, A::AttackRight, 3421).unwrap();
     l.action_input("b", &m, 2, A::AttackRelease, 3422).unwrap();
     assert!(l.take_action_events().is_empty());
-    l.advance(3819);
+    l.advance(3969);
     assert!(l.take_action_events().is_empty());
-    l.advance(3820);
+    l.advance(3970);
     assert_eq!(l.take_action_events().last().unwrap().state, 241);
-    l.advance(4180);
+    l.advance(4330);
     assert!(
         l.take_action_events()
             .iter()
@@ -706,7 +760,7 @@ fn mismatched_body_contact_damages_and_cannot_be_replaced_by_a_later_weapon_repo
 }
 
 #[test]
-fn real_weapon_contact_is_not_rejected_by_attack_or_guard_direction_names() {
+fn weapon_probe_does_not_bypass_guard_direction() {
     for guard in [A::BlockUp, A::BlockRight, A::BlockDown, A::BlockLeft] {
         let (mut l, m) = scene();
         pose(&mut l, &m, 1, 3000);
@@ -715,15 +769,15 @@ fn real_weapon_contact_is_not_rejected_by_attack_or_guard_direction_names() {
         let seq = strike(&mut l, &m, 1, 3000);
         let mut contact = report(seq);
         contact.weapon_contact = true;
-        assert!(l.contact_input("a", &m, 1, contact, 3420).unwrap());
-        assert!(matches!(
-            l.take_combat_events().pop().unwrap().effect,
-            CombatEffect::Contact {
-                parried: true,
-                damage: 0,
-                ..
-            }
-        ));
+        let matched = guard == A::BlockUp;
+        assert_eq!(l.contact_input("a", &m, 1, contact, 3420).unwrap(), matched);
+        if !matched {
+            assert!(l.take_combat_events().is_empty());
+            assert!(l.contact_input("a", &m, 2, report(seq), 3421).unwrap());
+        }
+        assert!(matches!(l.take_combat_events().pop().unwrap().effect,
+            CombatEffect::Contact { parried, damage, .. }
+                if parried == matched && damage == if matched { 0 } else { 20 }));
     }
 }
 
@@ -801,7 +855,7 @@ fn delayed_contact_uses_attacker_position_and_heading_at_contact() {
             assert!(matches!(
                 lobby.take_combat_events().pop().unwrap().effect,
                 CombatEffect::Contact { parried, damage, .. }
-                    if parried == weapon_contact && damage == if weapon_contact { 0 } else { 20 }
+                    if parried && damage == 0
             ));
         }
     }

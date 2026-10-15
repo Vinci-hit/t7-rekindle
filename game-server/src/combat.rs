@@ -400,10 +400,15 @@ impl Combat {
                 guard_direction = [223, 224, 225, 226]
                     .iter()
                     .position(|state| *state == guard.state);
-                let facing_attacker = facing(target.position, source.position, target.heading, 0.0);
-                // Guard timing authorizes a blade collision; it cannot turn an
-                // earlier body collision into weapon contact.
-                parried = report.weapon_contact && guard_direction.is_some() && facing_attacker;
+                parried = guard_direction.is_some_and(|guard| {
+                    guard_matches(
+                        direction,
+                        guard,
+                        target.position,
+                        source.position,
+                        target.heading,
+                    )
+                });
             }
         }
         if report.weapon_contact && !parried {
@@ -432,6 +437,17 @@ impl Combat {
             return Ok(false);
         }
         hits.targets.push(target_id);
+        tracing::debug!(
+            actor,
+            action_id = report.action_id,
+            action_seq = report.action_seq,
+            target_id,
+            contact_at,
+            weapon_contact = report.weapon_contact,
+            ?guard_direction,
+            parried,
+            "combat contact committed"
+        );
         let mut damage = 0;
         let mut hit_part = HitPart::Body;
         if target_id == 0 {
@@ -521,7 +537,14 @@ impl Combat {
                 sender.streak = sender.streak.saturating_add(1).min(i32::MAX as u32);
                 battle.react(target_id, 42, now, 0, true, Some(actor));
             } else {
-                battle.react(target_id, 35, now, 400, false, Some(actor));
+                battle.react(
+                    target_id,
+                    35,
+                    now,
+                    crate::limits::HURT_RECOVERY_MS,
+                    false,
+                    Some(actor),
+                );
             }
         }
         self.publish(
@@ -601,6 +624,40 @@ impl Combat {
     pub(crate) fn take_events(&mut self) -> Vec<CombatEvent> {
         std::mem::take(&mut self.pending)
     }
+}
+fn guard_matches(
+    attack: usize,
+    guard: usize,
+    defender: [f32; 3],
+    attacker: [f32; 3],
+    heading: i16,
+) -> bool {
+    let dx = attacker[0] - defender[0];
+    let dy = attacker[1] - defender[1];
+    let length = dx.hypot(dy);
+    // An overlapping root gives no reliable side; never grant omnidirectional guard.
+    if length < 0.01 {
+        return false;
+    }
+    let yaw = f32::from(heading).to_radians();
+    let forward = (dx * yaw.cos() - dy * yaw.sin()) / length;
+    if forward >= crate::limits::GUARD_FACING_COS {
+        // Facing opponents have mirrored left/right controls.
+        return match attack {
+            0 => guard == 0,
+            1 => guard == 3,
+            2 | 4 => guard == 2,
+            3 => guard == 1,
+            _ => false,
+        };
+    }
+    if forward < crate::limits::GUARD_SIDE_COS {
+        return false;
+    }
+    // Outside the frontal cone, only the inward cut can meet a lateral guard.
+    let right = -dx * yaw.sin() - dy * yaw.cos();
+    let side = if right > 0.0 { 1 } else { 3 };
+    attack == side && guard == side
 }
 fn distance(a: &[f32; 3], b: &[f32; 3]) -> f32 {
     a.iter()

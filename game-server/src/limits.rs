@@ -9,6 +9,11 @@ pub const COMMAND_QUEUE_SIZE: usize = 1024;
 pub const OUTPUT_QUEUE_SIZE: usize = 128;
 pub const ROOM_COMMAND_QUEUE_SIZE: usize = 256;
 pub const ROOM_TICK_MS: u64 = 25;
+/// Frontal matching covers +/-60 degrees; lateral matching ends at +/-120.
+pub const GUARD_FACING_COS: f32 = 0.5;
+pub const GUARD_SIDE_COS: f32 = -0.5;
+/// Supported client state 35 finishes after 550 ms.
+pub const HURT_RECOVERY_MS: u64 = 550;
 pub const LOGIN_WINDOW_SECS: u64 = 60;
 pub const LOGIN_ATTEMPTS_PER_SOURCE: usize = 30;
 

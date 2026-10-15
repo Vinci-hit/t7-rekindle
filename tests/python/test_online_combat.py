@@ -63,8 +63,7 @@ def test_native_contact_only_reports_local_actor_and_never_locally_awards_damage
         # The same body overlap may be a guard hit. No speculative flesh audio
         # may precede the server's exclusive guard feedback.
         result = client.reply(None, 'combatChanged', update=event(effect(parried=True)))
-        feedback = next(p for p in result['send'] if p['reason'] == 'online-contact-effect')
-        assert battle_flow.decode_battle_hit_point_notify(feedback['body']).target_weapon_id == 1030411
+        assert not any(p['reason'] == 'online-contact-effect' for p in result['send'])
         assert sum(p['reason'] == 'online-parry-sound' for p in result['send']) == 1
     if weapon_contact:
         client.reply(int(request['requestId']), 'contactAccepted', matchId=MATCH, inputSeq=1, accepted=False)
@@ -87,12 +86,14 @@ def test_authority_health_and_damage_float_use_each_clients_local_mapping(monkey
     assert client.state==before
 
 
-def test_real_parry_emits_dedicated_sound_and_weapon_contact(monkeypatch, spawnPoints):
+@pytest.mark.parametrize('attacker', [1, 2])
+def test_real_parry_uses_native_weapon_effects_and_one_dedicated_sound(monkeypatch, spawnPoints, attacker):
     client = running(monkeypatch, spawnPoints, peer=True)
-    result=client.reply(None,'combatChanged',update=event(effect(parried=True,health=lives(peer=100))))
-    feedback=next(p for p in result['send'] if p['reason']=='online-contact-effect')
-    assert battle_flow.decode_battle_hit_point_notify(feedback['body']).target_weapon_id==1030411
-    assert any(p['body'][:2]==b'\0\x28' and p['reason']=='online-parry-sound' for p in result['send'])
+    result=client.reply(None,'combatChanged',update=event(effect(attacker=attacker, target=3-attacker,
+        parried=True,health=lives(peer=100))))
+    assert not any(p['body'][:2] == struct.pack('>H', battle_flow.HIT_POINT_NOTIFY)
+                   for p in result['send'] if p['command'] == 4)
+    assert sum(p['body'][:2]==b'\0\x28' and p['reason']=='online-parry-sound' for p in result['send']) == 1
     assert not any(p['reason']=='online-damage' for p in result['send'])
 
 
@@ -120,8 +121,18 @@ def test_hurt_has_one_explicit_animation_regardless_of_notification_order(
     assert struct.unpack_from('>HHHH', body) == (battle_flow.STATE_SYNC, target, 4 if target == 1 else 2, 35)
     assert struct.unpack_from('>Q', body, 15)[0] == attacker
     feedback = [p for p in packets if p['reason'] == 'online-contact-effect']
-    assert len(feedback) == 1 and feedback[0]['body'][87] == 1
+    assert len(feedback) == 1 and feedback[0]['body'][87] == 0
     assert not any(p['reason'] == 'online-parry-sound' for p in packets)
+
+
+@pytest.mark.parametrize('target,damage', [(None, 0), (2, 0), (2, 20)])
+def test_native_body_effects_require_authoritative_damage(monkeypatch, spawnPoints, target, damage):
+    client = running(monkeypatch, spawnPoints, peer=True)
+    outcome = dict(effect(target=target), damage=damage)
+    result = client.reply(None, 'combatChanged', update=event(outcome))
+    feedback = [p for p in result['send'] if p['reason'] == 'online-contact-effect']
+    assert len(feedback) == 1
+    assert feedback[0]['body'][87] == (0 if target and damage else 1)
 
 
 def test_death_waits_for_rust_ready_selection_and_play_then_recreates_actor(monkeypatch, spawnPoints):
@@ -184,7 +195,7 @@ def test_authority_body_region_reaches_hit_icon_and_damage_result(monkeypatch, s
     feedback = next(p for p in result['send'] if p['reason'] == 'online-contact-effect')
     contact = battle_flow.decode_battle_hit_point_notify(feedback['body'])
     assert contact.hit_part == index
-    assert feedback['body'][87] == 1
+    assert feedback['body'][87] == 0
     damage = next(p for p in result['send'] if p['reason'] == 'online-damage')
     assert battle_flow.decode_battle_result(damage['body']).target_rb_index == index
 
@@ -209,3 +220,25 @@ def test_contacts_follow_sweep_time_instead_of_collection_order(monkeypatch, spa
     assert [r.get('weaponContact', False) for r in reports] == [weapon_first, not weapon_first]
     assert [r['elapsedMs'] for r in reports] == sorted(r['elapsedMs'] for r in reports)
     assert not result['send']
+
+
+def test_native_reaction_trace_distinguishes_restart_from_repeated_sampling(monkeypatch, spawnPoints):
+    client = running(monkeypatch, spawnPoints, peer=True)
+    session = client.state['sessions']['2']
+    client.context['nowMs'] = 1000
+    client.context['botWorld'] = dict(ready=True, sampledAt=1000,
+        instanceStartedAt=session['instanceStartedAt'], actors={
+            '2': dict(ready=True, position=[1., 0., .5], state=35, seq=8, phaseAt=950)})
+    result = client.event('world')
+    traces = lambda result: [entry['message'] for entry in result['logs']
+                            if 'online-native-reaction' in entry['message']]
+    assert len(traces(result)) == 1
+    assert not traces(client.event('world'))
+    # A restart with the same state/sequence but a new native phase is observable.
+    client.context['botWorld']['actors']['2']['phaseAt'] = 980
+    result = client.event('world')
+    assert len(traces(result)) == 1
+    assert 'phaseAt=980' in traces(result)[0]
+    client.context['botWorld']['actors']['2']['state'] = 2
+    assert len(traces(client.event('world'))) == 1
+    assert not traces(client.event('world'))

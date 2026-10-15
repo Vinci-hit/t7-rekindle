@@ -201,6 +201,8 @@ def present(flow, connection, session, rid, value):
         sequence = online_prediction.remember(session, state, value['actionId'])
     fields = dict(instance_id=rid, seq_no=sequence, state=state,
         state_change_ms=flow.now - session['instanceStartedAt'], state_time_ms=integer(value['durationMs'], 0, 65535))
+    if state == 35:
+        flow.log('DEBUG', f'online-hurt-present actor={actor} rid={rid} event={event_sequence} nativeSeq={sequence} target={value.get("targetActorId")}')
     target = value.get('targetActorId')
     if target is None:
         body = battle_flow.encode_battle_state_sync_simple(**fields)

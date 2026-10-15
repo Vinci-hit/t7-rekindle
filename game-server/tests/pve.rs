@@ -209,7 +209,7 @@ fn cleared_waves_use_fresh_ids_and_settle_then_reset_without_monster_respawns() 
     );
 }
 #[test]
-fn server_ai_body_contacts_do_not_fabricate_weapon_collisions() {
+fn server_ai_contacts_respect_directional_guard() {
     for block in [false, true] {
         let (mut lobby, room, match_id) = scene([1., 0., 0.], &[1], 100);
         pose(&mut lobby, &match_id, 1, 3001);
@@ -238,7 +238,7 @@ fn server_ai_body_contacts_do_not_fabricate_weapon_collisions() {
             })
             .collect();
         assert!(!effects.is_empty());
-        let expected = (Some(ActorId(1)), 20, false);
+        let expected = (Some(ActorId(1)), if block { 0 } else { 20 }, block);
         assert_eq!(effects[0], expected);
         assert_eq!(lobby.snapshot(&room).unwrap().phase, Phase::Running);
     }

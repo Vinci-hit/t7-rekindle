@@ -50,6 +50,7 @@ def world_updated(flow):
     if match['phase'] != 3 or flow.session.get('leaving') or not ledger(flow.session)['health']:
         return
     raw = flow.context.get('botWorld', {})
+    trace_reactions(flow, actors.world(flow))
     journal = raw.get('contactJournal')
     if type(journal) is not dict or raw.get('instanceStartedAt') != flow.session['instanceStartedAt']:
         return
@@ -102,6 +103,23 @@ def world_updated(flow):
         age = int(flow.now - event['occurredAt'])
         flow.log('INFO', f'online-contact-report input={sequence} action={event["seq"]} state={event["state"]} target={target} weapon={event.get("weaponContact", False)} targetState={event["targetState"]} sampleAgeMs={age}')
     state['cursor'] = identity
+
+
+def trace_reactions(flow, snapshot):
+    if snapshot is None:
+        return
+    state = ledger(flow.session)
+    previous = state.setdefault('nativeReactions', {})
+    for rid in online_scene.ids(flow):
+        actor = actors.pose(snapshot, rid)
+        if actor is None or type(actor.get('state')) is not int:
+            continue
+        sample = [actor['state'], actor.get('seq'), actor.get('phaseAt')]
+        old = previous.get(str(rid))
+        if sample != old:
+            if sample[0] == 35 or old is not None and old[0] == 35:
+                flow.log('DEBUG', f'online-native-reaction rid={rid} state={sample[0]} seq={sample[1]} phaseAt={sample[2]} previous={old}')
+            previous[str(rid)] = sample
 
 
 def can_choose(flow):
@@ -262,6 +280,7 @@ def contact(flow, effect):
             raise ValueError('invalid combat contact vector')
     if any(not .9 <= math.hypot(*effect[key]) <= 1.1 for key in ('normal', 'direction')):
         raise ValueError('invalid combat contact normal')
+    flow.log('DEBUG', f'online-contact-verdict event={ledger(flow.session)["eventSeq"]} attacker={attacker} target={target} swing={sequence} parried={effect["parried"]} damage={damage}')
     values = health(flow, effect['lives'])
     if attacker == 1:
         # The body and weapon probes may overlap on successive native frames.
@@ -269,12 +288,16 @@ def contact(flow, effect):
         seen = ledger(flow.session)['seen']
         seen.extend(f'{sequence}:{effect["target"] or 0}:{kind}' for kind in (0, 1))
         del seen[:-64]
-    # ActionChanged owns hurt animation; this notification supplies contact feedback.
-    flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),
-        hit_direction=tuple(effect['direction']), hit_normal=tuple(effect['normal']), material_id=material,
-        hit_part=hit_part, ignore_hurt=True, attacker_mid=attacker, target_mid=target,
-        attacker_weapon_id=weapon, target_weapon_id=target_weapon if effect['parried'] else 0,
-        server_time_ms=flow.now), 'online-contact-effect')
+    # Parry reaction states already play the native effects on both weapons.
+    # Body and scene contacts still need their contact-point feedback.
+    if not effect['parried']:
+        # Native HurtType also gates blood and flesh effects. Enable the normal
+        # hit path only for an authoritative damaging body contact.
+        flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),
+            hit_direction=tuple(effect['direction']), hit_normal=tuple(effect['normal']), material_id=material,
+            hit_part=hit_part, ignore_hurt=not (target and damage), attacker_mid=attacker, target_mid=target,
+            attacker_weapon_id=weapon, target_weapon_id=0,
+            server_time_ms=flow.now), 'online-contact-effect')
     if effect['parried']:
         flow.send(4, battle_flow.encode_battle_defense_notify(attacker_mid=attacker, defender_mid=target,
             attacker_weapon_id=weapon, target_weapon_id=target_weapon, server_time_ms=flow.now), 'online-parry-sound')
