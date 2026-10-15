@@ -218,3 +218,14 @@ def test_state_migration_preserves_pending_requests_without_issuing_effects():
     assert restored == client.state and restored is not client.state
     restored["sessions"]["1"]["customLobby"]["nextId"] = 1
     assert not app.validateState(restored)
+
+
+def test_rejected_action_is_acknowledged_without_closing_the_session():
+    client = Client()
+    client.identify()
+    gateway = client.state['sessions']['1']['customLobby']
+    gateway['pending']['2'] = {'kind': 'action'}
+    result = client.reply(2, 'error', code='badRequest')
+    assert result['state']['sessions']['1']['customLobby']['identified']
+    assert '2' not in result['state']['sessions']['1']['customLobby']['pending']
+    assert result['gateway'] == [{'op': 'ack', 'connection': 1, 'requestId': '2', 'request': ''}]

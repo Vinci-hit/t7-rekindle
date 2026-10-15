@@ -35,12 +35,13 @@ impl InputWatermark {
     }
 
     pub fn observe_combat(&mut self, sequence: u64, mapped_time: u64) -> bool {
-        if self.sequence.checked_add(1) != Some(sequence)
-            || self.through.is_some_and(|previous| mapped_time < previous)
-        {
+        if self.sequence.checked_add(1) != Some(sequence) {
             return false;
         }
         self.sequence = sequence;
+        // Event samples can precede processing-order heartbeats or move back
+        // during clock slewing. Consume the contiguous sequence and lower the
+        // watermark conservatively rather than rejecting every following input.
         self.through = Some(mapped_time);
         true
     }
@@ -124,12 +125,12 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_and_backward_times_cannot_advance_watermark() {
+    fn duplicates_are_rejected_and_earlier_samples_lower_watermark() {
         let mut w = InputWatermark::default();
         assert!(w.observe_combat(1, 450));
         assert!(!w.observe_combat(1, 500));
-        assert!(!w.observe_combat(2, 449));
+        assert!(w.observe_combat(2, 449));
         assert_eq!(w.readiness(450, 460, 70), Readiness::Waiting);
-        assert!(w.observe_combat(2, 466));
+        assert!(w.observe_combat(3, 466));
     }
 }

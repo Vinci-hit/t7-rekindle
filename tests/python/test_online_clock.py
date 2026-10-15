@@ -151,3 +151,13 @@ def test_running_client_dispatches_combat_heartbeat_and_accepts_reply(monkeypatc
     reply = client.reply(int(request['requestId']), 'pong', serverTimeMs=4005)
     assert not reply['send']
     assert reply['gateway'][0]['op'] == 'ack'
+
+
+@pytest.mark.parametrize('kind', ('combatHeartbeat', 'clockEcho'))
+def test_queued_heartbeat_samples_receive_time_before_following_input(kind):
+    gateway = calibrated().state['sessions']['1']['customLobby']
+    heartbeat = online_clock.stamp(gateway, dict(type=kind), 1280, received_at=1200)
+    action = online_clock.stamp(gateway, dict(type='actionInput'), 1281, received_at=1201)
+    assert heartbeat['sampledMs'] == 1200
+    assert heartbeat['sampledMs'] <= action['sampledMs']
+    assert [heartbeat['combatSeq'], action['combatSeq']] == [1, 2]

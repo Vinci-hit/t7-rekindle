@@ -1225,6 +1225,12 @@ impl Coordinator {
         tracing::debug!(connection_id = id, combat_seq = stamp.combat_seq, sampled_ms = stamp.sampled_ms,
             gateway_ms = stamp.gateway_ms, received_ms = now, event_time,
             ?stamp.source, sequence_valid, clamped, motion, "input timeline observation");
+        if !sequence_valid {
+            tracing::warn!(connection_id = id, combat_seq = stamp.combat_seq,
+                sampled_ms = stamp.sampled_ms, gateway_ms = stamp.gateway_ms,
+                received_ms = now, source_matches, clock_mapped = mapped.is_some(),
+                ?stamp.source, "input timeline rejected");
+        }
         sequence_valid.then_some(event_time)
     }
 
@@ -2209,6 +2215,87 @@ mod tests {
         );
         assert!(contact_outcomes(&mut a).is_empty());
         assert!(contact_outcomes(&mut b).is_empty());
+    }
+
+    #[test]
+    fn queued_attack_earlier_than_heartbeat_does_not_poison_following_inputs() {
+        let (mut c, m, _a, mut b) = pending_scene();
+        let clock = &mut c.connections.get_mut("b").unwrap().clock;
+        let (epoch, nonce) = clock.probe(3300);
+        clock
+            .echo(
+                &crate::clock_sync::Echo {
+                    epoch: epoch.clone(),
+                    nonce,
+                    received_ms: 3305,
+                    sent_ms: 3305,
+                },
+                3310,
+            )
+            .unwrap();
+        for (seq, sampled, command) in [
+            (1, 3400, ClientCommand::CombatHeartbeat),
+            (
+                2,
+                3399,
+                ClientCommand::ActionInput {
+                    match_id: m.clone(),
+                    input_seq: 1,
+                    intent: crate::battle::ActionIntent::AttackLeft,
+                    pose: None,
+                },
+            ),
+            (
+                3,
+                3402,
+                ClientCommand::ActionInput {
+                    match_id: m.clone(),
+                    input_seq: 2,
+                    intent: crate::battle::ActionIntent::AttackRelease,
+                    pose: None,
+                },
+            ),
+            (4, 3403, ClientCommand::CombatHeartbeat),
+        ] {
+            let source = if matches!(command, ClientCommand::CombatHeartbeat) {
+                crate::input_timeline::Source::Heartbeat
+            } else {
+                crate::input_timeline::Source::GatewayInput
+            };
+            c.request(
+                "b",
+                ClientRequest {
+                    protocol_version: VERSION,
+                    request_id: seq.to_string(),
+                    command,
+                    timeline: Some(crate::input_timeline::Stamp {
+                        epoch: epoch.clone(),
+                        combat_seq: seq,
+                        sampled_ms: sampled,
+                        gateway_ms: 3400 + seq,
+                        source,
+                    }),
+                },
+                3410 + seq,
+            );
+        }
+        let mut replies = Vec::new();
+        while let Ok(event) = b.try_recv() {
+            if let Some(id) = event.request_id {
+                assert!(
+                    matches!(
+                        event.event,
+                        ServerMessage::ActionAccepted { .. } | ServerMessage::Pong { .. }
+                    ),
+                    "unexpected reply {id}: {:?}",
+                    event.event
+                );
+                replies.push(id);
+            }
+        }
+        assert_eq!(replies, ["1", "2", "3", "4"]);
+        assert_eq!(c.connections["b"].last_sequence, 4);
+        assert!(c.failed.is_empty());
     }
 
     #[test]

@@ -106,15 +106,45 @@ mod tests {
         assert!(s.observe_mapped(&stamp(3, 130, 130, Source::NativePose), true, 130));
         assert!(s.observe_mapped(&stamp(2, 90, 120, Source::NativeContact), false, 90));
         assert_eq!(s.watermark.readiness(100, 140, 70), Readiness::Waiting);
-        assert!(!s.observe_mapped(&stamp(3, 99, 130, Source::GatewayInput), false, 99));
-        assert_eq!(s.last_seq, 2); // Invalid observations are transactional.
-        assert!(s.observe_mapped(&stamp(3, 130, 130, Source::Heartbeat), false, 130));
+        assert!(s.observe_mapped(&stamp(3, 99, 130, Source::GatewayInput), false, 99));
+        assert_eq!(s.last_seq, 3);
+        assert_eq!(s.watermark.readiness(100, 140, 70), Readiness::Waiting);
+        assert!(s.observe_mapped(&stamp(4, 130, 130, Source::Heartbeat), false, 130));
         assert_eq!(s.watermark.readiness(100, 140, 70), Readiness::Complete);
         let mut new_epoch = stamp(1, 140, 140, Source::Heartbeat);
         new_epoch.epoch = "new-epoch".into();
         assert!(s.observe_mapped(&new_epoch, false, 140));
         assert_eq!(s.last_seq, 1);
         assert_eq!(s.movement_barrier, 0);
+    }
+
+    #[test]
+    fn earlier_sample_consumes_sequence_and_lowers_watermark_without_poisoning_stream() {
+        use crate::adjudication::Readiness;
+        let mut stream = Stream::default();
+        assert!(stream.observe_mapped(&stamp(1, 200, 200, Source::Heartbeat), false, 200));
+        // A queued input can precede a processed heartbeat; clock slewing can also
+        // move the mapped sample backwards without a sequence gap.
+        assert!(stream.observe_mapped(&stamp(2, 180, 201, Source::GatewayInput), false, 180));
+        assert_eq!(stream.last_seq, 2);
+        assert_eq!(stream.watermark.readiness(180, 210, 70), Readiness::Waiting);
+        assert!(stream.observe_mapped(&stamp(3, 202, 202, Source::GatewayInput), false, 202));
+        assert_eq!(
+            stream.watermark.readiness(180, 210, 70),
+            Readiness::Complete
+        );
+        assert!(!stream.observe_mapped(&stamp(3, 203, 203, Source::Heartbeat), false, 203));
+        assert!(!stream.observe_mapped(&stamp(5, 204, 204, Source::Heartbeat), false, 204));
+        assert_eq!(stream.last_seq, 3);
+    }
+
+    #[test]
+    fn clock_slew_can_move_mapped_time_back_while_raw_time_increases() {
+        let mut stream = Stream::default();
+        assert!(stream.observe_mapped(&stamp(1, 1000, 1000, Source::Heartbeat), false, 500));
+        assert!(stream.observe_mapped(&stamp(2, 1001, 1001, Source::GatewayInput), false, 499));
+        assert!(stream.observe_mapped(&stamp(3, 1002, 1002, Source::Heartbeat), false, 500));
+        assert_eq!(stream.last_seq, 3);
     }
 
     #[test]

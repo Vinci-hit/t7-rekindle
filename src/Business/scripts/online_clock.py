@@ -52,7 +52,8 @@ def stamp(gateway, command, now, *, motion=False, received_at=None):
         # The original wire input has no verified game-frame timestamp yet.
         sampled, source = now if received_at is None else received_at, 'gatewayInput'
     elif kind in ('clockEcho', 'combatHeartbeat'):
-        sampled, source = now, 'heartbeat'
+        # Watermarks describe sampled queue progress, not callback execution time.
+        sampled, source = now if received_at is None else received_at, 'heartbeat'
     else:
         return None
     sequence = gateway.get('combatSeq', 0)

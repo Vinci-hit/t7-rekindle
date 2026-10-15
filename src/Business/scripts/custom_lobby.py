@@ -482,6 +482,9 @@ def receive(flow, body):
             raise ValueError("invalid room service error code")
         if kind == 'clock-echo' and code == 'badRequest':
             flow.log('WARN', 'combat clock sample expired or invalid; retry on next heartbeat')
+        elif kind == 'action' and code == 'badRequest':
+            # A rejected input must not tear down the authenticated game session.
+            flow.log('WARN', f'online action rejected; connection retained request={request_id} code={code}')
         elif kind == 'pose' and code == 'invalidPose':
             flow.log('WARN', 'online pose rejected by movement bounds')
         elif (kind in ('action', 'pose', 'contact', 'respawn') and flow.state.get('onlineScene', {}).get('phase') == 4
