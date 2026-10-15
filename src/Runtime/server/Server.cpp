@@ -457,7 +457,7 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         if (audioLog_ && line.message.rfind("Audio announcement;", 0) == 0) {
             try {
                 audioLog_(line.level, line.message + "; event=" + std::to_string(event.id)
-                    + "; queuedTickMs=" + std::to_string(queuedTick));
+                    + "; queuedTickMs=" + std::to_string(event.receivedAt));
             } catch (const std::exception& error) {
                 journal_->add(DiagnosticLogLevel::Warn, "LOG-ERROR", event.connection, version,
                     "Audio announcement live log failed; " + std::string(error.what()));

@@ -60,7 +60,10 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null,
             Func<string, Task<ClientVersionResult>> readClientVersion = null,
             Func<CancellationToken, Task<LauncherAnnouncement>> fetchAnnouncement = null,
-            Func<DateTime> announcementUtcNow = null)
+            Func<DateTime> announcementUtcNow = null,
+            PreviewAccessService previewAccess = null,
+            Func<PreviewAccessViewModel, bool> requestPreviewAccess = null,
+            Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> loadUpdateHistory = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
