@@ -269,10 +269,10 @@ def contact(flow, effect):
         seen = ledger(flow.session)['seen']
         seen.extend(f'{sequence}:{effect["target"] or 0}:{kind}' for kind in (0, 1))
         del seen[:-64]
-    # Body notifications own native blood and hurt presentation.
+    # ActionChanged owns hurt animation; this notification supplies contact feedback.
     flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),
         hit_direction=tuple(effect['direction']), hit_normal=tuple(effect['normal']), material_id=material,
-        hit_part=hit_part, ignore_hurt=effect['parried'] or target == 0, attacker_mid=attacker, target_mid=target,
+        hit_part=hit_part, ignore_hurt=True, attacker_mid=attacker, target_mid=target,
         attacker_weapon_id=weapon, target_weapon_id=target_weapon if effect['parried'] else 0,
         server_time_ms=flow.now), 'online-contact-effect')
     if effect['parried']:
@@ -296,7 +296,8 @@ def contact(flow, effect):
                 controls.activate(flow)
                 flow.send(0x36, wire.actorState(flow.now, 9, userId=flow.userId), 'online-observer')
     scores(flow, effect['lives'])
-    flow.log('DEBUG', f'online-contact attacker={attacker} target={target} parried={effect["parried"]} damage={damage}')
+    flow.log('DEBUG', f'online-contact attacker={attacker} target={target} parried={effect["parried"]} damage={damage}'
+        f' actionSeq={sequence} eventSeq={ledger(flow.session)["eventSeq"]} position={effect["position"]}')
 
 
 def respawn(flow, actor, lives):

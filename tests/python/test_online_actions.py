@@ -129,10 +129,11 @@ def test_remote_guard_and_release_bypass_motion_queue_and_discard_stale_actions(
 
 
 @pytest.mark.parametrize('actor', [1, 2])
-def test_hurt_state_retains_recovery_bookkeeping_without_a_second_animation(actor, monkeypatch, spawnPoints):
+def test_hurt_state_explicitly_presents_once_and_retains_recovery_bookkeeping(actor, monkeypatch, spawnPoints):
     client = running(monkeypatch, spawnPoints, peer=True)
     outcome = client.reply(None, 'actionChanged', action=action_event(actor=actor, state=35))
-    assert not outcome['send']
+    assert len(outcome['send']) == 1
+    assert battle_flow.decode_battle_state_sync_simple(outcome['send'][0]['body']).state == 35
     assert str(actor) in client.state['sessions']['2']['onlineActions']['reacting']
     result = client.reply(None, 'actionChanged', action=action_event(actor=actor, event=2, sequence=3, state=2))
     assert len(result['send']) == 1

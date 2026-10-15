@@ -1,9 +1,8 @@
 from copy import deepcopy
-import json
 
 import pytest
 
-from Business.scripts.codec import move_flow
+from Business.scripts.codec import move_flow, motion_wire
 from test_online_actions import running
 from test_custom_scene import MATCH, instance
 
@@ -47,7 +46,7 @@ def test_sampling_keeps_twenty_hertz_without_waiting_for_any_reply(monkeypatch, 
         result = sample(client, (sequence * .1, 2., .5), now)
         effect = result['gateway'][0]
         assert effect['op'] == 'snapshot'
-        command = json.loads(effect['request'])['command']
+        command = motion_wire.decode_input(effect['request'])['command']
         assert command['type'] == 'poseInput'
         assert command['payload']['inputSeq'] == sequence
         assert client.state['sessions']['1']['customLobby']['pending'] == pending
@@ -179,7 +178,7 @@ def test_native_motion_snapshot_carries_physical_jump_not_key_guess(monkeypatch,
     world['actors']['1'].update(airborne=True, jumping=True, state=237, phaseAt=125,
                                position=[1.25, 2., .75])
     result = client.event('world')
-    frame = json.loads(result['gateway'][0]['request'])['command']['payload']['pose']['motion']
+    frame = motion_wire.decode_input(result['gateway'][0]['request'])['command']['payload']['pose']['motion']
     assert frame['airborne'] and frame['jumping'] and frame['actionId'] == 237
     assert frame['velocity'] == [5., 0., 5.]
     assert frame['actionTick'] <= frame['tick']
@@ -320,7 +319,7 @@ def test_remote_hurt_and_recovery_bypass_movement_playback_delay(monkeypatch, sp
     assert buffer['actions']
     result = client.reply(None, 'actionChanged', action=dict(
         action_event(actor=2, sequence=3, event=2, state=35), serverTimeMs=100))
-    assert not any('state=35' in p['reason'] for p in result['send'])
+    assert any('state=35' in p['reason'] for p in result['send'])
     assert '2' in client.state['sessions']['2']['onlineActions']['reacting']
     buffer = client.state['sessions']['2']['onlineMotion']['buffers']['2']
     assert not buffer.get('actions')

@@ -51,7 +51,7 @@ def stamp(gateway, command, now, *, motion=False, received_at=None):
     elif kind == 'actionInput':
         # The original wire input has no verified game-frame timestamp yet.
         sampled, source = now if received_at is None else received_at, 'gatewayInput'
-    elif kind == 'clockEcho':
+    elif kind in ('clockEcho', 'combatHeartbeat'):
         sampled, source = now, 'heartbeat'
     else:
         return None
@@ -63,3 +63,18 @@ def stamp(gateway, command, now, *, motion=False, received_at=None):
         gateway['combatSeq'] = sequence
     return dict(epoch=clock['epoch'], combatSeq=sequence, sampledMs=int(sampled),
                 gatewayMs=now, source=source)
+
+
+def heartbeat(flow):
+    from . import custom_lobby, online_limits
+    gateway = flow.session.get('customLobby')
+    if gateway is None or flow.session.get('leaving'):
+        return
+    scene = flow.state.get('onlineScene', {})
+    if (scene.get('phase') == 3 and gateway.get('clock') is not None
+            and len(gateway['pending']) < 4
+            and sum(item['kind'] == 'combat-heartbeat' for item in gateway['pending'].values()) < 2):
+        custom_lobby.send(flow, 'combat-heartbeat', dict(type='combatHeartbeat'))
+    interval = (online_limits.COMBAT_HEARTBEAT_INTERVAL_MS if scene.get('phase') == 3
+                else online_limits.SERVER_PING_INTERVAL_MS)
+    flow.later('online-combat-heartbeat', interval)

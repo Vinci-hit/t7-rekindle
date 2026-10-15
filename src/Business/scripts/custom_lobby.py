@@ -34,7 +34,7 @@ def valid(session):
         next_id = integer(gateway["nextId"], 1, 0xffffffffffffffff)
         for sequence, item in gateway["pending"].items():
             if guid(sequence) >= next_id or item["kind"] not in (
-                    "hello", "ping", "clock-echo", "channels", "list", "get", "create", "join", "quit", "ready", "camp", "start", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn", "pve-create", "pve-start"):
+                    "hello", "ping", "clock-echo", "combat-heartbeat", "channels", "list", "get", "create", "join", "quit", "ready", "camp", "start", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn", "pve-create", "pve-start"):
                 return False
         if gateway["identified"]:
             integer(gateway["userId"], 1, 0xffffffff)
@@ -135,7 +135,8 @@ def snapshot(flow, command):
     timeline = online_clock.stamp(gateway, command, flow.now, motion=True)
     if timeline is not None:
         envelope['timeline'] = timeline
-    request = json.dumps(envelope, ensure_ascii=False, separators=(',', ':'))
+    from .codec import motion_wire
+    request = motion_wire.encode_input(envelope)
     effect(flow, 'snapshot', request_id, request)
 
 
@@ -431,8 +432,12 @@ def closed(flow, role):
 def receive(flow, body):
     if type(body) is not bytes or len(body) > 65536:
         raise ValueError("invalid room service body")
-    envelope = json.loads(body.decode("utf-8"), object_pairs_hook=_pairs,
-                          parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid JSON number")))
+    if body.startswith(b'T7S1'):
+        from .codec import motion_wire
+        envelope = motion_wire.decode_output(body)
+    else:
+        envelope = json.loads(body.decode("utf-8"), object_pairs_hook=_pairs,
+                              parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid JSON number")))
     if integer(envelope["protocolVersion"], 1, 1) != 1:
         raise ValueError("unsupported room protocol")
     message = envelope["event"]
@@ -467,13 +472,13 @@ def receive(flow, body):
         elif (kind in ('action', 'pose', 'contact', 'respawn') and flow.state.get('onlineScene', {}).get('phase') == 4
                 and code in ('wrongPhase', 'staleMatch', 'notInRoom')):
             flow.log('INFO', 'online action cancelled with its scene')
-        elif kind in ("hello", "ping", "clock-echo", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn"):
+        elif kind in ("hello", "ping", "clock-echo", "combat-heartbeat", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn"):
             raise ValueError(f"room service rejected {kind}: {code}")
         else:
             failure(flow, kind, metadata)
             flow.log("WARN", f"custom-room {kind} rejected: {code}")
     else:
-        expected = {"hello": "welcome", "ping": "clockSample", "clock-echo": "clockReady", "channels": "channelList", "list": "roomPage",
+        expected = {"hello": "welcome", "ping": "clockSample", "clock-echo": "clockReady", "combat-heartbeat": "pong", "channels": "channelList", "list": "roomPage",
                     "get": "roomListing", "create": "room", "join": "room", "quit": "left", "pve-create": "room", "pve-start": "room",
                     "ready": "room", "camp": "room", "start": "room", "view": "clientView", "loaded": "room", "scene-leave": "left", "action": "actionAccepted", "pose": "poseAccepted", "contact": "contactAccepted", "respawn": "respawnAccepted"}[kind]
         if message["type"] != expected:
@@ -488,6 +493,7 @@ def receive(flow, body):
                            level=integer(payload["level"], 1))
             flow.later("login", 1000)
             flow.later("custom-lobby-ping", 1)
+            flow.later("online-combat-heartbeat", online_limits.COMBAT_HEARTBEAT_INTERVAL_MS)
         elif kind == 'ping':
             integer(payload["serverTimeMs"], 0, 0xffffffffffffffff)
             from . import online_clock
@@ -498,6 +504,8 @@ def receive(flow, body):
         elif kind == 'clock-echo':
             from . import online_clock
             online_clock.accept(gateway, payload, metadata['epoch'], flow.now)
+        elif kind == 'combat-heartbeat':
+            integer(payload['serverTimeMs'], 0, 0xffffffffffffffff)
         elif kind == 'respawn':
             if payload['matchId'] != metadata['matchId']:
                 raise ValueError('respawn acknowledgement mismatch')

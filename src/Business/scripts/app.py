@@ -192,6 +192,9 @@ def handleTimer(flow, name):
     elif name == "sync":
         flow.send(0x2C, flow.syncBody(), "sync-login")
         flow.phase("hydrating")
+    elif name == "online-combat-heartbeat":
+        from . import online_clock
+        online_clock.heartbeat(flow)
     elif name == "custom-lobby-ping":
         custom_lobby.heartbeat(flow)
     elif name == "match-result":

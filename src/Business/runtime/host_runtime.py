@@ -213,7 +213,16 @@ def validateTransition(result, context):
         request = item["request"]
         if type(request) is not str or len(request.encode("utf-8")) > 4096:
             raise ValueError("invalid gateway request")
-        if item["op"] in ("send", "snapshot"):
+        if item["op"] == "snapshot":
+            # Native transport decodes this ASCII envelope into one binary frame.
+            if not request.startswith('T7M1:') or len(request) != 243:
+                raise ValueError('invalid binary motion envelope')
+            frame = bytes.fromhex(request[5:])
+            if (len(frame) != 119 or frame[:4] != b'T7M1'
+                    or str(int.from_bytes(frame[4:12], 'little')) != sequence):
+                raise ValueError('invalid binary motion correlation')
+            continue
+        if item["op"] == "send":
             value = json.loads(request)
             if (type(value) is not dict or set(value) not in ({"protocolVersion", "requestId", "command"},
                     {"protocolVersion", "requestId", "command", "timeline"})
@@ -230,13 +239,11 @@ def validateTransition(result, context):
                 for key in ('combatSeq', 'sampledMs', 'gatewayMs'):
                     _integer(stamp[key], 0, (1 << 64) - 1, 'gateway timeline ' + key)
                 expected_source = {'actionInput': 'gatewayInput', 'contactInput': 'nativeContact',
-                    'poseInput': 'nativePose', 'clockEcho': 'heartbeat'}.get(value['command'].get('type'))
+                    'poseInput': 'nativePose', 'clockEcho': 'heartbeat', 'combatHeartbeat': 'heartbeat'}.get(value['command'].get('type'))
                 if (expected_source is None or stamp['source'] != expected_source
                         or stamp['sampledMs'] > stamp['gatewayMs']
                         or item['op'] == 'send' and stamp['combatSeq'] == 0):
                     raise ValueError('invalid gateway timeline source or order')
-            if item["op"] == "snapshot" and value["command"].get("type") != "poseInput":
-                raise ValueError("snapshot requires pose input")
         elif request:
             raise ValueError("gateway ack cannot contain a request")
     for timer in result["timers"]:

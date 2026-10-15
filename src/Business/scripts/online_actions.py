@@ -196,11 +196,6 @@ def present(flow, connection, session, rid, value):
             'body': weapon_flow.encode_use_update(actor_id=rid, main_weapon_id=wire.WEAPON_ID,
                 fist_weapon_id=weapons.FIST_ID, equipped_weapon_id=weapon, now_ms=flow.now),
             'reason': 'online-weapon-use-update'})
-    if state == 35:
-        # The authoritative hit notification owns both blood and hurt presentation.
-        # Retain action bookkeeping/recovery without starting the animation twice.
-        flow.log('DEBUG', f'online-hurt-notification-owned actor={actor} event={event_sequence}')
-        return
     # The native counter belongs to presentations, including corrections, not server phases.
     if rid == 1:
         sequence = online_prediction.remember(session, state, value['actionId'])

@@ -96,6 +96,34 @@ def test_real_parry_emits_dedicated_sound_and_weapon_contact(monkeypatch, spawnP
     assert not any(p['reason']=='online-damage' for p in result['send'])
 
 
+@pytest.mark.parametrize('target', [1, 2])
+@pytest.mark.parametrize('contact_first', [False, True])
+def test_hurt_has_one_explicit_animation_regardless_of_notification_order(
+        monkeypatch, spawnPoints, target, contact_first):
+    from test_online_actions import action_event
+    client = running(monkeypatch, spawnPoints, peer=True)
+    attacker = 3 - target
+    hurt = dict(action_event(actor=target, state=35, action_id=None),
+                targetActorId=attacker, durationMs=400)
+    outcome = effect(attacker=attacker, target=target,
+                     health=lives(local=80, peer=100) if target == 1 else lives())
+    events = [('actionChanged', dict(action=hurt)),
+              ('combatChanged', dict(update=event(outcome)))]
+    if contact_first:
+        events.reverse()
+    packets = []
+    for kind, payload in events:
+        packets.extend(client.reply(None, kind, **payload)['send'])
+    reactions = [p for p in packets if p['reason'].startswith('online-action ')]
+    assert len(reactions) == 1
+    body = reactions[0]['body']
+    assert struct.unpack_from('>HHHH', body) == (battle_flow.STATE_SYNC, target, 4 if target == 1 else 2, 35)
+    assert struct.unpack_from('>Q', body, 15)[0] == attacker
+    feedback = [p for p in packets if p['reason'] == 'online-contact-effect']
+    assert len(feedback) == 1 and feedback[0]['body'][87] == 1
+    assert not any(p['reason'] == 'online-parry-sound' for p in packets)
+
+
 def test_death_waits_for_rust_ready_selection_and_play_then_recreates_actor(monkeypatch, spawnPoints):
     client=running(monkeypatch,spawnPoints,peer=True)
     result=client.reply(None,'combatChanged',update=event(effect(attacker=2,target=1,health=lives(local=0,peer=100))))
@@ -156,7 +184,7 @@ def test_authority_body_region_reaches_hit_icon_and_damage_result(monkeypatch, s
     feedback = next(p for p in result['send'] if p['reason'] == 'online-contact-effect')
     contact = battle_flow.decode_battle_hit_point_notify(feedback['body'])
     assert contact.hit_part == index
-    assert feedback['body'][87] == 0
+    assert feedback['body'][87] == 1
     damage = next(p for p in result['send'] if p['reason'] == 'online-damage')
     assert battle_flow.decode_battle_result(damage['body']).target_rb_index == index
 

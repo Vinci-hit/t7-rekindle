@@ -95,3 +95,59 @@ def test_runtime_rejects_invalid_timeline_fields(change):
     send['request'] = json.dumps(request)
     with pytest.raises(ValueError):
         validateTransition(result, client.context)
+
+
+def test_combat_heartbeat_crosses_runtime_boundary_and_reserves_input_capacity():
+    from types import SimpleNamespace
+    from Business.runtime.host_runtime import validateTransition
+    client = calibrated()
+    gateway = client.state['sessions']['1']['customLobby']
+    timers = []
+    result = dict(state=client.state, send=[], timers=[], logs=[])
+    flow = SimpleNamespace(session=client.state['sessions']['1'],
+                           state=dict(onlineScene=dict(phase=3)), connection=1,
+                           now=1200, receivedAt=1200, result=result,
+                           later=lambda name, delay: timers.append((name, delay)))
+    online_clock.heartbeat(flow)
+    online_clock.heartbeat(flow)
+    before = len(gateway['pending'])
+    online_clock.heartbeat(flow)
+    assert len(gateway['pending']) == before == 2
+    requests = [json.loads(item['request']) for item in result['gateway']]
+    assert [item['timeline']['combatSeq'] for item in requests] == [1, 2]
+    assert all(item['command'] == dict(type='combatHeartbeat') for item in requests)
+    assert all(item['timeline']['source'] == 'heartbeat' for item in requests)
+    assert timers == [('online-combat-heartbeat', 50)] * 3
+    validateTransition(result, client.context)
+    client.reply(int(requests[0]['requestId']), 'pong', serverTimeMs=700)
+
+
+def test_combat_heartbeat_does_not_send_in_lobby_and_stops_after_leave():
+    from types import SimpleNamespace
+    client = calibrated()
+    timers = []
+    result = dict(state=client.state, send=[], timers=[], logs=[])
+    flow = SimpleNamespace(session=client.state['sessions']['1'], state={}, connection=1,
+                           now=1200, receivedAt=1200, result=result,
+                           later=lambda name, delay: timers.append((name, delay)))
+    online_clock.heartbeat(flow)
+    assert not result.get('gateway') and timers
+    flow.session['leaving'] = True
+    timers.clear()
+    online_clock.heartbeat(flow)
+    assert not result.get('gateway') and not timers
+
+
+def test_running_client_dispatches_combat_heartbeat_and_accepts_reply(monkeypatch, spawnPoints):
+    from test_online_actions import running
+    client = running(monkeypatch, spawnPoints)
+    gateway = client.state['sessions']['1']['customLobby']
+    gateway['clock'] = dict(epoch=EPOCH, offsetMs=0, uncertaintyMs=5, roundTripMs=10, samples=1, at=3000)
+    client.context['nowMs'] = 4000
+    result = client.event('timer', name='online-combat-heartbeat')
+    request = json.loads(next(item['request'] for item in result['gateway'] if item['op'] == 'send'))
+    assert request['command']['type'] == 'combatHeartbeat'
+    assert request['timeline']['sampledMs'] == 4000
+    reply = client.reply(int(request['requestId']), 'pong', serverTimeMs=4005)
+    assert not reply['send']
+    assert reply['gateway'][0]['op'] == 'ack'

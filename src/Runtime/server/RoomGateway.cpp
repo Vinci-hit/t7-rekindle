@@ -84,6 +84,25 @@ struct AsyncChannel {
     }
 };
 
+std::string motionFrame(const GatewayEffect& effect) {
+    if (effect.request.size() != 243 || effect.request.compare(0, 5, "T7M1:") != 0)
+        throw std::runtime_error("invalid binary motion envelope");
+    const auto nibble = [](char value) -> unsigned char {
+        if (value >= '0' && value <= '9') return static_cast<unsigned char>(value - '0');
+        if (value >= 'a' && value <= 'f') return static_cast<unsigned char>(value - 'a' + 10);
+        throw std::runtime_error("invalid binary motion encoding");
+    };
+    std::string frame(119, '\0');
+    for (size_t i = 0; i < frame.size(); ++i)
+        frame[i] = static_cast<char>((nibble(effect.request[5 + i * 2]) << 4) | nibble(effect.request[6 + i * 2]));
+    uint64_t sequence = 0;
+    for (unsigned i = 0; i < 8; ++i)
+        sequence |= static_cast<uint64_t>(static_cast<unsigned char>(frame[4 + i])) << (i * 8);
+    if (frame.compare(0, 4, "T7M1") != 0 || sequence == 0 || std::to_string(sequence) != effect.requestId)
+        throw std::runtime_error("invalid binary motion correlation");
+    return frame;
+}
+
 void checked(bool result) {
     if (!result) throw std::runtime_error("room gateway HTTP operation failed");
 }
@@ -171,8 +190,7 @@ RoomGateway::Batch RoomGateway::prepare(const std::vector<GatewayEffect>& effect
     for (const auto& effect : effects) {
         if (effect.op == "send" || effect.op == "snapshot") {
             if (effect.op == "snapshot") {
-                if (effect.request.find("\"type\":\"poseInput\"") == std::string::npos)
-                    throw std::runtime_error("invalid room gateway snapshot");
+                motionFrame(effect);
                 batch.sends.erase(std::remove_if(batch.sends.begin(), batch.sends.end(),
                     [](const GatewayEffect& queued) { return queued.op == "snapshot"; }), batch.sends.end());
             }
@@ -265,12 +283,17 @@ void RoomGateway::run(bool motion) {
                 if (Clock::now() - window >= std::chrono::seconds(1)) { window = Clock::now(); frames = 0; }
                 if (++frames > RoomGatewayFramesPerSecond || ++fragments > 32 || count > channel.buffer.size()
                         || message.size() + count > 65536
-                        || (type != WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE
-                            && type != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE))
+                        || (motion ? (type != WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE
+                                && type != WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE)
+                            : (type != WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE
+                                && type != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE)))
                     throw std::runtime_error("invalid room gateway message");
                 message.insert(message.end(), channel.buffer.begin(), channel.buffer.begin() + count);
-                if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) {
-                    wide(std::string(message.begin(), message.end()));
+                if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE || type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
+                    if (motion) {
+                        if (message.size() != 107 || !std::equal(message.begin(), message.begin() + 4, "T7S1"))
+                            throw std::runtime_error("invalid binary motion snapshot");
+                    } else wide(std::string(message.begin(), message.end()));
                     if (!receiver_(std::move(message))) throw std::runtime_error("room gateway inbound backpressure");
                     message.clear(); fragments = 0;
                     if (!motion) {
@@ -297,10 +320,10 @@ void RoomGateway::run(bool motion) {
                     auto effect = std::move(*next); sends_.erase(next);
                     if (effect.op != "snapshot") active_.emplace(effect.requestId, PendingRequest{now,
                         effect.request.find("\"type\":\"clockProbe\"") != std::string::npos});
-                    outgoing = std::move(effect.request);
+                    outgoing = motion ? motionFrame(effect) : std::move(effect.request);
                     sendPending = true;
                     lock.unlock();
-                    checked(WinHttpWebSocketSend(socket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                    checked(WinHttpWebSocketSend(socket, motion ? WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE : WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
                                                 outgoing.data(), static_cast<DWORD>(outgoing.size())) == NO_ERROR);
                 } else changed_.wait_for(lock, std::chrono::milliseconds(20));
             }
