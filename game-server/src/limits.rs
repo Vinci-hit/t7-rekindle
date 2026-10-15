@@ -72,3 +72,6 @@ impl RoomRules {
 pub const MAX_SWING_HISTORY: usize = ROOM_CAPACITY * 8;
 pub const ENEMY_FIRST_RID: u32 = 2;
 pub const FRIENDLY_FIRST_RID: u32 = ENEMY_FIRST_RID + TEAM_CAPACITY as u32;
+
+/// A transport outage reserves its logical session without extending the match.
+pub const RECONNECT_GRACE_MS: u64 = 60_000;

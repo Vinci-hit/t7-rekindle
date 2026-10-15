@@ -621,6 +621,17 @@ impl Combat {
         );
         Ok(())
     }
+    pub(crate) fn recovery(&self) -> (u64, Vec<Health>, Vec<u32>) {
+        (
+            self.event_seq,
+            self.health(),
+            self.fighters
+                .iter()
+                .filter_map(|f| matches!(f.life, Life::Dead { ready: true, .. }).then_some(f.id))
+                .collect(),
+        )
+    }
+
     pub(crate) fn take_events(&mut self) -> Vec<CombatEvent> {
         std::mem::take(&mut self.pending)
     }

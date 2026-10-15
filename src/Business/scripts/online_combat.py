@@ -34,7 +34,7 @@ def send(flow, kind, command, **metadata):
         if s.get('customLobby', {}).get('identified') and int(k) in flow.context.get('connections', [])]
     if len(gateways) != 1:
         raise ValueError('online combat requires the identified gateway')
-    if len(gateways[0][1]['customLobby']['pending']) >= 6:
+    if gateways[0][1]['customLobby'].get('paused') or len(gateways[0][1]['customLobby']['pending']) >= 6:
         return False
     connection, session = flow.connection, flow.session
     try:
@@ -66,7 +66,7 @@ def world_updated(flow):
         return
     local = raw.get('actors', {}).get('1', {})
     for event in sorted(journal['events'], key=lambda e: (e['occurredAt'], e['along'])):
-        if (event['actorId'] != 1 or event['state'] not in STRIKES or event['entity'] != local.get('entity')
+        if (event['occurredAt'] < state.get('resumeAt', 0) or event['actorId'] != 1 or event['state'] not in STRIKES or event['entity'] != local.get('entity')
                 or event['targetId'] not in (0, *online_scene.ids(flow)[1:], *(m['actorId'] for m in match.get('pve', {}).get('monsters', []))) or event['occurredAt'] < event['phaseAt']
                 or event['occurredAt'] - event['phaseAt'] > (1133 if event['state'] == 439 else 600)):
             continue

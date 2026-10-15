@@ -62,7 +62,7 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     assert online_pve.instance_id(rid)==1024
     assert online_scene.actor_rid(client.state['onlineScene'],rid)==rid
     assert online_scene.rid_actor(client.state['onlineScene'],rid)==rid
-    action=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,actionSeq=2,state=235,weaponId=11000002,durationMs=0,serverTimeMs=3500)
+    action=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,actionSeq=2,actionId=None,state=235,weaponId=11000002,durationMs=0,serverTimeMs=3500)
     result=client.reply(None,'actionChanged',action=action)
     assert battle_flow.decode_battle_state_sync_simple(result['send'][0]['body']).instance_id==1024
     pose=dict(position=[2.8,0.,.2],heading=180,forwardBack=-1,leftRight=0,running=False)

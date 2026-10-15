@@ -1027,10 +1027,11 @@ async fn pose_socket_never_overtakes_reliable_sequence_or_carries_action_events(
             .is_err()
     );
     motion.close(None).await.unwrap();
-    let closed = tokio::time::timeout(Duration::from_secs(2), reliable.next())
-        .await
-        .unwrap();
-    assert!(!matches!(closed, Some(Ok(Message::Text(_)))));
+    // Loss of the replaceable pose lane must not destroy the reliable session.
+    assert_eq!(
+        request(&mut reliable, 9, json!({"type":"ping"})).await["type"],
+        "pong"
+    );
     server.stop().await;
 }
 
@@ -1242,4 +1243,129 @@ async fn motion_lane_rejects_json_and_binary_input_never_enters_control_lane() {
         let _ = lane.close(None).await;
         server.stop().await;
     }
+}
+
+#[tokio::test]
+async fn reconnect_keeps_room_owner_roster_and_identity_without_reusing_login() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let server = TestServer::start(true).await;
+    let key = "ab".repeat(32);
+    let mut handshake = format!("ws://{}/ws", server.address)
+        .into_client_request()
+        .unwrap();
+    handshake
+        .headers_mut()
+        .insert("x-t7-motion-key", key.parse().unwrap());
+    let mut owner = connect_async(handshake).await.unwrap().0;
+    let welcome = request(
+        &mut owner,
+        1,
+        json!({"type":"hello","payload":{"accountId":"resume-owner"}}),
+    )
+    .await;
+    let created = request(
+        &mut owner,
+        2,
+        json!({"type":"createRoom","payload":{"name":"resume","mapId":1003}}),
+    )
+    .await;
+    let original = created["payload"]["room"].clone();
+    let mut peer = server.connect().await;
+    request(
+        &mut peer,
+        1,
+        json!({"type":"hello","payload":{"accountId":"resume-peer"}}),
+    )
+    .await;
+    let joined = request(
+        &mut peer,
+        2,
+        json!({"type":"joinRoom","payload":{"roomId":original["roomId"]}}),
+    )
+    .await;
+    let roster = joined["payload"]["room"]["members"].clone();
+    request(
+        &mut peer,
+        3,
+        json!({"type":"ready","payload":{"ready":true}}),
+    )
+    .await;
+    let loading = request(&mut owner, 3, json!({"type":"start"})).await;
+    let match_id = loading["payload"]["room"]["currentMatch"]["matchId"].clone();
+    request(
+        &mut owner,
+        4,
+        json!({"type":"loaded","payload":{"matchId":match_id}}),
+    )
+    .await;
+    request(
+        &mut peer,
+        4,
+        json!({"type":"loaded","payload":{"matchId":match_id}}),
+    )
+    .await;
+    room_phase(&mut owner, "running").await;
+    room_phase(&mut peer, "running").await;
+    request(&mut owner, 5, json!({"type":"actionInput","payload":{"matchId":match_id,"inputSeq":1,"intent":"blockRight"}})).await;
+    drop(owner); // Abrupt transport loss, no LeaveRoom.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut handshake = format!("ws://{}/ws/resume", server.address)
+        .into_client_request()
+        .unwrap();
+    handshake
+        .headers_mut()
+        .insert("x-t7-motion-key", key.parse().unwrap());
+    let mut resumed = connect_async(handshake).await.unwrap().0;
+    let event = receive(&mut resumed).await;
+    assert_eq!(event["event"]["type"], "sessionResumed");
+    let payload = &event["event"]["payload"];
+    assert_eq!(payload["userId"], welcome["payload"]["userId"]);
+    assert_eq!(payload["room"]["roomId"], original["roomId"]);
+    assert_eq!(payload["room"]["ownerAccountId"], "resume-owner");
+    assert_eq!(payload["room"]["phase"], "running");
+    assert_eq!(payload["room"]["currentMatch"]["matchId"], match_id);
+    assert_eq!(
+        payload["room"]["members"].as_array().unwrap().len(),
+        roster.as_array().unwrap().len()
+    );
+    assert_eq!(payload["recovery"]["lives"][0]["health"], 100);
+    assert_eq!(payload["recovery"]["actions"][0]["state"], 2);
+    assert_eq!(
+        request(&mut resumed, 6, json!({"type":"ping"})).await["type"],
+        "pong"
+    );
+    assert_eq!(
+        request(&mut resumed, 7, json!({"type":"leaveRoom"})).await["type"],
+        "left"
+    );
+    let leaving = receive(&mut peer).await;
+    // Drain any earlier join notification before the owner's explicit departure.
+    let mut leaving = leaving;
+    while leaving["event"]["type"] != "roomChanged"
+        || leaving["event"]["payload"]["room"]["members"]
+            .as_array()
+            .is_none_or(|m| m.len() != 1)
+    {
+        leaving = receive(&mut peer).await;
+    }
+    assert_eq!(
+        leaving["event"]["payload"]["room"]["ownerAccountId"],
+        "resume-peer"
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn reconnect_rejects_unknown_capabilities() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let server = TestServer::start(true).await;
+    let mut handshake = format!("ws://{}/ws/resume", server.address)
+        .into_client_request()
+        .unwrap();
+    handshake
+        .headers_mut()
+        .insert("x-t7-motion-key", "cd".repeat(32).parse().unwrap());
+    let error = connect_async(handshake).await.unwrap_err();
+    assert!(matches!(error, Error::Http(response) if response.status() == 401));
+    server.stop().await;
 }

@@ -285,8 +285,13 @@ impl Router {
 
     fn buffer_handoff(&mut self, command: Command) -> Option<Command> {
         let id = match &command {
-            Command::Request { id, .. } | Command::Closed { id } => Some(id.clone()),
-            Command::AttachMotion { key, .. } => self.lobby.motion_keys.get(key).cloned(),
+            Command::Request { id, .. }
+            | Command::Closed { id }
+            | Command::Detached { id, .. }
+            | Command::MotionClosed { id, .. } => Some(id.clone()),
+            Command::AttachMotion { key, .. } | Command::Resume { key, .. } => {
+                self.lobby.motion_keys.get(key).cloned()
+            }
             _ => None,
         };
         let Some(id) = id else {
@@ -332,7 +337,18 @@ impl Router {
                                 .map(|(id, _)| id.clone()).collect();
                             for id in members { self.forget_route(&id); }
                         }
+                        // Room actors expire retained seats; then release their global routes.
+                        let stale: Vec<_> = self.routes.iter().filter(|(id, route)| {
+                            !self.waiting.contains_key(*id) && self.workers.get(&route.room).is_some_and(|w| {
+                                let directory = w.directory.borrow();
+                                directory.as_ref().is_none_or(|room| !room.members.iter().any(|m|
+                                    self.lobby.accounts.get(&m.account_id) == Some(*id)))
+                            })
+                        }).map(|(id, _)| id.clone()).collect();
+                        for id in stale { self.forget_route(&id); }
                         let now = started.elapsed().as_millis() as u64;
+                        self.lobby.expire_detached(now);
+                        self.guests.retain(|id| self.routes.contains_key(id) || self.lobby.connections.contains_key(id));
                         let expired: Vec<_> = self.lobby.connections.iter().filter(|(_, c)|
                             c.account.is_none() && now.saturating_sub(c.connected_at_ms) >= 10_000)
                             .map(|(id, _)| id.clone()).collect();
@@ -356,6 +372,24 @@ impl Router {
                         self.guests.insert(id.clone());
                     }
                     self.lobby.process(command, now, commands.len());
+                }
+                Command::Resume {
+                    ref key,
+                    ref closing,
+                    ..
+                } => {
+                    let route =
+                        self.lobby.motion_keys.get(key).and_then(|id| {
+                            self.routes.get(id).map(|r| (id.clone(), r.room.clone()))
+                        });
+                    if let Some((id, room)) = route {
+                        if let Some(route) = self.routes.get_mut(&id) {
+                            route.closing = closing.clone();
+                        }
+                        self.forward(&room, &id, command);
+                    } else {
+                        self.lobby.process(command, now, commands.len());
+                    }
                 }
                 Command::AttachMotion { ref key, .. } => {
                     let route =
@@ -443,6 +477,30 @@ impl Router {
                         self.spawn_room(&id, started, shutdown.clone());
                     }
                 }
+                Command::Detached { ref id, .. } | Command::MotionClosed { ref id, .. } => {
+                    let id = id.clone();
+                    if matches!(command, Command::Detached { .. })
+                        && !self.lobby.motion_keys.values().any(|owner| owner == &id)
+                    {
+                        if let Some(room) = self.routes.get(&id).map(|r| r.room.clone()) {
+                            self.forward(&room, &id, Command::Closed { id: id.clone() });
+                            self.forget_route(&id);
+                        } else {
+                            self.lobby.process(
+                                Command::Closed { id: id.clone() },
+                                now,
+                                commands.len(),
+                            );
+                            self.guests.remove(&id);
+                        }
+                        continue;
+                    }
+                    if let Some(room) = self.routes.get(&id).map(|r| r.room.clone()) {
+                        self.forward(&room, &id, command);
+                    } else {
+                        self.lobby.process(command, now, commands.len());
+                    }
+                }
                 Command::Closed { ref id } => {
                     let id = id.clone();
                     if let Some(room) = self.routes.get(&id).map(|r| r.room.clone()) {
@@ -462,8 +520,10 @@ impl Router {
                 _ => unreachable!("ownership commands are private to room actors"),
             }
             while let Some(id) = self.lobby.failed.pop() {
-                self.lobby.disconnect(&id);
-                self.guests.remove(&id);
+                self.lobby.detach(&id, now, "outgoing queue unavailable");
+                if !self.lobby.connections.contains_key(&id) {
+                    self.guests.remove(&id);
+                }
             }
         }
         for route in self.routes.values() {

@@ -169,6 +169,8 @@ def receive(flow, value):
     if len(instances) != 1:
         raise ValueError('online pose requires one live instance')
     connection, session = instances[0]
+    if event_sequence <= ledger(session)['eventSeq']:
+        return
     if online_pve.monster_id(actor):
         online_pve.pose(flow,value,connection,session)
         return

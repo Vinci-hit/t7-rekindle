@@ -4,6 +4,9 @@
 
 namespace t7 {
 inline constexpr size_t RoomGatewayFramesPerSecond = 1024;
+inline constexpr size_t RoomGatewayMessageBytes = 256 * 1024;
+inline constexpr int RoomGatewayReconnectSeconds = 60;
+inline constexpr int RoomGatewayRetryMs = 1000;
 
 struct RoomGatewaySettings {
     unsigned short port = 8090;

@@ -112,6 +112,20 @@ pub struct RoomSnapshot {
     pub last_abort_reason: Option<&'static str>,
 }
 
+/// Current authority only; reconnect never replays expired contacts or reactions.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recovery {
+    pub action_seq: u64,
+    pub combat_seq: u64,
+    pub pose_seq: u64,
+    pub pve_seq: u64,
+    pub actions: Vec<crate::battle::ActionEvent>,
+    pub poses: Vec<crate::motion::PoseEvent>,
+    pub lives: Vec<crate::combat::Health>,
+    pub respawn_ready: Vec<u32>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GameMode {
@@ -738,6 +752,42 @@ impl RoomState {
             _ => Vec::new(),
         }
     }
+    pub(crate) fn pause_input(&mut self, account: &str, now: u64) {
+        if let Self::Running(room) = self {
+            if let Some(actor) = room
+                .data
+                .members
+                .iter()
+                .find(|m| m.account_id == account)
+                .map(|m| m.actor_id)
+            {
+                room.state.battle.pause_input(actor, now);
+                room.state.motion.pause_input(actor, now);
+            }
+        }
+    }
+
+    pub(crate) fn recovery(&self, now: u64) -> Option<Recovery> {
+        let state = match self {
+            Self::Running(room) => &room.state,
+            Self::Settling(room) => &room.state.running,
+            _ => return None,
+        };
+        let (action_seq, actions) = state.battle.recovery(now);
+        let (combat_seq, lives, respawn_ready) = state.combat.recovery();
+        let (pose_seq, poses) = state.motion.recovery();
+        Some(Recovery {
+            action_seq,
+            combat_seq,
+            pose_seq,
+            pve_seq: state.pve.as_ref().map_or(0, |p| p.event_sequence()),
+            actions,
+            poses,
+            lives,
+            respawn_ready,
+        })
+    }
+
     pub fn take_action_events(&mut self) -> Vec<crate::battle::ActionEvent> {
         match self {
             Self::Running(room) => room.state.battle.take_events(),

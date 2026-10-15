@@ -29,7 +29,7 @@ struct AsyncChannel {
     std::vector<HINTERNET> handles;
     size_t closed = 0;
     bool sentRequest = false, headers = false, wrote = false, read = false, failed = false;
-    DWORD readBytes = 0;
+    DWORD readBytes = 0, error = 0;
     WINHTTP_WEB_SOCKET_BUFFER_TYPE readType{};
     std::array<unsigned char, 8192> buffer{};
 
@@ -47,7 +47,11 @@ struct AsyncChannel {
             self.readType = static_cast<WINHTTP_WEB_SOCKET_STATUS*>(info)->eBufferType;
             self.read = true;
             break;
-        case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR: self.failed = true; break;
+        case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+            self.failed = true;
+            if (info && length >= sizeof(WINHTTP_ASYNC_RESULT))
+                self.error = static_cast<WINHTTP_ASYNC_RESULT*>(info)->dwError;
+            break;
         case WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING: ++self.closed; break;
         }
         self.changed.notify_all();
@@ -104,7 +108,7 @@ std::string motionFrame(const GatewayEffect& effect) {
 }
 
 void checked(bool result) {
-    if (!result) throw std::runtime_error("room gateway HTTP operation failed");
+    if (!result) throw std::runtime_error("room gateway HTTP error " + std::to_string(GetLastError()));
 }
 }
 
@@ -184,9 +188,15 @@ RoomGateway::Batch RoomGateway::prepare(const std::vector<GatewayEffect>& effect
             if (!batch.acknowledge.empty() || !active_.count(effect.requestId))
                 throw std::runtime_error("room gateway correlation mismatch");
             batch.acknowledge = effect.requestId;
+        } else if (effect.op == "reset" || effect.op == "resume") {
+            if (!reconnecting_ || batch.reset || batch.resumed || !batch.acknowledge.empty())
+                throw std::runtime_error("invalid room gateway recovery transition");
+            batch.reset = effect.op == "reset";
+            batch.resumed = effect.op == "resume";
+            if (batch.reset) batch.sends.clear();
         } else if (effect.op != "send" && effect.op != "snapshot") throw std::runtime_error("room gateway correlation mismatch");
     }
-    const auto retained = active_.size() - (batch.acknowledge.empty() ? 0 : 1);
+    const auto retained = batch.reset ? 0 : active_.size() - (batch.acknowledge.empty() ? 0 : 1);
     for (const auto& effect : effects) {
         if (effect.op == "send" || effect.op == "snapshot") {
             if (effect.op == "snapshot") {
@@ -208,6 +218,8 @@ RoomGateway::Batch RoomGateway::prepare(const std::vector<GatewayEffect>& effect
 }
 void RoomGateway::Batch::commit() noexcept {
     owner.sends_.swap(sends);
+    if (reset) { owner.active_.clear(); owner.resetPending_ = false; }
+    if (resumed) { owner.reconnecting_ = false; owner.motionStart_ = true; }
     if (!acknowledge.empty()) {
         const auto pending = owner.active_.find(acknowledge);
         if (pending->second.latencyProbe) {
@@ -220,124 +232,180 @@ void RoomGateway::Batch::commit() noexcept {
 }
 
 void RoomGateway::run(bool motion) {
-    const auto cancelled = [this] { std::lock_guard<std::mutex> lock(mutex_); return stopping_; };
-    try {
+    auto deadline = Clock::time_point::max();
+    bool resume = false;
+    for (;;) {
+        uint64_t generation;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            changed_.wait(lock, [this, motion] { return stopping_ || (motion ? motionStart_ : !sends_.empty()); });
+            changed_.wait(lock, [this, motion] { return stopping_ || !motion || (motionStart_ && !reconnecting_ && !restart_); });
             if (stopping_) return;
+            generation = generation_;
         }
-        Handle session{WinHttpOpen(L"T7-Rekindle", WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC)};
-        checked(session.value != nullptr);
-        checked(WinHttpSetTimeouts(session.value, 8000, 8000, 8000, 8000));
-        const std::wstring host(settings_.host.begin(), settings_.host.end());
-        Handle connection{WinHttpConnect(session.value, host.c_str(), settings_.port, 0)};
-        checked(connection.value != nullptr);
-        std::string outgoing;
-        Bytes message;
-        AsyncChannel channel(changed_);
-        // Reserve before registering callbacks, so cleanup never loses a handle.
-        channel.handles.reserve(2);
-        auto request = WinHttpOpenRequest(connection.value, L"GET", motion ? L"/ws/motion" : L"/ws", nullptr,
-                                         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, settings_.secure ? WINHTTP_FLAG_SECURE : 0);
-        channel.attach(request);
-        DWORD disabled = WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION;
-        checked(WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)));
-        checked(WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0));
-        std::wstring authorization = L"X-T7-Motion-Key: " + std::wstring(motionKey_.begin(), motionKey_.end()) + L"\r\n";
-        if (!motion && !settings_.ticket.empty()) {
-            authorization += L"Authorization: Bearer " + std::wstring(settings_.ticket.begin(), settings_.ticket.end()) + L"\r\n";
-        }
-        checked(WinHttpSendRequest(request, authorization.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : authorization.c_str(),
-                                  static_cast<DWORD>(authorization.size()),
-                                  WINHTTP_NO_REQUEST_DATA, 0, 0, reinterpret_cast<DWORD_PTR>(&channel)));
-        channel.wait(channel.sentRequest, cancelled);
-        checked(WinHttpReceiveResponse(request, nullptr));
-        channel.wait(channel.headers, cancelled);
-        DWORD status = 0, size = sizeof(status);
-        checked(WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX));
-        checked(status == 101);
-        auto socket = WinHttpWebSocketCompleteUpgrade(request, reinterpret_cast<DWORD_PTR>(&channel));
-        channel.attach(socket);
-
-        bool receivePending = false, sendPending = false;
-        size_t fragments = 0, frames = 0;
-        auto window = Clock::now();
-        while (!cancelled()) {
-            bool read = false, wrote = false, failed = false;
-            DWORD count = 0;
-            WINHTTP_WEB_SOCKET_BUFFER_TYPE type{};
-            {
-                std::lock_guard<std::mutex> lock(channel.mutex);
-                read = std::exchange(channel.read, false);
-                wrote = std::exchange(channel.wrote, false);
-                failed = channel.failed;
-                count = channel.readBytes; type = channel.readType;
-            }
-            if (failed) throw std::runtime_error("room gateway I/O failed");
-            if (wrote) { sendPending = false; outgoing.clear(); }
-            if (read) {
-                receivePending = false;
-                if (Clock::now() - window >= std::chrono::seconds(1)) { window = Clock::now(); frames = 0; }
-                if (++frames > RoomGatewayFramesPerSecond || ++fragments > 32 || count > channel.buffer.size()
-                        || message.size() + count > 65536
-                        || (motion ? (type != WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE
-                                && type != WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE)
-                            : (type != WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE
-                                && type != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE)))
-                    throw std::runtime_error("invalid room gateway message");
-                message.insert(message.end(), channel.buffer.begin(), channel.buffer.begin() + count);
-                if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE || type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
-                    if (motion) {
-                        if (message.size() != 107 || !std::equal(message.begin(), message.begin() + 4, "T7S1"))
-                            throw std::runtime_error("invalid binary motion snapshot");
-                    } else wide(std::string(message.begin(), message.end()));
-                    if (!receiver_(std::move(message))) throw std::runtime_error("room gateway inbound backpressure");
-                    message.clear(); fragments = 0;
-                    if (!motion) {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        motionStart_ = true;
-                        changed_.notify_all();
-                    }
-                }
-            }
-            if (!receivePending) {
-                checked(WinHttpWebSocketReceive(socket, channel.buffer.data(), static_cast<DWORD>(channel.buffer.size()),
-                                               nullptr, nullptr) == NO_ERROR);
-                receivePending = true;
-            }
+        const auto cancelled = [this, generation] {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return stopping_ || generation != generation_ || restart_;
+        };
+        try {
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                const auto now = Clock::now();
-                if (!motion && std::any_of(active_.begin(), active_.end(),
-                        [&](const auto& request) { return now - request.second.sentAt >= std::chrono::seconds(8); }))
-                    throw std::runtime_error("room gateway reply timeout");
-                const auto next = std::find_if(sends_.begin(), sends_.end(),
-                    [motion](const GatewayEffect& effect) { return (effect.op == "snapshot") == motion; });
-                if (!stopping_ && !sendPending && next != sends_.end()) {
-                    auto effect = std::move(*next); sends_.erase(next);
-                    if (effect.op != "snapshot") active_.emplace(effect.requestId, PendingRequest{now,
-                        effect.request.find("\"type\":\"clockProbe\"") != std::string::npos});
-                    outgoing = motion ? motionFrame(effect) : std::move(effect.request);
-                    sendPending = true;
-                    lock.unlock();
-                    checked(WinHttpWebSocketSend(socket, motion ? WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE : WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                                outgoing.data(), static_cast<DWORD>(outgoing.size())) == NO_ERROR);
-                } else changed_.wait_for(lock, std::chrono::milliseconds(20));
+                changed_.wait(lock, [this, motion, resume] { return stopping_ || (motion ? motionStart_ : (resume || !sends_.empty())); });
+                if (stopping_) return;
             }
+            Handle session{WinHttpOpen(L"T7-Rekindle", WINHTTP_ACCESS_TYPE_NO_PROXY,
+                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC)};
+            checked(session.value != nullptr);
+            checked(WinHttpSetTimeouts(session.value, 8000, 8000, 8000, 8000));
+            const std::wstring host(settings_.host.begin(), settings_.host.end());
+            Handle connection{WinHttpConnect(session.value, host.c_str(), settings_.port, 0)};
+            checked(connection.value != nullptr);
+            std::string outgoing;
+            Bytes message;
+            AsyncChannel channel(changed_);
+            // Reserve before registering callbacks, so cleanup never loses a handle.
+            channel.handles.reserve(2);
+            auto request = WinHttpOpenRequest(connection.value, L"GET", motion ? L"/ws/motion" : (resume ? L"/ws/resume" : L"/ws"), nullptr,
+                                             WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, settings_.secure ? WINHTTP_FLAG_SECURE : 0);
+            channel.attach(request);
+            DWORD disabled = WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_AUTHENTICATION;
+            checked(WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)));
+            checked(WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0));
+            std::wstring authorization = L"X-T7-Motion-Key: " + std::wstring(motionKey_.begin(), motionKey_.end()) + L"\r\n";
+            if (!motion && !resume && !settings_.ticket.empty()) {
+                authorization += L"Authorization: Bearer " + std::wstring(settings_.ticket.begin(), settings_.ticket.end()) + L"\r\n";
+            }
+            checked(WinHttpSendRequest(request, authorization.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : authorization.c_str(),
+                                      static_cast<DWORD>(authorization.size()),
+                                      WINHTTP_NO_REQUEST_DATA, 0, 0, reinterpret_cast<DWORD_PTR>(&channel)));
+            channel.wait(channel.sentRequest, cancelled);
+            checked(WinHttpReceiveResponse(request, nullptr));
+            channel.wait(channel.headers, cancelled);
+            DWORD status = 0, size = sizeof(status);
+            checked(WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX));
+            if (status != 101) throw std::runtime_error("room gateway HTTP status " + std::to_string(status));
+            auto socket = WinHttpWebSocketCompleteUpgrade(request, reinterpret_cast<DWORD_PTR>(&channel));
+            channel.attach(socket);
+
+            bool receivePending = false, sendPending = false;
+            size_t fragments = 0, frames = 0;
+            auto window = Clock::now();
+            while (!cancelled()) {
+                bool read = false, wrote = false, failed = false;
+                DWORD count = 0, error = 0;
+                WINHTTP_WEB_SOCKET_BUFFER_TYPE type{};
+                {
+                    std::lock_guard<std::mutex> lock(channel.mutex);
+                    read = std::exchange(channel.read, false);
+                    wrote = std::exchange(channel.wrote, false);
+                    failed = channel.failed; error = channel.error;
+                    count = channel.readBytes; type = channel.readType;
+                }
+                if (failed) throw std::runtime_error("room gateway I/O error " + std::to_string(error));
+                if (wrote) { sendPending = false; outgoing.clear(); }
+                if (read) {
+                    receivePending = false;
+                    if (Clock::now() - window >= std::chrono::seconds(1)) { window = Clock::now(); frames = 0; }
+                    if (type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) {
+                        USHORT closeStatus = 0;
+                        DWORD reasonBytes = 0;
+                        WinHttpWebSocketQueryCloseStatus(socket, &closeStatus, nullptr, 0, &reasonBytes);
+                        throw std::runtime_error("room gateway peer closed " + std::to_string(closeStatus));
+                    }
+                    if (++frames > RoomGatewayFramesPerSecond || ++fragments > 32 || count > channel.buffer.size()
+                            || message.size() + count > RoomGatewayMessageBytes
+                            || (motion ? (type != WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE
+                                    && type != WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE)
+                                : (type != WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE
+                                    && type != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE)))
+                        throw std::runtime_error("invalid room gateway message");
+                    message.insert(message.end(), channel.buffer.begin(), channel.buffer.begin() + count);
+                    if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE || type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
+                        if (motion) {
+                            if (message.size() != 107 || !std::equal(message.begin(), message.begin() + 4, "T7S1"))
+                                throw std::runtime_error("invalid binary motion snapshot");
+                        } else wide(std::string(message.begin(), message.end()));
+                        if (!receiver_(std::move(message))) throw std::runtime_error("room gateway inbound backpressure");
+                        message.clear(); fragments = 0;
+                        if (!motion && resume) {
+                            std::unique_lock<std::mutex> lock(mutex_);
+                            // Apply the snapshot before observing another failure, so the
+                            // next outage starts a distinct pause/resume transaction.
+                            changed_.wait_for(lock, std::chrono::seconds(8), [this] { return stopping_ || !reconnecting_; });
+                            if (stopping_) return;
+                            if (reconnecting_) throw std::runtime_error("room recovery apply timeout");
+                        }
+                        if (!motion) {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            motionStart_ = true;
+                            changed_.notify_all();
+                        }
+                    }
+                }
+                if (!receivePending) {
+                    checked(WinHttpWebSocketReceive(socket, channel.buffer.data(), static_cast<DWORD>(channel.buffer.size()),
+                                                   nullptr, nullptr) == NO_ERROR);
+                    receivePending = true;
+                }
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    const auto now = Clock::now();
+                    if (!motion && std::any_of(active_.begin(), active_.end(),
+                            [&](const auto& request) { return now - request.second.sentAt >= std::chrono::seconds(8); }))
+                        throw std::runtime_error("room gateway reply timeout");
+                    const auto next = std::find_if(sends_.begin(), sends_.end(),
+                        [motion](const GatewayEffect& effect) { return (effect.op == "snapshot") == motion; });
+                    if (!stopping_ && !reconnecting_ && !sendPending && next != sends_.end()) {
+                        auto effect = std::move(*next); sends_.erase(next);
+                        if (effect.op != "snapshot") active_.emplace(effect.requestId, PendingRequest{now,
+                            effect.request.find("\"type\":\"clockProbe\"") != std::string::npos});
+                        outgoing = motion ? motionFrame(effect) : std::move(effect.request);
+                        sendPending = true;
+                        lock.unlock();
+                        checked(WinHttpWebSocketSend(socket, motion ? WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE : WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                                    outgoing.data(), static_cast<DWORD>(outgoing.size())) == NO_ERROR);
+                    } else changed_.wait_for(lock, std::chrono::milliseconds(20));
+                }
+            }
+            if (cancelled()) throw std::runtime_error("room gateway channel replaced");
+        } catch (const std::exception& error) {
+            bool pause = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (stopping_) return;
+                if (motion) {
+                    if (generation == generation_ && !reconnecting_) restart_ = true;
+                    changed_.notify_all();
+                } else if (!reconnecting_) {
+                    reconnecting_ = true; resetPending_ = true; restart_ = false;
+                    motionStart_ = false; ++generation_; latencyMs_ = UINT32_MAX;
+                    pause = true;
+                    deadline = Clock::now() + std::chrono::seconds(RoomGatewayReconnectSeconds);
+                    changed_.notify_all();
+                }
+            }
+            if (motion) continue;
+            if (pause) {
+                std::string reason;
+                for (const char c : std::string(error.what())) {
+                    if (c == '"' || c == '\\') reason += '\\';
+                    if (static_cast<unsigned char>(c) >= 32) reason += c;
+                }
+                const std::string notice = "{\"protocolVersion\":1,\"event\":{\"type\":\"transportPaused\",\"payload\":{\"reason\":\"" + reason + "\"}}}";
+                if (!receiver_(Bytes(notice.begin(), notice.end()))) {
+                    failure_(); return;
+                }
+            }
+            std::unique_lock<std::mutex> lock(mutex_);
+            changed_.wait_until(lock, deadline, [this] { return stopping_ || !resetPending_; });
+            if (stopping_) return;
+            if (Clock::now() >= deadline) {
+                stopping_ = true; changed_.notify_all(); lock.unlock(); failure_(); return;
+            }
+            changed_.wait_for(lock, std::chrono::milliseconds(RoomGatewayRetryMs), [this] { return stopping_; });
+            if (stopping_) return;
+            resume = true;
         }
-    } catch (...) {
-        bool notify;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            notify = !stopping_;
-            stopping_ = true;
-            latencyMs_ = UINT32_MAX;
-            changed_.notify_all();
-        }
-        if (notify) failure_();
     }
 }
 }

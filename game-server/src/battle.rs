@@ -403,6 +403,42 @@ impl Battle {
             .map(|a| a.weapon_id)
     }
 
+    pub(crate) fn pause_input(&mut self, id: u32, now: u64) {
+        let Some(actor) = self.actors.iter_mut().find(|a| a.id.0 == id) else {
+            return;
+        };
+        actor.active = None;
+        actor.buffered_reaction = None;
+        if !actor.disabled && actor.reaction_until.is_none() {
+            self.react(id, 2, now, 0, false, None);
+        }
+    }
+
+    pub(crate) fn recovery(&self, now: u64) -> (u64, Vec<ActionEvent>) {
+        (
+            self.event_seq,
+            self.actors
+                .iter()
+                .map(|actor| {
+                    let sample = actor.history.back();
+                    ActionEvent {
+                        room_id: self.room_id.clone(),
+                        match_id: self.match_id.clone(),
+                        actor_id: actor.id,
+                        event_seq: self.event_seq,
+                        action_seq: actor.action_seq,
+                        action_id: sample.and_then(|s| s.action_id),
+                        state: sample.map_or(2, |s| s.state),
+                        weapon_id: actor.weapon_id,
+                        duration_ms: actor.reaction_until.map_or(0, |t| t.saturating_sub(now)),
+                        server_time_ms: now,
+                        target_actor_id: None,
+                    }
+                })
+                .collect(),
+        )
+    }
+
     pub fn take_events(&mut self) -> Vec<ActionEvent> {
         std::mem::take(&mut self.pending)
     }

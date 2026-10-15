@@ -36,6 +36,8 @@ def valid(session):
             if guid(sequence) >= next_id or item["kind"] not in (
                     "hello", "ping", "clock-echo", "combat-heartbeat", "channels", "list", "get", "create", "join", "quit", "ready", "camp", "start", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn", "pve-create", "pve-start"):
                 return False
+        if "paused" in gateway and type(gateway["paused"]) is not bool:
+            return False
         if gateway["identified"]:
             integer(gateway["userId"], 1, 0xffffffff)
             integer(gateway["level"], 1)
@@ -105,6 +107,8 @@ def effect(flow, op, request_id, request=""):
 
 def send(flow, kind, command, **metadata):
     gateway = flow.session["customLobby"]
+    if gateway.get("paused"):
+        return
     if len(gateway["pending"]) >= 8:
         raise ValueError("room gateway request capacity exceeded")
     request_id = str(gateway["nextId"])
@@ -126,6 +130,8 @@ def send(flow, kind, command, **metadata):
 def snapshot(flow, command):
     """Latest-value state has no application acknowledgement or pending request."""
     gateway = flow.session['customLobby']
+    if gateway.get('paused'):
+        return
     request_id = str(gateway['nextId'])
     if gateway['nextId'] >= 0xffffffffffffffff:
         raise ValueError('room gateway request sequence exhausted')
@@ -238,7 +244,7 @@ def _pairs(pairs):
     return result
 
 
-def changed(flow, room):
+def changed(flow, room, *, force=False):
     gateway = flow.session["customLobby"]
     previous = gateway.get("room")
     if previous is None:
@@ -250,7 +256,7 @@ def changed(flow, room):
     if any(room[key] != previous[key] for key in ('roomGuid', 'roomNumber', 'channelId')):
         raise ValueError('room notification changed the directory identity')
     revision = integer(room["revision"], 1, 0xffffffffffffffff)
-    if revision <= previous["revision"]:
+    if not force and revision <= previous["revision"]:
         return
     current = full_room(room, active=True)
     old = full_room(previous, active=True)
@@ -430,7 +436,7 @@ def closed(flow, role):
 
 
 def receive(flow, body):
-    if type(body) is not bytes or len(body) > 65536:
+    if type(body) is not bytes or len(body) > 256 * 1024:
         raise ValueError("invalid room service body")
     if body.startswith(b'T7S1'):
         from .codec import motion_wire
@@ -443,6 +449,15 @@ def receive(flow, body):
     message = envelope["event"]
     request_id = envelope.get("requestId")
     gateway = flow.session["customLobby"]
+    if request_id is None and message['type'] in ('transportPaused', 'sessionResumed'):
+        from . import online_recovery
+        if message['type'] == 'transportPaused':
+            online_recovery.pause(flow, message["payload"])
+        else:
+            online_recovery.resume(flow, message['payload'])
+        return
+    if gateway.get('paused'):
+        return
     if request_id is None:
         if message['type'] == 'pveChanged':
             online_pve.receive(flow, message['payload']['update'])

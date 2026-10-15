@@ -107,6 +107,7 @@ impl GameServer {
             .route("/ready", get(health))
             .route("/ws", get(upgrade))
             .route("/ws/motion", get(upgrade_motion))
+            .route("/ws/resume", get(upgrade_resume))
             .route(
                 "/auth/guest",
                 post(guest).layer(axum::extract::DefaultBodyLimit::max(4096)),
@@ -303,8 +304,91 @@ async fn upgrade(
         .max_frame_size(MAX_REQUEST_BYTES)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            connection(socket, state, authorized, motion_key, None).await;
+            connection(socket, state, authorized, motion_key, None, None).await;
         })
+}
+
+// A retained channel capability resumes the same identity; login tickets stay one-use.
+async fn upgrade_resume(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if *state.shutdown.borrow() || headers.contains_key(header::ORIGIN) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(key) = headers
+        .get("x-t7-motion-key")
+        .and_then(|h| h.to_str().ok())
+        .filter(|key| valid_motion_key(key))
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let Ok(permit) = state.slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let generation = uuid::Uuid::new_v4().to_string();
+    let (outgoing, output) = mpsc::channel(OUTPUT_QUEUE_SIZE);
+    let (closing, closing_rx) = watch::channel(false);
+    let (accepted, acceptance) = oneshot::channel();
+    if state
+        .commands
+        .try_send(Command::Resume {
+            key: key.to_owned(),
+            generation: generation.clone(),
+            outgoing: outgoing.clone(),
+            closing,
+            accepted,
+        })
+        .is_err()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Ok(Ok(Some(id))) = tokio::time::timeout(Duration::from_secs(2), acceptance).await else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let cleanup = state.commands.clone();
+    let failed_id = id.clone();
+    let failed_generation = generation.clone();
+    ws.max_message_size(MAX_REQUEST_BYTES)
+        .max_frame_size(MAX_REQUEST_BYTES)
+        .on_failed_upgrade(move |_| {
+            tokio::spawn(async move {
+                let _ = cleanup
+                    .send(Command::Detached {
+                        id: failed_id,
+                        generation: failed_generation,
+                        reason: "resume upgrade failed",
+                    })
+                    .await;
+            });
+        })
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            connection(
+                socket,
+                state,
+                None,
+                None,
+                None,
+                Some(ResumeSocket {
+                    id,
+                    generation,
+                    output,
+                    outgoing,
+                    closing_rx,
+                }),
+            )
+            .await;
+        })
+}
+
+struct ResumeSocket {
+    id: String,
+    generation: String,
+    output: mpsc::Receiver<ServerEvent>,
+    outgoing: mpsc::Sender<ServerEvent>,
+    closing_rx: watch::Receiver<bool>,
 }
 
 fn valid_motion_key(key: &str) -> bool {
@@ -361,11 +445,17 @@ async fn upgrade_motion(
     };
     let cleanup = state.commands.clone();
     let failed_id = id.clone();
+    let failed_output = output.clone();
     ws.max_message_size(MAX_REQUEST_BYTES)
         .max_frame_size(MAX_REQUEST_BYTES)
         .on_failed_upgrade(move |_| {
             tokio::spawn(async move {
-                let _ = cleanup.send(Command::Closed { id: failed_id }).await;
+                let _ = cleanup
+                    .send(Command::MotionClosed {
+                        id: failed_id,
+                        output: failed_output,
+                    })
+                    .await;
             });
         })
         .on_upgrade(move |socket| async move {
@@ -384,6 +474,7 @@ async fn upgrade_motion(
                         wake: wake_rx,
                     },
                 )),
+                None,
             )
             .await;
         })
@@ -495,6 +586,22 @@ enum Command {
         request: ClientRequest,
         queued_at: Instant,
     },
+    Resume {
+        key: String,
+        generation: String,
+        outgoing: mpsc::Sender<ServerEvent>,
+        closing: watch::Sender<bool>,
+        accepted: oneshot::Sender<Option<String>>,
+    },
+    Detached {
+        id: String,
+        generation: String,
+        reason: &'static str,
+    },
+    MotionClosed {
+        id: String,
+        output: Arc<MotionOutput>,
+    },
     Closed {
         id: String,
     },
@@ -540,11 +647,22 @@ async fn connection(
     authorized: Option<GuestIdentity>,
     motion_key: Option<String>,
     motion: Option<MotionSocket>,
+    resume: Option<ResumeSocket>,
 ) {
+    let generation = resume.as_ref().map(|r| r.generation.clone());
     let is_motion = motion.is_some();
     let (id, mut output, closing_rx, replies, poses, motion_output) =
         if let Some((id, output, closing, poses)) = motion {
             (id, None, closing, None, Some(poses), Some(output))
+        } else if let Some(resume) = resume {
+            (
+                resume.id,
+                Some(resume.output),
+                resume.closing_rx,
+                Some(resume.outgoing),
+                None,
+                None,
+            )
         } else {
             let id = uuid::Uuid::new_v4().to_string();
             let (outgoing, output) = mpsc::channel(OUTPUT_QUEUE_SIZE);
@@ -569,6 +687,8 @@ async fn connection(
             (id, Some(output), closing_rx, Some(replies), None, None)
         };
 
+    let generation = generation.unwrap_or_else(|| id.clone());
+    let motion_cleanup = motion_output.clone();
     let (mut writer, mut reader) = socket.split();
     let writer_shutdown = state.shutdown.clone();
     let writer_closing = closing_rx.clone();
@@ -599,12 +719,14 @@ async fn connection(
     let close_connection = wait_for_shutdown(closing_rx);
     tokio::pin!(global_shutdown, close_connection);
 
+    let mut reason = "socket closed";
     loop {
         tokio::select! {
             () = &mut global_shutdown => break,
             () = &mut close_connection => break,
             _ = clock.tick() => {
                 if !is_motion && last_input.elapsed() >= Duration::from_secs(30) {
+                    reason = "input timeout";
                     break;
                 }
             }
@@ -617,6 +739,7 @@ async fn connection(
                 }
                 count += 1;
                 if count > REQUESTS_PER_SECOND {
+                    reason = "request rate exceeded";
                     break;
                 }
                 last_input = Instant::now();
@@ -654,7 +777,16 @@ async fn connection(
     }
     writer_task.abort();
     // Cleanup must survive a temporarily full command queue.
-    let _ = state.commands.send(Command::Closed { id }).await;
+    let command = if let Some(output) = motion_cleanup {
+        Command::MotionClosed { id, output }
+    } else {
+        Command::Detached {
+            id,
+            generation,
+            reason,
+        }
+    };
+    let _ = state.commands.send(command).await;
 }
 
 struct Connection {
@@ -663,6 +795,8 @@ struct Connection {
     outgoing: mpsc::Sender<ServerEvent>,
     closing: watch::Sender<bool>,
     connected_at_ms: u64,
+    generation: String,
+    detached_at: Option<u64>,
     clock: crate::clock_sync::ClockSync,
     timeline: crate::input_timeline::Stream,
     last_sequence: u64,
@@ -736,6 +870,7 @@ impl Coordinator {
                     let now_ms = started.elapsed().as_millis() as u64;
                     self.poll_motion(now_ms);
                     self.advance(now_ms);
+                    self.expire_detached(now_ms);
                     let unidentified: Vec<_> = self.connections.iter()
                         .filter(|(_, c)| c.account.is_none() && now_ms.saturating_sub(c.connected_at_ms) >= 10_000)
                         .map(|(id, _)| id.clone()).collect();
@@ -750,7 +885,11 @@ impl Coordinator {
             }
             self.flush_contacts(started.elapsed().as_millis() as u64);
             while let Some(id) = self.failed.pop() {
-                self.disconnect(&id);
+                self.detach(
+                    &id,
+                    started.elapsed().as_millis() as u64,
+                    "outgoing queue unavailable",
+                );
             }
             let snapshot = self.lobby.snapshot(&room_id);
             directory.send_if_modified(|current| {
@@ -866,6 +1005,8 @@ impl Coordinator {
                         outgoing,
                         closing,
                         connected_at_ms: now_ms,
+                        generation: id.clone(),
+                        detached_at: None,
                         clock: crate::clock_sync::ClockSync::default(),
                         timeline: crate::input_timeline::Stream::default(),
                         last_sequence: 0,
@@ -886,7 +1027,10 @@ impl Coordinator {
                 accepted,
             } => {
                 let id = self.motion_keys.get(&key).cloned().filter(|id| {
-                    self.connections.contains_key(id) && !self.motion_connections.contains_key(id)
+                    self.connections
+                        .get(id)
+                        .is_some_and(|c| c.detached_at.is_none())
+                        && !self.motion_connections.contains_key(id)
                 });
                 if let Some(id) = &id {
                     wake.send_replace(self.motion_wake.clone());
@@ -917,6 +1061,81 @@ impl Coordinator {
                 self.request(&id, request, now_ms);
                 if queued_ms >= 50 {
                     tracing::debug!(queued_ms, queue_depth, "command queue delay");
+                }
+            }
+            Command::Resume {
+                key,
+                generation,
+                outgoing,
+                closing,
+                accepted,
+            } => {
+                let id = self.motion_keys.get(&key).cloned().filter(|id| {
+                    self.connections.get(id).is_some_and(|c| {
+                        c.account.is_some()
+                            && c.detached_at.is_none_or(|at| {
+                                now_ms.saturating_sub(at) < crate::limits::RECONNECT_GRACE_MS
+                            })
+                    })
+                });
+                if let Some(id) = &id {
+                    if let Some(channel) = self.motion_connections.remove(id) {
+                        channel.closing.send_replace(true);
+                    }
+                    let c = self.connections.get_mut(id).unwrap();
+                    c.closing.send_replace(true);
+                    c.closing = closing;
+                    c.outgoing = outgoing;
+                    c.generation = generation;
+                    c.detached_at = None;
+                    c.pending_poses.clear();
+                    c.clock = crate::clock_sync::ClockSync::default();
+                    c.timeline = crate::input_timeline::Stream::default();
+                    let account = c.account.clone().unwrap();
+                    let room = self
+                        .lobby
+                        .room_id_for(&account)
+                        .and_then(|r| self.lobby.snapshot(r));
+                    let recovery = self.lobby.recovery(&account, now_ms);
+                    let profile = self.lobby.profile(&account).unwrap();
+                    self.send(
+                        id,
+                        ServerEvent {
+                            protocol_version: VERSION,
+                            request_id: None,
+                            event: ServerMessage::SessionResumed {
+                                room,
+                                profile,
+                                recovery,
+                            },
+                        },
+                    );
+                    tracing::info!(connection = %id, "session resumed");
+                }
+                if let Err(Some(id)) = accepted.send(id) {
+                    self.detach(&id, now_ms, "resume acceptance lost");
+                }
+            }
+            Command::Detached {
+                id,
+                generation,
+                reason,
+            } => {
+                if self
+                    .connections
+                    .get(&id)
+                    .is_some_and(|c| c.generation == generation)
+                {
+                    self.detach(&id, now_ms, reason);
+                }
+            }
+            Command::MotionClosed { id, output } => {
+                if self
+                    .motion_connections
+                    .get(&id)
+                    .is_some_and(|c| Arc::ptr_eq(&c.outgoing, &output))
+                {
+                    self.motion_connections.remove(&id);
                 }
             }
             Command::Closed { id } => self.disconnect(&id),
@@ -1591,6 +1810,9 @@ impl Coordinator {
         let Some(connection) = self.connections.get_mut(id) else {
             return;
         };
+        if connection.detached_at.is_some() {
+            return;
+        }
         if let ServerMessage::PoseChanged { update } = &event.event {
             if let Some(lane) = self.motion_connections.get(id) {
                 lane.outgoing.send(event);
@@ -1654,6 +1876,49 @@ impl Coordinator {
             if let Some(id) = self.accounts.get(&member.account_id).cloned() {
                 self.send(&id, ServerEvent::changed(snapshot.clone()));
             }
+        }
+    }
+
+    fn detach(&mut self, id: &str, now: u64, reason: &str) {
+        // Peers without a negotiated resume capability cannot recover this session.
+        if !self.motion_keys.values().any(|owner| owner == id)
+            || self.connections.get(id).is_none_or(|c| c.account.is_none())
+        {
+            self.disconnect(id);
+            return;
+        }
+        if let Some(c) = self.connections.get_mut(id) {
+            if c.detached_at.is_some() {
+                return;
+            }
+            c.detached_at = Some(now);
+            c.pending_poses.clear();
+            c.closing.send_replace(true);
+            tracing::warn!(connection = %id, reason, grace_ms = crate::limits::RECONNECT_GRACE_MS,
+                "session transport detached; membership retained");
+        }
+        if let Some(channel) = self.motion_connections.remove(id) {
+            channel.closing.send_replace(true);
+        }
+        if let Some(account) = self.connections.get(id).and_then(|c| c.account.clone()) {
+            self.lobby.pause_input(&account, now);
+            self.broadcast_actions();
+        }
+    }
+
+    fn expire_detached(&mut self, now: u64) {
+        let expired: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(_, c)| {
+                c.detached_at
+                    .is_some_and(|at| now.saturating_sub(at) >= crate::limits::RECONNECT_GRACE_MS)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            tracing::info!(connection = %id, "reconnect grace expired");
+            self.disconnect(&id);
         }
     }
 
@@ -1831,6 +2096,8 @@ mod tests {
                     outgoing,
                     closing,
                     connected_at_ms: 0,
+                    generation: String::new(),
+                    detached_at: None,
                     clock: crate::clock_sync::ClockSync::default(),
                     timeline: crate::input_timeline::Stream::default(),
                     last_sequence: 0,
@@ -2259,6 +2526,8 @@ mod tests {
                 outgoing,
                 closing,
                 connected_at_ms: 0,
+                generation: String::new(),
+                detached_at: None,
                 clock: crate::clock_sync::ClockSync::default(),
                 timeline: crate::input_timeline::Stream::default(),
                 last_sequence: 0,
@@ -2308,6 +2577,8 @@ mod tests {
                 outgoing,
                 closing,
                 connected_at_ms: 0,
+                generation: String::new(),
+                detached_at: None,
                 clock: crate::clock_sync::ClockSync::default(),
                 timeline: crate::input_timeline::Stream::default(),
                 last_sequence: 0,
@@ -2371,6 +2642,8 @@ mod tests {
                 outgoing,
                 closing,
                 connected_at_ms: 0,
+                generation: String::new(),
+                detached_at: None,
                 clock: crate::clock_sync::ClockSync::default(),
                 timeline: crate::input_timeline::Stream::default(),
                 last_sequence: 0,
@@ -2418,6 +2691,111 @@ mod tests {
         assert!(coordinator.accounts.is_empty());
         assert!(coordinator.lobby.list().is_empty());
         assert!(coordinator.lobby.create("player-a", "again", 1028).is_ok());
+    }
+    #[test]
+    fn reconnect_grace_retains_membership_and_stale_socket_cannot_detach_replacement() {
+        let mut c = Coordinator::default();
+        let (outgoing, mut output) = mpsc::channel(128);
+        let (closing, _) = watch::channel(false);
+        let (accepted, _) = oneshot::channel();
+        c.process(
+            Command::Connected {
+                id: "first".into(),
+                motion_key: Some("ab".repeat(32)),
+                authorized: None,
+                outgoing,
+                closing,
+                accepted,
+            },
+            0,
+            0,
+        );
+        c.failed.clear();
+        let request = |seq: &str, command| ClientRequest {
+            protocol_version: VERSION,
+            request_id: seq.into(),
+            command,
+            timeline: None,
+        };
+        c.request(
+            "first",
+            request(
+                "1",
+                ClientCommand::Hello {
+                    account_id: "player".into(),
+                },
+            ),
+            1,
+        );
+        c.request(
+            "first",
+            request(
+                "2",
+                ClientCommand::CreateRoom {
+                    name: "room".into(),
+                    map_id: 1003,
+                },
+            ),
+            2,
+        );
+        let room_id = c.lobby.room_id_for("player").unwrap().to_owned();
+        let before = c.lobby.snapshot(&room_id).unwrap();
+        while output.try_recv().is_ok() {}
+        c.process(
+            Command::Detached {
+                id: "first".into(),
+                generation: "first".into(),
+                reason: "test",
+            },
+            10,
+            0,
+        );
+        assert_eq!(c.lobby.snapshot(&room_id), Some(before.clone()));
+        let (outgoing, mut resumed) = mpsc::channel(128);
+        let (closing, _) = watch::channel(false);
+        let (accepted, mut acceptance) = oneshot::channel();
+        c.process(
+            Command::Resume {
+                key: "ab".repeat(32),
+                generation: "second".into(),
+                outgoing,
+                closing,
+                accepted,
+            },
+            20,
+            0,
+        );
+        assert_eq!(acceptance.try_recv().unwrap().as_deref(), Some("first"));
+        assert!(matches!(
+            resumed.try_recv().unwrap().event,
+            ServerMessage::SessionResumed { .. }
+        ));
+        c.process(
+            Command::Detached {
+                id: "first".into(),
+                generation: "first".into(),
+                reason: "stale",
+            },
+            30,
+            0,
+        );
+        assert!(c.connections["first"].detached_at.is_none());
+        c.process(
+            Command::Detached {
+                id: "first".into(),
+                generation: "second".into(),
+                reason: "test",
+            },
+            40,
+            0,
+        );
+        c.detach("first", 50, "duplicate close");
+        assert_eq!(c.connections["first"].detached_at, Some(40));
+        c.expire_detached(40 + crate::limits::RECONNECT_GRACE_MS - 1);
+        assert_eq!(c.lobby.snapshot(&room_id), Some(before));
+        c.expire_detached(40 + crate::limits::RECONNECT_GRACE_MS);
+        assert!(c.connections.is_empty() && c.accounts.is_empty() && c.motion_keys.is_empty());
+        assert!(c.lobby.snapshot(&room_id).is_none());
     }
 }
 

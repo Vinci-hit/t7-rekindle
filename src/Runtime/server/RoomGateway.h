@@ -29,6 +29,7 @@ public:
         std::unique_lock<std::mutex> lock;
         std::deque<GatewayEffect> sends;
         std::string acknowledge;
+        bool reset = false, resumed = false;
         void commit() noexcept;
     };
     Batch prepare(const std::vector<GatewayEffect>& effects);
@@ -48,6 +49,8 @@ private:
     std::map<std::string, PendingRequest> active_;
     std::atomic<uint32_t> latencyMs_{UINT32_MAX};
     bool motionStart_ = false;
+    bool reconnecting_ = false, resetPending_ = false, restart_ = false;
+    uint64_t generation_ = 0;
     std::string motionKey_;
     std::thread worker_, motionWorker_;
     void run(bool motion);

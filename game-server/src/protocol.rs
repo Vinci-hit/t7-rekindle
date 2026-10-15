@@ -214,6 +214,12 @@ impl ServerEvent {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "camelCase")]
 pub enum ServerMessage {
+    SessionResumed {
+        room: Option<RoomSnapshot>,
+        #[serde(flatten)]
+        profile: PlayerProfile,
+        recovery: Option<crate::room::Recovery>,
+    },
     Welcome {
         #[serde(rename = "accountId")]
         account_id: String,

@@ -208,6 +208,44 @@ impl Motion {
         }
     }
 
+    pub(crate) fn pause_input(&mut self, id: u32, now: u64) {
+        let Some(actor) = self.actors.iter_mut().find(|a| a.id.0 == id) else {
+            return;
+        };
+        if let Some((pose, at)) = &mut actor.accepted {
+            pose.forward_back = 0;
+            pose.left_right = 0;
+            pose.running = false;
+            if let Some(frame) = &mut pose.motion {
+                frame.velocity = [0.; 3];
+            }
+            *at = now;
+            actor.velocity = [0.; 3];
+            actor.dirty = true;
+        }
+    }
+
+    pub(crate) fn recovery(&self) -> (u64, Vec<PoseEvent>) {
+        (
+            self.event_seq,
+            self.actors
+                .iter()
+                .filter_map(|a| {
+                    let (pose, at) = a.accepted.as_ref()?;
+                    Some(PoseEvent {
+                        room_id: self.room_id.clone(),
+                        match_id: self.match_id.clone(),
+                        actor_id: a.id,
+                        event_seq: self.event_seq,
+                        input_seq: a.input_seq,
+                        server_time_ms: *at,
+                        pose: pose.clone(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
     pub fn take_events(&mut self) -> Vec<PoseEvent> {
         std::mem::take(&mut self.pending)
     }

@@ -343,6 +343,20 @@ impl Lobby {
         Ok(room_id)
     }
 
+    pub(crate) fn pause_input(&mut self, account: &str, now: u64) {
+        if let Some(room) = self
+            .membership
+            .get(account)
+            .and_then(|id| self.rooms.get_mut(id))
+        {
+            room.pause_input(account, now);
+        }
+    }
+
+    pub(crate) fn recovery(&self, account: &str, now: u64) -> Option<crate::room::Recovery> {
+        self.rooms.get(self.membership.get(account)?)?.recovery(now)
+    }
+
     pub fn snapshot(&self, room_id: &str) -> Option<RoomSnapshot> {
         self.rooms.get(room_id).map(RoomState::snapshot)
     }

@@ -25,7 +25,7 @@ class NativeClient:
         writable.mkdir()
         config = gateway_config or dict(serverHost='127.0.0.1', serverPort=int(os.environ['T7_GATEWAY_TEST_PORT']), secure='false', accountId=account)
         (writable / "custom-room.ini").write_text("".join(f"{key}={value}\n" for key, value in config.items()), encoding="utf-8")
-        binary = ROOT / "artifacts/native/bin/x64/Release/T7.RuntimeTests.exe"
+        binary = Path(os.environ.get("T7_RUNTIME_TEST_BINARY", ROOT / "artifacts/native/bin/x64/Release/T7.RuntimeTests.exe"))
         environment = {**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")}
         self.process = subprocess.Popen([str(binary), "--room-scene" if scene else "--room-gateway", str(package), str(writable)],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -530,3 +530,116 @@ def test_native_guest_uses_https_ticket_and_direct_wss(tmp_path):
     finally:
         if client is not None: client.close()
         build.remove_tree(package)
+
+
+class InterruptibleRelay:
+    """Cut both physical sockets while preserving the client's local game socket."""
+    def __init__(self, port):
+        self.target = port
+        self.listener = socket.socket()
+        self.listener.bind(('127.0.0.1', 0))
+        self.listener.listen()
+        self.listener.settimeout(.2)
+        self.port = self.listener.getsockname()[1]
+        self.lock = threading.Lock()
+        self.pairs = []
+        self.paths = []
+        self.stopped = threading.Event()
+        self.motion_resumed = threading.Event()
+        self.worker = threading.Thread(target=self.accept, daemon=True)
+        self.worker.start()
+
+    def accept(self):
+        while not self.stopped.is_set():
+            try:
+                client, _ = self.listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=self.forward, args=(client,), daemon=True).start()
+
+    def forward(self, client):
+        upstream = None
+        try:
+            client.settimeout(5)
+            header = bytearray()
+            while not header.endswith(b'\r\n\r\n') and len(header) < 8192:
+                value = client.recv(1)
+                if not value:
+                    return
+                header.extend(value)
+            upstream = socket.create_connection(('127.0.0.1', self.target), timeout=5)
+            client.settimeout(None); upstream.settimeout(None)
+            path = header.split(b' ')[1]
+            with self.lock:
+                self.pairs.append((client, upstream))
+                self.paths.append(path)
+                if path == b'/ws/motion' and self.paths.count(path) >= 2:
+                    self.motion_resumed.set()
+            upstream.sendall(header)
+            def pump(source, target):
+                try:
+                    while data := source.recv(65536):
+                        target.sendall(data)
+                except OSError:
+                    pass
+                finally:
+                    try: target.shutdown(socket.SHUT_RDWR)
+                    except OSError: pass
+            thread = threading.Thread(target=pump, args=(upstream, client), daemon=True)
+            thread.start()
+            pump(client, upstream)
+            thread.join(timeout=2)
+        except OSError:
+            pass
+        finally:
+            client.close()
+            if upstream is not None: upstream.close()
+
+    def interrupt(self):
+        with self.lock:
+            for pair in self.pairs:
+                for connection in pair:
+                    try: connection.shutdown(socket.SHUT_RDWR)
+                    except OSError: pass
+            self.pairs.clear()
+
+    def close(self):
+        self.stopped.set()
+        self.listener.close()
+        self.interrupt()
+        self.worker.join(timeout=2)
+
+
+def test_native_gateway_reconnects_without_closing_game_or_leaving_room(tmp_path):
+    spec = importlib.util.spec_from_file_location('reconnect_build_fixture', ROOT / 'scripts/build.py')
+    build = importlib.util.module_from_spec(spec); spec.loader.exec_module(build)
+    package = build.prepare_runtime_fixture(Path(sys.executable).parent)
+    relay = InterruptibleRelay(int(os.environ['T7_GATEWAY_TEST_PORT']))
+    client = None
+    try:
+        client = NativeClient(package, tmp_path / 'reconnect', 'resume-' + str(os.getpid()),
+                              gateway_config=dict(serverHost='127.0.0.1', serverPort=relay.port,
+                                                  secure='false', accountId='resume-' + str(os.getpid())))
+        client.send(struct.pack('>Hi', 2, 1003) + string(b'recovery') + string(b'') + struct.pack('>i', 1))
+        created = client.receive(3)
+        assert int.from_bytes(created[2:6]) == 0
+        guid, number = struct.unpack_from('>QI', created, 6)
+        for _ in range(2):
+            relay.motion_resumed.clear()
+            relay.interrupt()
+            assert relay.motion_resumed.wait(15), 'native transport did not reconnect both channels'
+            assert b'/ws/resume' in relay.paths
+            client.send(struct.pack('>HiI', 6, 1, number))
+            listing = client.receive(7)
+            assert struct.unpack_from('>Q', listing, 6)[0] == guid
+        # An explicit leave still removes membership immediately after recovery.
+        client.send(struct.pack('>Hb', 10, 0))
+        assert int.from_bytes(client.receive(11)[2:6]) == 0
+    finally:
+        try:
+            if client: client.close()
+        finally:
+            relay.close()
+            build.remove_tree(package)

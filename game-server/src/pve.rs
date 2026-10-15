@@ -207,6 +207,10 @@ impl Pve {
             pending: Vec::new(),
         }
     }
+    pub(crate) fn event_sequence(&self) -> u64 {
+        self.event_seq
+    }
+
     pub(crate) fn snapshot(&self) -> Snapshot {
         Snapshot {
             scenario_id: self.scenario.scenario_id,

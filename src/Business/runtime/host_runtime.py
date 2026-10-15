@@ -204,7 +204,7 @@ def validateTransition(result, context):
         if "roomGateway" not in context or item["connection"] not in live:
             raise ValueError("room gateway effect requires a live configured connection")
         _integer(item["connection"], 1, (1 << 63) - 1, "gateway connection")
-        if item["op"] not in ("send", "snapshot", "ack"):
+        if item["op"] not in ("send", "snapshot", "ack", "reset", "resume"):
             raise ValueError("invalid gateway operation")
         sequence = item["requestId"]
         if (type(sequence) is not str or not sequence.isascii() or not sequence.isdecimal()

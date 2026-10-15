@@ -416,7 +416,8 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         const auto gatewayConnection = result.gateway.front().connection;
         for (const auto& effect : result.gateway) {
             auto session = sessions_.find(effect.connection);
-            if (effect.connection != gatewayConnection || (effect.op == "ack" && effect.connection != event.connection)
+            if (effect.connection != gatewayConnection || ((effect.op == "ack" || effect.op == "reset" || effect.op == "resume") && effect.connection != event.connection)
+                    || ((effect.op == "reset" || effect.op == "resume") && event.type != "gateway")
                     || session == sessions_.end() || session->second.role != "logic"
                     || gateways_.find(effect.connection) == gateways_.end())
                 throw std::runtime_error("transition rejected: invalid room gateway target");
