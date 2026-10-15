@@ -32,6 +32,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="bridge\T7RNativeBridge.cpp" />
+    <ClCompile Include="bridge\T7RBattleHost.cpp" />
     <ClCompile Include="bridge\Session.cpp" />
     <ClCompile Include="core\Common.cpp" />
     <ClCompile Include="core\DiagnosticLog.cpp" />
@@ -88,6 +89,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bridge\T7RNativeBridge.h" />
+    <ClInclude Include="bridge\T7RBattleHost.h" />
     <ClInclude Include="bridge\Session.h" />
     <ClInclude Include="core\Common.h" />
     <ClInclude Include="core\DiagnosticLog.h" />

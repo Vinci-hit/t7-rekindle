@@ -168,26 +168,50 @@ def run_native_tests(python_home: Path, configuration: str = "Release") -> None:
         remove_tree(fixture)
 
 
+def run_battle_tests(python_home: Path, configuration: str = "Release") -> None:
+    binary = ROOT / 'artifacts/native/bin/x64' / configuration
+    fixture = prepare_runtime_fixture(python_home)
+    if fixture.resolve().parent != (ROOT / 'artifacts/tmp').resolve() or not fixture.name.startswith('runtime-fixture-'):
+        fail('battle fixture must be a generated directory inside artifacts/tmp')
+    environment = os.environ.copy()
+    environment['PATH'] = str(python_home) + os.pathsep + environment.get('PATH', '')
+    environment['LOCALAPPDATA'] = str(fixture / 'state')
+    try:
+        shutil.copy2(binary / 'T7R.NativeBridge.dll', fixture / 'T7R.NativeBridge.dll')
+        subprocess.run([str(binary / 'T7R.BattleHostTests.exe'), str(fixture)],
+                       cwd=ROOT, env=environment, check=True)
+        harness = ROOT / 'artifacts/bin/T7R.BattleHarness/x64' / configuration / 'net48/T7R.BattleHarness.exe'
+        subprocess.run([str(harness), str(fixture)], cwd=ROOT, env=environment, check=True)
+    finally:
+        remove_tree(fixture)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", choices=("all", "native", "native-tests", "managed"), default="all")
+    parser.add_argument("--project", choices=("all", "native", "native-tests", "managed", "battle", "battle-tests"), default="all")
     parser.add_argument("--configuration", choices=("Debug", "Release"), default="Release")
     args = parser.parse_args()
     msbuild = locate_msbuild(require_native=args.project != "managed")
-    python_home = check_python() if args.project in ("all", "native", "native-tests") else None
-    if args.project in ("all", "native", "native-tests"):
+    python_home = check_python() if args.project != "managed" else None
+    if args.project in ("all", "native", "native-tests", "battle", "battle-tests"):
         run_msbuild(ROOT / "src/Runtime/T7R.NativeBridge.vcxproj", "x64", msbuild, python_home, args.configuration)
     if args.project in ("all", "native-tests"):
         run_msbuild(ROOT / "tests/cpp/T7R.NativeTests.vcxproj", "x64", msbuild, python_home, args.configuration)
         run_msbuild(ROOT / "tests/cpp/T7R.BridgeTests.vcxproj", "x64", msbuild, python_home, args.configuration)
         run_msbuild(ROOT / "tests/cpp/T7R.RuntimeTests.vcxproj", "x64", msbuild, python_home, args.configuration)
         run_native_tests(python_home, args.configuration)
-    if args.project in ("all", "managed"):
+    if args.project in ("all", "managed", "battle", "battle-tests"):
         check_managed_sdk(msbuild)
-        check_wpf_targeting_pack()
-        run_msbuild(ROOT / "src/Core/T7R.Core.csproj", "x64", msbuild, python_home, args.configuration)
-        run_msbuild(ROOT / "src/Desktop/T7R.Desktop.csproj", "x64", msbuild, python_home, args.configuration)
-        run_msbuild(ROOT / "tests/managed/T7R.ManagedHarness.csproj", "x64", msbuild, python_home, args.configuration)
+        if args.project in ("all", "managed"):
+            check_wpf_targeting_pack()
+            run_msbuild(ROOT / "src/Core/T7R.Core.csproj", "x64", msbuild, python_home, args.configuration)
+            run_msbuild(ROOT / "src/Desktop/T7R.Desktop.csproj", "x64", msbuild, python_home, args.configuration)
+            run_msbuild(ROOT / "tests/managed/T7R.ManagedHarness.csproj", "x64", msbuild, python_home, args.configuration)
+        run_msbuild(ROOT / "src/BattleServer/T7R.BattleServer.csproj", "x64", msbuild, python_home, args.configuration)
+        run_msbuild(ROOT / "tests/battle/T7R.BattleHarness.csproj", "x64", msbuild, python_home, args.configuration)
+    if args.project in ("all", "battle-tests"):
+        run_msbuild(ROOT / "tests/cpp/T7R.BattleHostTests.vcxproj", "x64", msbuild, python_home, args.configuration)
+        run_battle_tests(python_home, args.configuration)
     print(f"build completed: {args.configuration}/x64")
 
 

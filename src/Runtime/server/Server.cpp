@@ -388,7 +388,9 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
     for (const auto& change : result.timers) {
         if (change.delay < 0) nextTimers.erase(change.id);
         else {
-            if (sessions_.find(change.connection) == sessions_.end()) throw std::runtime_error("timer target disconnected before commit");
+            // Connection zero is reserved for validated, match-scoped business timers.
+            if (change.connection && sessions_.find(change.connection) == sessions_.end())
+                throw std::runtime_error("timer target disconnected before commit");
             nextTimers[change.id] = {detail::timerDeadline(change.id, now, committedAt, change.delay), change.connection, change.event};
         }
     }
@@ -458,6 +460,7 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
     try {
         if (event.type == "control") { processControl(python, event, state); return; }
         if (event.type != "closed" && event.type != "world" && event.type != "titles"
+            && !(event.type == "timer" && event.connection == 0)
             && std::find(live.begin(), live.end(), event.connection) == live.end()) return;
         auto now = detail::Clock::now();
         std::shared_ptr<const PublishedWorld> world;

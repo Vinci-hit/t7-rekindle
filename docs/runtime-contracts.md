@@ -6,7 +6,7 @@
 
 导出函数使用 `extern "C" __cdecl`，当前 ABI 版本为 1。参数结构使用 `#pragma pack(push, 8)`，首两个字段固定为 `abiVersion` 和 `structSize`。跨边界只使用固定宽度整数、UTF-8 byte buffer 和不透明 session handle；不传递 STL、异常、`PyObject*` 或内部句柄。
 
-当前库名为 `T7R.NativeBridge.dll`，仅导出 `t7r_native_*`。ABI 1 保留结构布局、常量值和调用语义，不表示与旧库名或旧导出名称链接兼容；不提供旧接口别名，Desktop、Core、Runtime 与 Business 必须整包交付。完整产品名、设置和凭据格式不随技术命名迁移，见[项目命名规范](development.md#项目命名规范)。
+当前库名为 `T7R.NativeBridge.dll`，会话接口使用 `t7r_native_*`，独立战斗宿主接口使用 `t7r_battle_host_*`。ABI 1 保留结构布局、常量值和调用语义，不表示与旧库名或旧导出名称链接兼容；不提供旧接口别名，Desktop、Core、Runtime 与 Business 必须整包交付。完整产品名、设置和凭据格式不随技术命名迁移，见[项目命名规范](development.md#项目命名规范)。
 
 [头文件](../src/Runtime/bridge/T7RNativeBridge.h)定义参数和返回值，[导出表](../src/Runtime/bridge/T7RNativeBridge.def)固定以下符号：
 

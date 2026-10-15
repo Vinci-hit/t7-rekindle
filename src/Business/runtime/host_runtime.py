@@ -190,9 +190,26 @@ def _validateTransition(result, context):
         _integer(timer["delayMs"], -1, 86400000, "timer delay")
         if type(timer["event"]) is not dict or timer["event"].get("type") != "timer":
             raise ValueError("timers must dispatch timer events")
-        if timer["event"].get("connection") not in live:
-            raise ValueError("timer targets a non-live connection")
-        _integer(timer["event"]["connection"], 1, (1 << 63) - 1, "timer connection")
+        event = timer['event']
+        scope = event.get('scope', 'connection')
+        if scope == 'match':
+            _integer(event.get('connection'), 0, 0, 'match timer connection')
+            _integer(event.get('matchId'), 1, (1 << 63) - 1, 'timer matchId')
+            name = event.get('name')
+            if type(name) is not str or not name or timer['id'] != f"match:{event['matchId']}:{name}":
+                raise ValueError('invalid match timer namespace')
+            if timer['delayMs'] >= 0:
+                if type(result['state']) is not dict:
+                    raise ValueError('match timer requires match state')
+                _integer(result['state'].get('matchId'), 1, (1 << 63) - 1, 'state matchId')
+                if result['state']['matchId'] != event['matchId']:
+                    raise ValueError('timer targets another match')
+        elif scope == 'connection' and not timer['id'].startswith('match:'):
+            if event.get('connection') not in live:
+                raise ValueError("timer targets a non-live connection")
+            _integer(event['connection'], 1, (1 << 63) - 1, 'timer connection')
+        else:
+            raise ValueError('invalid timer scope')
     for log in result["logs"]:
         if type(log) is dict:
             if (set(log) != {"level", "message"} or type(log["level"]) is not str
@@ -284,7 +301,11 @@ class Runtime:
             event = decode(event)
         stateValue = decode(state)
         decoded = perf_counter_ns()
-        result = self.active.module.handleEvent(event, stateValue, context)
+        if (event.get('type') == 'timer' and event.get('scope') == 'match'
+                and event.get('matchId') != stateValue.get('matchId')):
+            result = dict(state=stateValue, send=[], timers=[], logs=[])
+        else:
+            result = self.active.module.handleEvent(event, stateValue, context)
         handled = perf_counter_ns()
         _validateTransition(result, context)
         if self.active.module.validateState(result["state"]) is not True:

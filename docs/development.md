@@ -29,7 +29,7 @@
 
 名称变更须同时更新定义与引用，包括原生导出与 C# 绑定、Python 错误与 UI 识别、XAML、程序集资源、项目引用、构建脚本、CI、测试和当前文档。按语义处理，不替换哈希、凭据、二进制数据或真实历史发布内容。保留项变更、新增例外及旧接口兼容层须先说明影响并取得确认；完成后检查命名和跨层引用的一致性。
 
-NativeBridge 仅提供 `T7R.NativeBridge.dll` 和 `t7r_native_*`，结构布局仍为 ABI 1，但不兼容旧 DLL／导出名称；Desktop、Core、Runtime 与 Business 必须整包升级。主程序仍为 `T7-Rekindle.exe`。新包拒绝混入旧库；安装及既有设置处理成功后，仅清理安装根目录中的上述两个旧 DLL，失败返回 `20` 并停止自动启动，详见[运行契约](runtime-contracts.md#回退设置契约)。
+NativeBridge 提供 `T7R.NativeBridge.dll`，会话导出为 `t7r_native_*`，独立战斗宿主导出为 `t7r_battle_host_*`；结构布局仍为 ABI 1，但不兼容旧 DLL／导出名称；Desktop、Core、Runtime 与 Business 必须整包升级。主程序仍为 `T7-Rekindle.exe`。新包拒绝混入旧库；安装及既有设置处理成功后，仅清理安装根目录中的上述两个旧 DLL，失败返回 `20` 并停止自动启动，详见[运行契约](runtime-contracts.md#回退设置契约)。
 
 旧构建环境迁移时，将变量名改为 `T7R_*`；已存在的 `T7R_SERVER_BASE_URL` 保持。首次使用新 CI 前，由维护者在 Actions 配置 `T7R_PREVIEW_ACCESS_PUBLIC_KEY`，沿用原公钥值；旧 `T7_*` 构建变量不再读取，不因此变更远端发布对象或凭据格式。
 
@@ -76,10 +76,12 @@ python scripts/integration_test.py --report artifacts/test-results/integration.j
 
 | 入口 | 构建或验证范围 |
 | --- | --- |
-| `build.py --project all` | 全部原生、托管项目，并自动运行三组原生测试 |
+| `build.py --project all` | 全部原生、托管项目，并运行三组既有原生测试及战斗模块测试 |
 | `build.py --project native` | 仅 NativeBridge，不运行测试 |
 | `build.py --project native-tests` | NativeBridge、三组原生测试，并自动运行原生测试 |
-| `build.py --project managed` | Core、WPF、托管 harness，不自动运行 harness |
+| `build.py --project managed` | Core、WPF、战斗宿主与托管 harness，不自动运行 harness |
+| `build.py --project battle` | NativeBridge、BattleServer 与 BattleHarness，不构建 WPF、不运行测试 |
+| `build.py --project battle-tests` | 战斗宿主 C++/托管模块测试，使用独立合成资源，不启动游戏 |
 | `python -m pytest -q` | Python 业务、构建、打包和静态界面契约测试 |
 | `T7R.ManagedHarness.exe` | 设置、ViewModel、目录选择、主题、布局及生命周期契约 |
 | `T7R.ManagedHarness.exe --native-contract-tests PACKAGE_ROOT` | 对完整包验证 C# 原生绑定、会话清理及仅有旧 DLL 时的加载失败，不启动游戏 |

@@ -1,4 +1,5 @@
 #include "../../src/Runtime/server/Server.h"
+#include "../../src/Runtime/server/PythonObjects.h"
 #include <initializer_list>
 #include <iostream>
 #include <utility>
@@ -36,6 +37,7 @@ struct ServerEventOrderTests {
     }
 
     static bool verify(const fs::path& fixtureRoot) {
+        if (!verifyMatchTimers(fixtureRoot)) return false;
         {
             Server server; initialize(server);
             WorldSnapshot world;
@@ -140,9 +142,55 @@ struct ServerEventOrderTests {
         }
         return true;
     }
+
+    static bool verifyMatchTimers(const fs::path& fixtureRoot) {
+        Server server; initialize(server);
+        server.journal_ = std::make_unique<Journal>(fixtureRoot / "match-timers-journal");
+        PythonHost host(fixtureRoot, fixtureRoot / "match-timers-revisions");
+        auto runtime = python::checked(PyImport_ImportModule("host_runtime"));
+        std::string state = host.create(host.initializeContext(Config{}));
+        auto decoded = python::checked(PyObject_CallMethod(runtime.get(), "decode", "s", state.c_str()));
+        python::put(decoded.get(), "matchId", PyLong_FromLong(7));
+        auto encoded = python::checked(PyObject_CallMethod(runtime.get(), "encode", "O", decoded.get()));
+        state = python::string(encoded.get());
+        const std::string id = "match:7:battle-action-phase";
+        auto timerEvent = python::checked(Py_BuildValue("{s:s,s:i,s:s,s:i,s:s}", "type", "timer", "connection", 0,
+            "scope", "match", "matchId", 7, "name", "battle-action-phase"));
+        auto encodedEvent = python::checked(PyObject_CallMethod(runtime.get(), "encode", "O", timerEvent.get()));
+        const auto serialized = python::string(encodedEvent.get());
+        if (!detail::animationTimer(id) || !detail::decisionTimer("match:7:actors-pulse")) return false;
+        const auto now = detail::Clock::now(), committedAt = now + std::chrono::milliseconds(100);
+        if (detail::timerDeadline(id, now, committedAt, 100) != committedAt + std::chrono::milliseconds(100)) return false;
+
+        server.sessions_[1] = {};
+        Server::QueuedEvent event; event.type = "message"; event.connection = 1;
+        Server::Timers timers;
+        Transition schedule; schedule.state = state;
+        schedule.timers = {{id, 0, serialized, 0}, {"1:version", 1000, "{}", 1}};
+        bool committed = false;
+        server.commit(schedule, event, "test", "scheduled", now, 0, state, timers, committed);
+        if (!committed || timers.size() != 2) return false;
+        server.sessions_.erase(1);
+        event.type = "closed";
+        Transition closed; closed.state = state;
+        server.commit(closed, event, "test", "closed", now, 0, state, timers, committed);
+        if (timers.size() != 1 || !timers.count(id)) return false;
+        std::vector<uint64_t> live;
+        if (!server.nextEvent(timers, event, live) || event.connection != 0 || event.timerId != id || !live.empty()) return false;
+        server.dispatch(host, event, live, state, timers);
+        if (server.snapshot_.phase != "waiting" || !server.snapshot_.error.empty()) return false;
+
+        Transition cancel; cancel.state = state;
+        cancel.timers.push_back({id, -1, serialized, 0});
+        Event pending; pending.type = "timer"; pending.connection = 0;
+        server.queue(pending); server.events_.back().timerId = id;
+        server.commit(cancel, event, "test", "cancelled", now, 0, state, timers, committed);
+        return server.events_.empty() && server.eventBytes_ == 0 && timers.empty();
+    }
 };
 }
 
 bool verifyServerEventOrder(const t7r::fs::path& fixtureRoot) {
-    return t7r::ServerEventOrderTests::verify(fixtureRoot);
+    try { return t7r::ServerEventOrderTests::verify(fixtureRoot); }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return false; }
 }

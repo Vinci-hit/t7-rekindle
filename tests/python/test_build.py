@@ -42,8 +42,9 @@ def test_msbuild_receives_selected_configuration(configuration):
     assert f"/p:Configuration={configuration}" in run.call_args.args[0]
 
 
-@pytest.mark.parametrize("project,count", [("all", 7), ("native", 1),
-                                         ("native-tests", 4), ("managed", 3)])
+@pytest.mark.parametrize("project,count", [("all", 10), ("native", 1),
+                                         ("native-tests", 4), ("managed", 5),
+                                         ("battle", 3), ("battle-tests", 4)])
 @pytest.mark.parametrize("configuration", [None, "Debug", "Release"])
 def test_build_configuration_reaches_all_projects(monkeypatch, project, count, configuration):
     build = load_build()
@@ -53,7 +54,8 @@ def test_build_configuration_reaches_all_projects(monkeypatch, project, count, c
     monkeypatch.setattr(build.sys, "argv", arguments)
     for name in ("locate_msbuild", "check_python", "check_managed_sdk", "check_wpf_targeting_pack"):
         monkeypatch.setattr(build, name, lambda *args, **kwargs: Path("TOOLCHAIN"))
-    with patch.object(build, "run_msbuild") as run, patch.object(build, "run_native_tests") as tests:
+    with patch.object(build, "run_msbuild") as run, patch.object(build, "run_native_tests") as tests, \
+            patch.object(build, "run_battle_tests") as battle_tests:
         build.main()
     selected = configuration or "Release"
     assert len(run.call_args_list) == count
@@ -62,6 +64,29 @@ def test_build_configuration_reaches_all_projects(monkeypatch, project, count, c
         tests.assert_called_once_with(Path("TOOLCHAIN"), selected)
     else:
         tests.assert_not_called()
+    if project in ("all", "battle-tests"):
+        battle_tests.assert_called_once_with(Path("TOOLCHAIN"), selected)
+    else:
+        battle_tests.assert_not_called()
+
+
+@pytest.mark.parametrize("configuration", ["Debug", "Release"])
+def test_battle_module_tests_use_isolated_runtime_and_selected_configuration(tmp_path, configuration):
+    build = load_build()
+    build.ROOT = tmp_path
+    fixture = tmp_path / 'artifacts/tmp/runtime-fixture-battle'
+    with patch.object(build, 'prepare_runtime_fixture', return_value=fixture), \
+            patch.object(build, 'remove_tree') as remove, patch.object(build.shutil, 'copy2') as copy, \
+            patch.object(build.subprocess, 'run') as run:
+        build.run_battle_tests(tmp_path / 'python', configuration)
+    assert [Path(call.args[0][0]) for call in run.call_args_list] == [
+        tmp_path / 'artifacts/native/bin/x64' / configuration / 'T7R.BattleHostTests.exe',
+        tmp_path / 'artifacts/bin/T7R.BattleHarness/x64' / configuration / 'net48/T7R.BattleHarness.exe']
+    assert all(call.args[0][1] == str(fixture) for call in run.call_args_list)
+    assert all(call.kwargs['env']['LOCALAPPDATA'] == str(fixture / 'state') for call in run.call_args_list)
+    copy.assert_called_once_with(tmp_path / 'artifacts/native/bin/x64' / configuration / 'T7R.NativeBridge.dll',
+                                 fixture / 'T7R.NativeBridge.dll')
+    remove.assert_called_once_with(fixture)
 
 
 def test_invalid_configuration_stops_before_toolchain_discovery(monkeypatch):

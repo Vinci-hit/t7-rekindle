@@ -15,6 +15,8 @@
 | 了解原版客户端无 TP 启动的验证结果与实施前置 | [TP 纯内存启动方案](planning/tp-memory-launch.md) |
 | 查找源码、测试、构建产物或内置文档 | [目录与源码范围](source-layout.md) |
 | 修改原生接口、生命周期、日志或设置格式 | [运行契约](runtime-contracts.md) |
+| 构建无游戏进程的战斗宿主，了解帧传输接口 | [战斗运行时与独立宿主](battle-server.md) |
+| 接入离线单机、LAN 与 Java 调度的独立战斗节点 | [开源战斗服三模式实施计划](planning/battle-network-v1.md) |
 | 配置先锋阵容、武器，了解进场与复活同步 | [先锋阵容与武器配置](loadouts.md) |
 | 查看称号奖励规则、管理入口和游戏内同步方式 | [账户称号](account-titles.md) |
 | 理解近战攻击、格挡、挡反、硬直与破防规则 | [近战攻防规则](combat-rules.md) |

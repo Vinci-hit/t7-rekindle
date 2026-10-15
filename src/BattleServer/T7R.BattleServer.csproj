@@ -1,0 +1,12 @@
+<Project>
+  <Import Project="..\..\Managed.Common.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <Platforms>x64</Platforms>
+    <RootNamespace>T7R.BattleServer</RootNamespace>
+    <AssemblyName>T7R.BattleServer</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Battle\T7R.Battle.csproj" /></ItemGroup>
+  <Import Project="..\..\Managed.Common.targets" />
+</Project>
