@@ -229,3 +229,16 @@ def test_rejected_action_is_acknowledged_without_closing_the_session():
     assert result['state']['sessions']['1']['customLobby']['identified']
     assert '2' not in result['state']['sessions']['1']['customLobby']['pending']
     assert result['gateway'] == [{'op': 'ack', 'connection': 1, 'requestId': '2', 'request': ''}]
+
+
+@pytest.mark.parametrize('kind', ('action', 'pose', 'contact', 'respawn'))
+@pytest.mark.parametrize('code', ('invalidPose', 'badRequest', 'wrongPhase', 'staleMatch', 'notInRoom'))
+def test_gameplay_rejection_preserves_authenticated_session(kind, code):
+    client = Client()
+    client.identify()
+    gateway = client.state['sessions']['1']['customLobby']
+    gateway['pending']['2'] = {'kind': kind}
+    result = client.reply(2, 'error', code=code)
+    assert result['state']['sessions']['1']['customLobby']['identified']
+    assert '2' not in result['state']['sessions']['1']['customLobby']['pending']
+    assert result['gateway'][0]['op'] == 'ack'

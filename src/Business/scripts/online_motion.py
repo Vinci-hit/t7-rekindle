@@ -107,8 +107,12 @@ def world_updated(flow):
             if all(abs(v) <= 40 for v in candidate):
                 velocity = candidate
         tick = max(0, sampled_at - flow.session['instanceStartedAt'])
+        action_id = pose.get('state', 0)
+        # Native state is u32; transient sentinels cannot identify a wire animation.
+        if type(action_id) is not int or not 0 <= action_id <= 0xffff:
+            action_id = 0
         value['motion'] = dict(tick=tick, velocity=velocity, airborne=pose['airborne'],
-            jumping=pose['airborne'] and pose['jumping'], actionId=pose.get('state', 0),
+            jumping=pose['airborne'] and pose['jumping'], actionId=action_id,
             actionTick=min(tick, max(0, pose.get('phaseAt', sampled_at) - flow.session['instanceStartedAt'])))
     if state.get('lastSent') == value and flow.now - state['sentAt'] < 500:
         return

@@ -482,14 +482,15 @@ def receive(flow, body):
             raise ValueError("invalid room service error code")
         if kind == 'clock-echo' and code == 'badRequest':
             flow.log('WARN', 'combat clock sample expired or invalid; retry on next heartbeat')
-        elif kind == 'action' and code == 'badRequest':
-            # A rejected input must not tear down the authenticated game session.
-            flow.log('WARN', f'online action rejected; connection retained request={request_id} code={code}')
-        elif kind == 'pose' and code == 'invalidPose':
-            flow.log('WARN', 'online pose rejected by movement bounds')
-        elif (kind in ('action', 'pose', 'contact', 'respawn') and flow.state.get('onlineScene', {}).get('phase') == 4
-                and code in ('wrongPhase', 'staleMatch', 'notInRoom')):
-            flow.log('INFO', 'online action cancelled with its scene')
+        elif kind in ('action', 'pose', 'contact', 'respawn'):
+            # A gameplay rejection is a request outcome, not a broken session.
+            flow.log('WARN', f'online input rejected; connection retained kind={kind} request={request_id} code={code}')
+            if code == 'invalidPose':
+                for session in flow.state['sessions'].values():
+                    motion = session.get('onlineMotion')
+                    if motion is not None:
+                        motion.pop('lastSent', None)
+                        motion['sentAt'] = -online_limits.COMBAT_HEARTBEAT_INTERVAL_MS
         elif kind in ("hello", "ping", "clock-echo", "combat-heartbeat", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn"):
             raise ValueError(f"room service rejected {kind}: {code}")
         else:

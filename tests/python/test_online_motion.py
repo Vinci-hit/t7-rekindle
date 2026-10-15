@@ -334,3 +334,17 @@ def native_rendered(client, time):
     result = instance(client, kind='timer', name='online-motion-render')
     assert not any(p['reason'] == 'online-pose-interpolated' for p in result['send'])
     return [SimpleNamespace(position=tuple(v['position'])) for v in result.get('remoteMotion', [])]
+
+
+@pytest.mark.parametrize('native_state', (0xffffffff, 65536, -1))
+def test_invalid_native_animation_state_keeps_pose_stream_alive(native_state, monkeypatch, spawnPoints):
+    client = running(monkeypatch, spawnPoints, peer=True)
+    sample(client)
+    world = client.context['botWorld']
+    world['actors']['1'].update(airborne=True, jumping=True, state=native_state, phaseAt=125)
+    for now in (150, 200):
+        client.context['nowMs'] = world['sampledAt'] = now
+        result = client.event('world')
+        pose = motion_wire.decode_input(result['gateway'][0]['request'])['command']['payload']['pose']
+        assert pose['motion']['actionId'] == 0
+        assert pose['position'] == [1., 2., .5]
