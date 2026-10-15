@@ -13,6 +13,7 @@
 
 bool verifyJournalContracts(const t7::fs::path& fixtureRoot);
 bool verifyServerEventOrder(const t7::fs::path& fixtureRoot);
+bool verifyServerAudioDiagnostics();
 bool verifyDiagnosticLogs(const t7::fs::path& fixtureRoot);
 bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel);
 bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, bool normalExit);
@@ -407,6 +408,7 @@ int wmain(int argc, wchar_t** argv) {
     int result = 0;
     try {
         if (!verifyServerEventOrder(t7::fs::path(argv[1]))) result = 42;
+        if (!verifyServerAudioDiagnostics()) result = 44;
         if (!verifyFakeBootstrapAdapter()) result = 21;
         if (!result && !verifyLobbyNews()) result = 33;
         if (!verifyJobAssignmentOrder()) result = 15;

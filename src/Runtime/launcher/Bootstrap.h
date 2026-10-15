@@ -34,7 +34,7 @@ public:
     void check(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log = {});
     void launch(const fs::path& directory, const Config& config, const DiagnosticLogCallback& log,
                 const std::function<bool()>& cancelled = {}, const std::function<void()>& adapting = {},
-                const std::function<void(std::string)>& warning = {});
+                const std::function<void(std::string)>& warning = {}, bool traceAudio = false);
     bool running() const;
     bool windowClosed();
     DWORD exitCode() const;

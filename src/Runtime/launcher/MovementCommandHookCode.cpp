@@ -1,0 +1,88 @@
+#include "MovementCommandHookCode.h"
+#include "RemoteImage.h"
+#include "SprintHookCode.h"
+#include "WorldHookCode.h"
+#include <cstring>
+
+namespace t7 {
+namespace {
+uint32_t floatBits(float value) {
+    uint32_t bits; std::memcpy(&bits, &value, sizeof(bits)); return bits;
+}
+}
+void verifyMovementCommandFunction(HANDLE process, uint32_t imageBase) {
+    if (readClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL.size())
+            != MOVEMENT_COMMAND_ORIGINAL
+        || readClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA - 8, 8)
+            != Bytes{0x55,0x8B,0xEC,0x53,0x8B,0x5D,8,0x57})
+        throw std::runtime_error("movement command signature mismatch");
+}
+Bytes movementCommandJump(uint32_t address, uint32_t imageBase) {
+    WorldHookCode c; c.emit({0xE9});
+    c.word(address + MOVEMENT_COMMAND_CODE_OFFSET - (imageBase + MOVEMENT_COMMAND_RVA + 5));
+    c.emit({0x90}); return c.bytes;
+}
+Bytes buildMovementCommandHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
+    const auto code = address + MOVEMENT_COMMAND_CODE_OFFSET, data = address + SPRINT_DATA_OFFSET;
+    WorldHookCode c;
+    c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
+    c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC,0x8B,0xF1}); // ESI command, EBX GeMovable.
+    std::vector<size_t> native;
+    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
+    c.emit({0x81,0x3B}); c.word(imageBase + 0x17784E4); native.push_back(c.branch(0x85));
+    c.emit({0x8B,0x43,8,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x3B,0x05}); c.word(data + 8); native.push_back(c.branch(0x85));
+    c.emit({0xA1}); c.word(imageBase + 0x2E405F8); c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x83,0x78,0x38,4}); native.push_back(c.branch(0x85));
+    c.emit({0x81,0x3E}); c.word(imageBase + 0x17782D8); native.push_back(c.branch(0x85));
+    c.emit({0x80,0x7E,0x34,0}); native.push_back(c.branch(0x85)); // State-directed network commands own their parameters.
+    c.emit({0x8B,0x46,0x0C,0x85,0xC0}); const auto stopped = c.branch(0x84);
+    c.emit({0x3D}); c.word(floatBits(JOG_SPEED)); native.push_back(c.branch(0x85));
+    c.bind(stopped);
+    // The offline constructors leave MoveCommand::state uninitialized. Derive
+    // it from the command's own axes, not a later keyboard snapshot.
+    c.emit({0x33,0xFF});
+    for (const auto& axis : std::array<std::array<unsigned char, 3>, 2>{{{0x28,4,8},{0x2C,1,2}}}) {
+        c.emit({0x8B,0x46,axis[0],0x85,0xC0}); const auto zero = c.branch(0x84);
+        c.emit({0x3D}); c.word(floatBits(-1.f)); const auto negative = c.branch(0x84);
+        c.emit({0x3D}); c.word(floatBits(1.f)); native.push_back(c.branch(0x85));
+        c.emit({0x83,0xCF,axis[2]}); const auto positive = c.jump();
+        c.bind(negative); c.emit({0x83,0xCF,axis[1]}); c.bind(positive); c.bind(zero);
+    }
+    c.emit({0x8B,0x04,0xBD}); c.word(address + SPRINT_STATES_OFFSET); c.emit({0x89,0x46,0x30});
+    c.emit({0x8B,0xC7,0x83,0xE0,3,0x83,0xF8,1}); native.push_back(c.branch(0x85));
+    c.emit({0x81,0x7E,0x0C}); c.word(floatBits(JOG_SPEED)); native.push_back(c.branch(0x85));
+    c.emit({0x83,0x3D}); c.word(data + 16); c.emit({2}); native.push_back(c.branch(0x85));
+    c.emit({0xA1}); c.word(imageBase + 0x2E37804); c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+    for (unsigned char offset : std::array<unsigned char, 2>{0,4}) {
+        c.emit({0x8B,0x50,static_cast<unsigned char>(0x68 + offset),0x3B,0x15}); c.word(data + offset);
+        native.push_back(c.branch(0x85));
+    }
+    auto component = [&](uint32_t name, uint32_t table) {
+        c.emit({0x8B,0x4B,8,0x68}); c.word(imageBase + name); c.call(imageBase + 0x26A1C0);
+        c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+        c.emit({0x81,0x38}); c.word(imageBase + table); native.push_back(c.branch(0x85));
+    };
+    component(0x1783860, 0x178380C);
+    c.emit({0x83,0x78,0x38,2}); native.push_back(c.branch(0x85));
+    component(0x178692C, 0x17868BC);
+    c.emit({0x83,0x78,0x60,6}); native.push_back(c.branch(0x82));
+    c.emit({0x8B,0x40,0x54,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x8B,0,0x83,0xE0,0x13,0x83,0xF8,1}); native.push_back(c.branch(0x85));
+    // Preserve an established run before the native command updates physics and
+    // animation. Repairing the speed in the next frame already exposed a walk pose.
+    c.emit({0xC7,0x46,0x0C}); c.word(floatBits(RUN_SPEED));
+    c.emit({0x80,0x7B,0x20,0}); native.push_back(c.branch(0x85)); // Airborne speed must not rearm RUN.
+    c.emit({0x8B,0x46,0x30});
+    for (const auto& state : std::array<std::pair<uint32_t, uint32_t>, 3>{{{2,10},{3,11},{9,12}}}) {
+        c.emit({0x83,0xF8,static_cast<unsigned char>(state.first)}); const auto next = c.branch(0x85);
+        c.emit({0xC7,0x46,0x30}); c.word(state.second); native.push_back(c.jump()); c.bind(next);
+    }
+    for (auto branch : native) c.bind(branch);
+    c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D});
+    c.bytes.insert(c.bytes.end(), MOVEMENT_COMMAND_ORIGINAL.begin(), MOVEMENT_COMMAND_ORIGINAL.end());
+    c.emit({0xE9}); c.word(imageBase + MOVEMENT_COMMAND_RVA + 6 - (code + static_cast<uint32_t>(c.bytes.size()) + 4));
+    if (c.bytes.size() > 0x1000) throw std::runtime_error("movement command hook overflow");
+    return c.bytes;
+}
+}

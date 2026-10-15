@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from Business.scripts import actors, app, battle, bot, combat
+from Business.scripts import actors, app, battle, bot, combat, contracts as wire, weapons
 from Business.scripts.codec import battle_flow
 from blade_fixture import contact, publish
 from test_bot_roster import multi, sample
@@ -93,7 +93,7 @@ def test_journal_never_turns_stale_or_outside_window_contacts_into_hits(multi, i
     attack(multi, 2)
     event = native(multi)
     if invalid == 'before-strike': event['occurredAt'] = event['phaseAt'] - 1
-    elif invalid == 'after-window': event['occurredAt'] = event['phaseAt'] + 541
+    elif invalid == 'after-window': event['occurredAt'] = event['phaseAt'] + 641
     elif invalid == 'wrong-seq': event['seq'] += 1
     elif invalid == 'respawn': multi.context['botWorld']['actors']['1']['entity'] += 1
     elif invalid == 'epoch': multi.context['botWorld']['instanceStartedAt'] += 1

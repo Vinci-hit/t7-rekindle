@@ -26,13 +26,14 @@ inline void prepare(HANDLE process) {
         {CAMERA,CAMERA_VTABLE}
     }) writeWord(process, item.first, item.second);
     t7::writeClientMemory(process, CAMERA + 0x61, {1});
-    // Signature anchors for the native window getter, text-focus getter and cursor mode handler.
+    t7::writeClientMemory(process, WINDOW + 0x115, {1});
+    // Signature anchors for the native window, UI focus, activation and cursor handlers.
     t7::writeClientMemory(process, BASE + 0x12670, {0x8B,0x81,0x38,1,0,0,0xC3});
-    t7::writeClientMemory(process, BASE + 0x400D30, {0x8A,0x41,8,0xC2,4,0});
     t7::writeClientMemory(process, BASE + 0x7D33B,
         {0x0F,0x94,0xC0,0x80,0xB9,0x11,1,0,0,0,0x88,0x81,0x10,1,0,0});
     t7::writeClientMemory(process, BASE + 0x3FF3FB, {0x80,0x7E,0x7D,0});
     t7::writeClientMemory(process, BASE + 0x4B2C70, {0x80,0x79,0x61,1,0x75,9,0x80,0x79,0x60,0});
+    t7::writeClientMemory(process, BASE + 0x4B450D, {0x80,0x79,0x68,1,0x74,0x11,0x83,0x79,0x64,0,0x7F,0x0B});
     t7::WorldHookCode c;
     auto check = [&]() {
         const auto valid = c.branch(0x84);
@@ -50,6 +51,7 @@ inline void prepare(HANDLE process) {
     c.emit({0x81,0x7C,0x24,8}); c.word(0x41E); check();
     c.emit({0x83,0x7C,0x24,16,0}); check();
     c.emit({0x8B,0x44,0x24,12,0xA2}); c.word(WINDOW + 0x114);
+    c.emit({0xA2}); c.word(UI + 0x184);
     c.emit({0xA3}); c.word(CAMERA_BLOCKED); // GE_SHOW_MOUSE / GE_HIDE_MOUSE subscriber.
     c.emit({0xFF,0x05}); c.word(MESSAGES);
     c.emit({0xD9,0xEE,0x0F,0x57,0xC0,0x33,0xC0,0xC2,16,0});
@@ -83,8 +85,18 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
         pump(process);
         require(readWord(process, CONTEXT) == context
             && (readWord(process, WINDOW + 0x114) & 0xFF) == static_cast<uint32_t>(freeCursor)
+            && (readWord(process, UI + 0x184) & 0xFF) == static_cast<uint32_t>(freeCursor)
             && readWord(process, CAMERA_BLOCKED) == static_cast<uint32_t>(freeCursor), reason);
         require(readWord(process, ERRORS) == 0, "wrong IME/cursor API arguments");
+    };
+    auto updateInput = [&](auto update) {
+        writeWord(process, worldFixture::FRAME_GATE, 2);
+        const auto deadline = GetTickCount64() + 3000;
+        while (readWord(process, worldFixture::FRAME_GATE) != 1) {
+            require(GetTickCount64() < deadline, "input event frame timeout"); Sleep(1);
+        }
+        update();
+        writeWord(process, worldFixture::FRAME_GATE, 0);
     };
     auto focus = [&](bool enabled) {
         // The original TextInputFocusChange handler also associates/detaches its cached HIMC.
@@ -95,6 +107,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     };
     auto freeCursor = [&]() {
         writeWord(process, CAMERA_BLOCKED, 1);
+        t7::writeClientMemory(process, UI + 0x184, {1});
         // Publish last: the running frame may immediately capture this flag again during chat.
         const unsigned char value = 1; SIZE_T written = 0;
         require(WriteProcessMemory(process, reinterpret_cast<void*>(static_cast<uintptr_t>(WINDOW + 0x114)),
@@ -147,29 +160,57 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     focus(true); expect(0x1234, false, "chat reopen failed after native IME detach");
     focus(false); expect(0, false, "chat reclose failed");
 
+    // IME may retain an uninitialized non-boolean byte without an actual UI text focus.
+    updateInput([&]() {
+        t7::writeClientMemory(process, IME + 8, {0x59});
+        freeCursor();
+    });
+    expect(0, true, "IME residue without UI text focus captured the cursor");
+    t7::writeClientMemory(process, IME + 8, {0});
+
     // Chat temporarily captures an already-free cursor, but restores that mode on close.
+    t7::writeClientMemory(process, CAMERA + 0x69, {1}); // Manual cursor toggle, not a menu request.
     freeCursor(); expect(0, true, "ordinary free-cursor mode was captured outside chat");
     const auto beforeFreeChat = readWord(process, MESSAGES);
     focus(true); expect(0x1234, false, "chat over a free cursor did not enable camera control");
     pollWorld();
     focus(false); expect(0, true, "chat stole the previous free-cursor mode");
     require(readWord(process, MESSAGES) == beforeFreeChat + 2, "redundant native cursor events");
+    t7::writeClientMemory(process, CAMERA + 0x69, {0});
 
     auto captureCursor = [&]() {
         writeWord(process, CAMERA_BLOCKED, 0);
+        t7::writeClientMemory(process, UI + 0x184, {0});
         t7::writeClientMemory(process, WINDOW + 0x114, {0});
     };
+    updateInput([&]() {
+        captureCursor(); focus(true);
+        t7::writeClientMemory(process, IME + 8, {0});
+    });
+    expect(0x1234, false, "UI text focus was ignored when the IME flag lagged behind");
+    updateInput([&]() {
+        t7::writeClientMemory(process, CAMERA + 0x61, {0});
+        t7::writeClientMemory(process, WINDOW + 0x115, {0});
+        freeCursor();
+    });
+    expect(0x1234, true, "background chat recaptured the mouse");
+    const auto backgroundMessages = readWord(process, MESSAGES);
+    pollWorld();
+    require(readWord(process, MESSAGES) == backgroundMessages, "inactive window resent cursor events");
+    updateInput([&]() {
+        t7::writeClientMemory(process, CAMERA + 0x61, {1});
+        t7::writeClientMemory(process, WINDOW + 0x115, {1});
+    });
+    expect(0x1234, false, "foreground chat did not resume camera control");
+    focus(false); expect(0, false, "chat blur after activation lost its prior mouse mode");
+
     auto menu = [&](bool opened, bool textFocus) {
-        // Complete one frame, then publish the native menu event before allowing the next frame.
-        writeWord(process, worldFixture::FRAME_GATE, 2);
-        const auto deadline = GetTickCount64() + 3000;
-        while (readWord(process, worldFixture::FRAME_GATE) != 1) {
-            require(GetTickCount64() < deadline, "menu event frame timeout"); Sleep(1);
-        }
-        t7::writeClientMemory(process, CAMERA + 0x61, {static_cast<unsigned char>(!opened)});
-        focus(textFocus);
-        if (opened) freeCursor(); else captureCursor();
-        writeWord(process, worldFixture::FRAME_GATE, 0);
+        updateInput([&]() {
+            // Foreground menus request a cursor without deactivating the window.
+            writeWord(process, CAMERA + 0x64, opened ? 1 : 0);
+            focus(textFocus);
+            if (opened) freeCursor(); else captureCursor();
+        });
     };
     auto closeMenu = [&]() {
         menu(false, false);
@@ -197,7 +238,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     focus(true); expect(0x1234, false, "chat stopped capturing after closing the menu");
     focus(false); expect(0, false, "chat restored an obsolete menu cursor after closing");
     require((readWord(process, CAMERA + 0x61) & 0xFF) == 1,
-        "chat adapter changed native operator activation");
+        "chat adapter changed native window activation");
 
     writeWord(process, worldFixture::STATE + 0x38, 0); pump(process);
     writeWord(process, CONTEXT, 0x1234);
@@ -249,6 +290,39 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     const auto restoredAssociations = readWord(process, ASSOCIATIONS);
     pollWorld();
     require(readWord(process, ASSOCIATIONS) == restoredAssociations, "menu restored IME every frame");
+    closeMenu();
+
+    // Settlement can keep actor state GAME while multiple native UI requests own the cursor.
+    updateInput([&]() {
+        writeWord(process, CAMERA + 0x64, 2);
+        t7::writeClientMemory(process, CAMERA + 0x68, {1});
+        t7::writeClientMemory(process, IME + 8, {0x59});
+        captureCursor();
+    });
+    expect(0, true, "settlement with a stale IME flag lost its cursor");
+    const auto settlementResets = readWord(process, FOCUS_RESETS);
+    for (unsigned char active : std::array<unsigned char, 4>{0, 1, 0, 1}) {
+        updateInput([&]() {
+            t7::writeClientMemory(process, CAMERA + 0x61, {active});
+            t7::writeClientMemory(process, WINDOW + 0x115, {active});
+        });
+        expect(0, true, "settlement activation handed the cursor back to the camera");
+    }
+    for (uint32_t requests : {1u, 0u}) {
+        updateInput([&]() { writeWord(process, CAMERA + 0x64, requests); captureCursor(); });
+        expect(0, true, "camera-state cursor request was ignored after a panel closed");
+    }
+    require(readWord(process, FOCUS_RESETS) == settlementResets,
+        "settlement activation reset the native UI focus");
+    t7::writeClientMemory(process, CAMERA + 0x68, {0}); closeMenu();
+
+    menu(true, false);
+    const auto respawnResets = readWord(process, FOCUS_RESETS);
+    for (uint32_t state : {3u, 1u, 4u}) {
+        writeWord(process, worldFixture::STATE + 0x38, state);
+        expect(0, true, "respawn stole an open foreground menu cursor");
+    }
+    require(readWord(process, FOCUS_RESETS) == respawnResets, "respawn reset open menu focus");
     closeMenu();
     writeWord(process, WINDOW_GLOBAL, 0); writeWord(process, IME_GLOBAL, 0); writeWord(process, UI_GLOBAL, 0);
     writeWord(process, CAMERA_GLOBAL, 0);

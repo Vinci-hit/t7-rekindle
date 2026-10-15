@@ -30,6 +30,11 @@ struct ResourceCheck {
     MovementAnimationProfile movementAnimation;
     std::vector<DiagnosticMessage> diagnostics;
 };
+struct ResourceCheck {
+    DashAttackProfile dashAttack;
+    MovementAnimationProfile movementAnimation;
+    std::vector<DiagnosticMessage> diagnostics;
+};
 class PythonHost {
 public:
     PythonHost(const fs::path& root, const fs::path& cache);

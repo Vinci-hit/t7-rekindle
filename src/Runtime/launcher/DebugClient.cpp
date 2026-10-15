@@ -1,5 +1,7 @@
 #include "DebugClient.h"
 #include "AudioDiagnostics.h"
+#include "AudioPlaybackTrace.h"
+#include "ClientCode.h"
 #include <algorithm>
 #include <cwctype>
 #include <cstring>
@@ -172,7 +174,7 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                         const std::function<bool()>& cancelled,
                         const std::vector<ChildImageRule>& children,
                         const std::function<bool(DWORD, uintptr_t)>& breakpoint,
-                        const std::function<void(std::string)>& warning) {
+                        const std::function<void(std::string)>& warning, bool traceAudio) {
     if (worker_.joinable() || process_) throw std::runtime_error("debug client already started");
     for (const auto& rule : rules) {
         if (rule.name.empty() || !rule.entryRva || rule.entrySignature.empty() || rule.entrySignature[0] == 0xCC || !rule.patches)
@@ -184,12 +186,13 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
     }
     std::promise<void> ready;
     auto result = ready.get_future();
-    worker_ = std::thread([this, executable, imageHash, rules, prepare, log, cancelled, children, breakpoint, warning,
+    worker_ = std::thread([this, executable, imageHash, rules, prepare, log, cancelled, children, breakpoint, warning, traceAudio,
                            ready = std::move(ready)]() mutable {
         HANDLE job = nullptr, primaryThread = nullptr;
         std::map<DWORD, DebugProcess> processes;
         std::map<std::wstring, std::string> registeredModules;
         bool terminating = false, inputMethodCompatible = false;
+        AudioPlaybackTrace audioTrace;
         ULONGLONG terminationDeadline = 0;
         const auto warn = [&](const std::string& message) {
             if (warning) warning(message); else if (log) log(DiagnosticLogLevel::Warn, message);
@@ -220,6 +223,7 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
             processes[pid_].role = ProcessRole::Main;
             if (!AssignProcessToJobObject(job, process_)) throw std::runtime_error(errorText("debug client Job Object assignment"));
             prepare(process_, primaryThread);
+            if (traceAudio && imageHash == CLIENT_IMAGE_SHA256) audioTrace.arm(process_, log);
             if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
             if (ResumeThread(primaryThread) != 1) throw std::runtime_error(errorText("prepared client first resume"));
             ready.set_value();
@@ -230,6 +234,7 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
         }
         if (primaryThread && !CloseHandle(primaryThread)) fail(errorText("client primary thread cleanup"), true);
         while (!processes.empty()) {
+            if (!stopping_.load()) audioTrace.poll();
             for (const auto& process : processes) {
                 if (!terminating && process.second.terminationDeadline && GetTickCount64() > process.second.terminationDeadline)
                     fail("compatible child exit event timeout; PID=" + std::to_string(process.first), true);
@@ -340,6 +345,8 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                             throw std::runtime_error("duplicate required DLL mapping");
                         writeClientMemory(process, entry, {0xCC});
                     }
+                } else if (!stopping_.load() && event.dwDebugEventCode == OUTPUT_DEBUG_STRING_EVENT && event.dwProcessId == pid_) {
+                    audioTrace.debugString(event.u.DebugString);
                 } else if (!stopping_.load() && event.dwDebugEventCode == UNLOAD_DLL_DEBUG_EVENT) {
                     auto& entries = processes.at(event.dwProcessId).entries;
                     const auto base = reinterpret_cast<uintptr_t>(event.u.UnloadDll.lpBaseOfDll);
@@ -356,6 +363,9 @@ void DebugClient::start(const fs::path& executable, const std::string& imageHash
                     if ((native || wow64) && event.u.Exception.dwFirstChance && entry != state.entries.end() && entry->second.pending) {
                         initializeDll(state.process, event.dwThreadId, address, entry->second);
                         if (log) log(DiagnosticLogLevel::Debug, "Required DLL adapted before initialization: " + utf8(entry->second.rule->name));
+                    } else if ((native || wow64) && event.u.Exception.dwFirstChance && event.dwProcessId == pid_
+                               && audioTrace.handleBreakpoint(event.dwThreadId, address)) {
+                        disposition = DBG_CONTINUE;
                     } else if ((native || wow64) && event.u.Exception.dwFirstChance && event.dwProcessId == pid_
                                && breakpoint && breakpoint(event.dwThreadId, address)) {
                         disposition = DBG_CONTINUE;

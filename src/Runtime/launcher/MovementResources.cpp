@@ -64,6 +64,24 @@ std::string gates(uint32_t firstId) {
     return "<Node Type=\"CONDITION\" ID=\"" + std::to_string(firstId) + "\" Name=\"" + encoded(L"是否为本地单位") + "\"/>"
         + "<Node Type=\"CONDITION\" ID=\"" + std::to_string(firstId + 1) + "\" Name=\"" + encoded(L"是否为战斗角色") + "\"/>";
 }
+std::string playerStateGate(uint32_t id, int state) {
+    return "<Node Type=\"CONDITION\" ID=\"" + std::to_string(id) + "\" Name=\"" + encoded(L"本地玩家状态") + "\">"
+        + "<Param Name=\"" + encoded(L"玩家当前状态") + "\" Type=\"enum\" Value=\"" + std::to_string(state) + "\"/></Node>";
+}
+std::string preparationMovementGate(uint32_t firstId) {
+    // Keep native WASD commands current while Active disables the controller.
+    // Other inputs still require combat; entering GAME does not replay key events.
+    auto result = "<Node Type=\"SEL\" ID=\"" + std::to_string(firstId) + "\">" + playerStateGate(firstId + 1, 4)
+        + "<Node Type=\"SEQ\" ID=\"" + std::to_string(firstId + 2) + "\">" + playerStateGate(firstId + 3, 2)
+        + "<Node Type=\"SEL\" ID=\"" + std::to_string(firstId + 4) + "\">";
+    auto id = firstId + 5;
+    for (const auto* key : {"W", "A", "S", "D"}) {
+        for (const auto* condition : {L"按键被按下", L"按键被松开"})
+            result += "<Node Type=\"CONDITION\" ID=\"" + std::to_string(id++) + "\" Name=\"" + encoded(condition) + "\">"
+                + "<Param Name=\"" + encoded(L"按键") + "\" Type=\"str\" Value=\"" + key + "\"/></Node>";
+    }
+    return result + "</Node></Node></Node>";
+}
 std::vector<Edit> router(std::string_view source, const std::vector<Element>& nodes) {
     const auto root = unique(nodes, 0, "Node", "ID", "1");
     for (const auto* label : {L"进入节点", L"退出节点"}) {
@@ -89,18 +107,17 @@ std::vector<Edit> router(std::string_view source, const std::vector<Element>& no
     for (const auto& node : nodes) {
         if (node.parent != execute) continue;
         const auto type = attribute(node, "Type"), event = attribute(node, "Event");
+        const bool keys = event == "GeEventKeyDown;GeEventKeyUp";
+        const uint32_t addedNodes = keys ? 16 : 4;
         if (node.name != "Node" || (type != "SEL" && type != "SEQ") || event.empty()
-            || event.find('"') != event.npos || node.content == node.end || maxId > INT32_MAX - 4) invalid();
-        // Gate each event, not INIT_FINISH: otherwise the original offline tree
-        // handles WASD, jump and crouch before GAME, independently of the server.
+            || event.find('"') != event.npos || node.content == node.end || maxId > INT32_MAX - addedNodes) invalid();
         const auto replacement = "<Node Type=\"SEQ\" ID=\"" + attribute(node, "ID") + "\" Event=\"" + event + "\">"
             + gates(maxId + 1)
-            + "<Node Type=\"CONDITION\" ID=\"" + std::to_string(maxId + 3) + "\" Name=\"" + encoded(L"本地玩家状态") + "\">"
-            + "<Param Name=\"" + encoded(L"玩家当前状态") + "\" Type=\"enum\" Value=\"4\"/></Node>"
-            + "<Node Type=\"" + type + "\" ID=\"" + std::to_string(maxId + 4) + "\">"
+            + (keys ? preparationMovementGate(maxId + 3) : playerStateGate(maxId + 3, 4))
+            + "<Node Type=\"" + type + "\" ID=\"" + std::to_string(maxId + addedNodes) + "\">"
             + std::string(source.substr(node.content, node.closing - node.content)) + "</Node></Node>";
         edits.push_back({node.begin, node.end, replacement});
-        maxId += 4;
+        maxId += addedNodes;
     }
     return edits;
 }

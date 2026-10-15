@@ -13,6 +13,20 @@ def notifications(flow, reason):
     return [packet for packet in flow.result['send'] if packet['reason'] == reason]
 
 
+@pytest.mark.parametrize('attacker,target', [(1, 2), (2, 12)])
+def test_audio_announcement_diagnostic_identifies_local_player_without_claiming_playback(multi, attacker, target):
+    actors.data(multi, attacker)['killStreak'] = 3
+    actors.data(multi, target)['health'] = combat.DAMAGE
+    combat.applyHit(multi, attacker, target, actors.pair(sample(multi), attacker, target))
+    lines = [line for line in multi.result['logs'] if line['message'].startswith('Audio announcement;')]
+    assert len(lines) == 1 and lines[0]['level'] == 'DEBUG'
+    message = lines[0]['message']
+    for field in (f'serverTimeMs={multi.now}', f'attacker={attacker}', f'localPlayer={int(attacker == 1)}',
+                  'streak=4', 'streakMessageId=710040', 'stage=queued', 'clientPlayback=not-observed'):
+        assert field in message
+    assert len(notifications(multi, 'combat-kill-streak')) == 1
+
+
 def test_kill_and_streak_wire_layouts():
     assert kill_flow.encode_kill_event(server_time_ms=1234, source_rid=12, target_rid=2,
                                        weapon_tid=200, hit_part=0) == struct.pack('>HQQQii', 6, 1234, 12, 2, 200, 0)

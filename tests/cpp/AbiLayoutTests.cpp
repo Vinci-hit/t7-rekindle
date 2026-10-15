@@ -5,6 +5,7 @@
 
 bool verifyGraphicsSettings();
 bool verifyAudioDiagnostics();
+bool verifyAudioPlaybackTrace();
 bool verifyOutputDevice();
 bool verifyModuleLookup();
 bool verifyAp32();
@@ -26,7 +27,8 @@ bool verifyBladeParryContacts();
 int runDebugClientFixture();
 int runInputMethodDebugFixture();
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--audio-playback-tests") return verifyAudioPlaybackTrace() ? 0 : 1;
     const auto inputMethodFixture = runInputMethodDebugFixture();
     if (inputMethodFixture >= 0) return inputMethodFixture;
     const auto fixture = runDebugClientFixture();

@@ -89,6 +89,7 @@ void fixture(const t7::fs::path& path) {
     code.insert(code.end(), {0x89, 0x25}); word(code, STATS); // original ESP
     const auto loop = static_cast<uint32_t>(code.size());
     code.insert(code.end(), {0x6A,10,0xFF,0x15}); word(code, BASE + 0x1904);
+    imm(0xB8, jumpPhysicsFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(1);
     const auto paused = branch(code, 0x84);
     imm(0xB8, roundEndFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
@@ -237,8 +238,13 @@ bool verifyGraphicsHookExecution() {
             try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
             require(rejected, "world accepted an unknown life-state getter");
             t7::writeClientMemory(process, BASE + 0x64C9D0, {0x83});
+            t7::writeClientMemory(process, BASE + movementCommandFixture::HOOK_RVA, {0xCC});
+            rejected = false;
+            try { t7::verifyWorldFunctions(process, BASE); } catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "movement command accepted an unknown native executor");
+            t7::writeClientMemory(process, BASE + movementCommandFixture::HOOK_RVA, {0x8B});
             for (const auto& anchor : std::vector<std::pair<uint32_t, uint32_t>>{
-                {0x400D30,0x8A}, {0x3FF3D0,0x55}, {0x3FF3FB,0x80}, {0x4B2C70,0x80}
+                {0x3FF3D0,0x55}, {0x3FF3FB,0x80}, {0x4B2C70,0x80}, {0x4B450D,0x80}
             }) {
                 t7::writeClientMemory(process, BASE + anchor.first, {0xCC});
                 rejected = false;
@@ -333,6 +339,16 @@ bool verifyGraphicsHookExecution() {
         audio.apply(sound);
         require(readAudio(audio, actual, true) == 2 && actual.effectsVolume == 1
             && readWord(client.process(), STATS + 32) == 2, "stale audio write overwrote game changes");
+        writeWord(client.process(), BANK_RESULT, 1); completeBanks(400);
+        require(readWord(client.process(), BANK_COUNT) == 24
+            && std::all_of(banks.begin(), banks.end(), [](uint32_t value) { return value == 1; }),
+            "audio settings cancelled subsequent combat bank loads");
+        for (uint32_t i = 0; i < banks.size(); ++i) {
+            const auto name = readWord(client.process(), BANK_NAMES + i * 4);
+            const auto bytes = t7::readClientMemory(client.process(), name, std::strlen(t7::COMBAT_AUDIO_BANKS[i]) + 1);
+            require(std::memcmp(bytes.data(), t7::COMBAT_AUDIO_BANKS[i], bytes.size()) == 0,
+                "audio settings erased combat bank filenames");
+        }
         const auto graphicsEntry = BASE + t7::GRAPHICS_TICK_RVA + 5
             + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
         const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;

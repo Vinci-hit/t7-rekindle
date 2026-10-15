@@ -69,6 +69,12 @@ def announceKill(flow, attacker, target, *, weaponId=None):
                         statMessageId=kill_flow.FIRST_BLOOD_MESSAGE_ID if firstBlood else 0)
     combat.publishScore(flow, target, previous=previousVictim)
     combat.publishCampScore(flow)
+    streakMessageId = (kill_flow.BATTLEFIELD_BUTCHER_MESSAGE_ID if streak >= kill_flow.BUTCHER_STREAK
+                       else 710000 + streak * 10 if streak >= 2 else 0)
+    flow.log('DEBUG', f'Audio announcement; serverTimeMs={flow.now}; attacker={attacker}; '
+                     f'localPlayer={int(attacker == wire.ACTOR_ID)}; streak={streak}; '
+                     f'streakMessageId={streakMessageId}; firstBlood={int(firstBlood)}; '
+                     f'butcherEnded={int(wasButcher)}; stage=queued; clientPlayback=not-observed')
     flow.log("INFO", f"combat-kill attacker={attacker} target={target} streak={streak} "
                               f"first-blood={firstBlood} butcher-ended={wasButcher} "
                               f"kills={winner['kills']} points={winner['battlePoints']} target-deaths={victim['deaths']}")

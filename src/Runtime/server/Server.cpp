@@ -26,7 +26,8 @@ fs::path defaultWritableRoot() {
 }
 Server::~Server() { stop(); }
 void Server::start(const Config& config, const fs::path& root, const fs::path& writableRoot,
-                   const std::function<bool()>& cancelled, std::shared_ptr<DiagnosticLogFilter> logFilter) {
+                   const std::function<bool()>& cancelled, std::shared_ptr<DiagnosticLogFilter> logFilter,
+                   const DiagnosticLogCallback& audioLog) {
     if (!stopping_) throw std::runtime_error("server is already running");
     stop();
     {
@@ -36,6 +37,7 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
         worldPending_ = false;
     }
     validateConfig(config); config_ = config; boundConfig_ = config; root_ = root;
+    audioLog_ = audioLog;
     // The package root may be installed read-only.  Keep generated revisions
     // and wire journals outside it unless the caller explicitly supplies a
     // writable session root.
@@ -378,7 +380,7 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
     std::vector<PendingWrite> writes;
     auto label = "event=" + std::to_string(event.id) + " ";
     for (const auto& message : result.send) writes.push_back({plainFrame(message.command, 0, message.body), 0, version, label + message.reason});
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     if (stopping_) throw std::runtime_error("transition cancelled: server stopping");
     std::map<uint64_t, size_t> totals;
     for (size_t i = 0; i < result.send.size(); ++i) totals[result.send[i].connection] += writes[i].bytes.size();
@@ -450,6 +452,18 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         + " callbackMs=" + std::to_string(callbackMs) + " timerLateMs=" + std::to_string(late));
     if (!writes.empty()) signals_->io();
     for (const auto& line : result.logs) journal_->add(line.level, "BUSINESS", event.connection, version, label + line.message);
+    lock.unlock();
+    for (const auto& line : result.logs) {
+        if (audioLog_ && line.message.rfind("Audio announcement;", 0) == 0) {
+            try {
+                audioLog_(line.level, line.message + "; event=" + std::to_string(event.id)
+                    + "; queuedTickMs=" + std::to_string(queuedTick));
+            } catch (const std::exception& error) {
+                journal_->add(DiagnosticLogLevel::Warn, "LOG-ERROR", event.connection, version,
+                    "Audio announcement live log failed; " + std::string(error.what()));
+            }
+        }
+    }
 }
 void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::vector<uint64_t>& live,
                       std::string& state, Timers& timers) {

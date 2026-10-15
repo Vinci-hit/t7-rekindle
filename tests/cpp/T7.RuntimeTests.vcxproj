@@ -18,6 +18,7 @@
     <ClCompile Include="ServerLifecycleSmoke.cpp" />
     <ClCompile Include="LobbyNewsTests.cpp" />
     <ClCompile Include="ServerEventOrderTests.cpp" />
+    <ClCompile Include="ServerAudioDiagnosticsTests.cpp" />
     <ClCompile Include="JournalContractTests.cpp" />
     <ClCompile Include="DiagnosticLogTests.cpp" />
     <ClCompile Include="SessionCleanupTests.cpp" />
@@ -41,6 +42,8 @@
     <ClCompile Include="../../src/Runtime/launcher/GraphicsHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioSettings.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackTrace.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/AudioPlaybackHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/BladeParryContacts.cpp" />

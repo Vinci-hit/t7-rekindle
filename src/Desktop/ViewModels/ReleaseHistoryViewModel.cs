@@ -15,6 +15,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         private readonly Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> _load;
         private readonly Func<LauncherHistoryEntry, UpdateDownloadViewModel> _createDownload;
         private readonly Func<bool> _otherBusy;
+        private readonly Func<bool> _canStartOperation;
         private CancellationTokenSource _cancellation;
         private bool _disposed;
         private bool _loading;
@@ -26,11 +27,13 @@ namespace T7.Rekindle.Desktop.ViewModels
         private string _error = string.Empty;
 
         internal ReleaseHistoryViewModel(Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> load,
-            Func<LauncherHistoryEntry, UpdateDownloadViewModel> createDownload, Func<bool> otherBusy)
+            Func<LauncherHistoryEntry, UpdateDownloadViewModel> createDownload, Func<bool> otherBusy,
+            Func<bool> canStartOperation = null)
         {
             _load = load;
             _createDownload = createDownload;
             _otherBusy = otherBusy;
+            _canStartOperation = canStartOperation ?? (() => true);
             RefreshCommand = new AsyncRelayCommand(LoadAsync, () => CanSelect);
         }
 
@@ -39,7 +42,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         public IAsyncRelayCommand RefreshCommand { get; }
         public bool IsLoading => _loading;
         public bool IsBusy => IsLoading || Download?.IsDownloading == true || Download?.IsInstalling == true;
-        public bool CanSelect => !_disposed && !IsBusy && !_otherBusy();
+        public bool CanSelect => !_disposed && !IsBusy && !_otherBusy() && _canStartOperation();
         public bool HasLoaded { get; private set; }
         public string StatusText => _status;
         public string ErrorText => _error;
@@ -67,7 +70,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 _download = entry?.CanRollback == true ? _createDownload(entry) : null;
                 if (_download != null)
                 {
-                    _download.CanStartOperation = () => !_disposed && !IsLoading && !_otherBusy();
+                    _download.CanStartOperation = () => !_disposed && !IsLoading && !_otherBusy() && _canStartOperation();
                     _download.PropertyChanged += OnDownloadChanged;
                 }
                 OnPropertyChanged(nameof(Download));
@@ -88,7 +91,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 try
                 {
                     var entries = await _load(_channel, cancellation.Token).ConfigureAwait(true);
-                    if (_disposed || cancellation.IsCancellationRequested) return;
+                    if (_disposed || cancellation.IsCancellationRequested || !_canStartOperation()) return;
                     _entries = entries;
                     OnPropertyChanged(nameof(Entries));
                     HasLoaded = true;

@@ -31,7 +31,8 @@ namespace T7.ManagedHarness
             new MainWindowViewModel(new FakeLauncherBridge(), settings,
                 new UserSettings { ClientDirectory = @"C:\Games\T7", PlayerName = "玩家" }, null,
                 path => Task.FromResult(ValidDirectory(path)), interaction ?? new FakeDesktopInteraction(),
-                createUpdateDownload: download, checkChannelUpdate: check);
+                createUpdateDownload: download, checkChannelUpdate: check,
+                previewAccess: PreviewAccessFixture.Authorized(settings.DirectoryPath + "-authorization"));
 
         private static LauncherUpdateInfo PreviewInfo(long number = 12) => new LauncherUpdateInfo
         {

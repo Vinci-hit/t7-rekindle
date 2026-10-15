@@ -138,6 +138,41 @@ inline void expectDirection(HANDLE process, uint32_t direction, bool running) {
     if (state == 0 || state >= std::size(moveDirs) || moveDirs[state] != direction || (state >= 10) != running)
         throw std::runtime_error("native animation direction disagrees with held keys");
 }
+inline void verifyPreparation(HANDLE process) {
+    const auto axes = t7::readClientMemory(process, worldFixture::ANCHOR, 8);
+    const auto active = readWord(process, worldFixture::CONTROLLER + 8);
+    const auto position = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12);
+    const auto moves = readWord(process, MOVES), jumps = readWord(process, JUMP_COMMANDS);
+    for (uint32_t keys = 0; keys < 16; ++keys) {
+        writeWord(process, worldFixture::STATE + 0x38, 2);
+        writeWord(process, worldFixture::CONTROLLER + 8, 0);
+        writeWord(process, KEYS, keys);
+        // Native key commands update these axes even while Active suspends execution.
+        const float forward = static_cast<float>(((keys & 1) != 0) - ((keys & 2) != 0));
+        const float right = static_cast<float>(((keys & 8) != 0) - ((keys & 4) != 0));
+        const std::array<float, 2> direction{right, -forward};
+        t7::Bytes savedDirection(sizeof(direction));
+        std::memcpy(savedDirection.data(), direction.data(), savedDirection.size());
+        t7::writeClientMemory(process, worldFixture::ANCHOR, savedDirection);
+        expect(process, 3, false, "preparation armed running");
+        expectDirection(process, 0, false);
+        if (readWord(process, worldFixture::CONTROLLER + 8) != 0)
+            throw std::runtime_error("preparation frame reactivated the native controller");
+        writeWord(process, CLOCK, readWord(process, CLOCK) + 6000); pump(process);
+        // GAME restores the existing controller; there is no new key event or movement command.
+        writeWord(process, worldFixture::STATE + 0x38, 4);
+        writeWord(process, worldFixture::CONTROLLER + 8, 1);
+        expect(process, forward || right ? 3.f : 0.f, false, "preparation time counted toward running");
+        if (readWord(process, KEYS) != keys || readWord(process, MOVES) != moves
+            || readWord(process, JUMP_COMMANDS) != jumps || readWord(process, worldFixture::CONTROLLER + 8) != 1
+            || t7::readClientMemory(process, worldFixture::ANCHOR, 8) != savedDirection
+            || t7::readClientMemory(process, worldFixture::CONTROLLER + 0x10, 12) != position)
+            throw std::runtime_error("preparation handoff changed native input/axes/position or replayed a command");
+    }
+    t7::writeClientMemory(process, worldFixture::ANCHOR, axes);
+    writeWord(process, worldFixture::CONTROLLER + 8, active);
+    writeWord(process, KEYS, 0); pump(process);
+}
 inline void verifyJump(HANDLE process) {
     uint32_t count = readWord(process, ANIMATION_EVENTS);
     auto expectEvent = [&](const char* name) {
@@ -245,7 +280,8 @@ inline void verify(HANDLE process) {
     const float initialSpeed = static_cast<float>(config.speedMilli) / 1000.f;
     writeWord(process, CLOCK, 1000);
     writeWord(process, CLOCK_MODE, 1);
-    uint32_t tick = 1000;
+    verifyPreparation(process);
+    uint32_t tick = readWord(process, CLOCK);
     auto time = [&](uint32_t delta) { tick += delta; writeWord(process, CLOCK, tick); pump(process); };
     for (uint32_t mask = 0; mask < 16; ++mask) {
         writeWord(process, KEYS, mask); pump(process);
@@ -395,7 +431,7 @@ inline void verify(HANDLE process) {
     expectDirection(process, 0, false);
     for (uint32_t keys : {0u, 2u, 4u, 8u, 3u, 17u, 33u}) {
         writeWord(process, KEYS, keys); pump(process); time(1000);
-        expect(process, 3, false, "stop/backward/strafe/crouch/jump armed running");
+        expect(process, keys == 0 || keys == 3 ? 0.f : 3.f, false, "stop/backward/strafe/crouch/jump armed running");
     }
     writeWord(process, KEYS, 1); pump(process); time(1000); expect(process, 5, true, "run rearm");
     setFightState(process, 35); expect(process, 3, false, "hurt kept sprint ready");

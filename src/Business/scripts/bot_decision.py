@@ -130,7 +130,7 @@ def defend(flow, snapshot, actorId=wire.BOT_ID):
         return Decision("wait", "observe-threat")
     remaining = phaseRemaining(flow, actorId)
     if index == battle.strikeIndex(intent) and (
-            remaining is None or remaining <= battle.BLOCK_PHASE_MS + combat.CONTACT_END_MARGIN_MS):
+            remaining is None or remaining <= battle.BLOCK_PHASE_MS):
         return Decision("wait", "late-threat")
     return Decision("parry", "parry", PARRY_FOR_ATTACK[intent])
 

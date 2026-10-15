@@ -94,7 +94,13 @@ SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包�
 
 声音缺失时，先将“设置 → 启动器设置 → 输出日志等级”改为“调试”，再启动游戏复现；排查结束后可恢复“信息”。`Audio diagnostics` 记录包含三个默认播放角色的设备名称、`deviceFormat`、`mixFormat`、`sysFx` 标志及音频服务状态；查询失败保留 `unknown` 和错误码，不影响启动。客户端加载 Wwise、XAudio2、AudioDevProps2 或 Nahimic 模块时，`Audio module observed` 补充文件版本和进程角色，不记录完整模块路径。`Audio settings snapshot` 仅在设置值或状态变化及应用回读时输出；同步超时补充命令、等待时长和最后设置状态。
 
-这些诊断只读，不播放额外音频、不更改设备、服务或音效设置，也不新增游戏音频 Hook。默认端点不是已确认的游戏实际路由；`sysFx` 是系统效果属性，不代表所有 APO 的运行状态。模块加载、采样率不同或设置邮箱超时均不单独证明声音缺失的原因，日志尚不包含 Wwise 事件、Bank 加载结果或实际出声检测。请用户用新版本复现后，通过“查看详情 → 打开日志目录”反馈该次 `native.log`、`desktop.log`（跨日时附对应归档），注明复现时间、缺失的声音类别及使用的播放设备，再依据日志定位。
+以“调试”等级启动时，还会在客户端入口、开场动画前安装 `Audio playback trace` 内存观测包装，覆盖客户端导入的 Wwise `Init`、同步 `LoadBank`／`UnloadBank`、名称／ID 两种 `PostEvent`、`GetIDFromString` 和 `SetRTPCValue`。`Audio playback call` 记录调用线程、起止 tick、事件名称或 ID、原始返回值及成功加载的 Bank ID；重点对照 `Vox_System.bnk`、`Media_Vox_System.bnk`。`Audio announcement` 实时记录连杀通知的服务端时间、击杀者、本机玩家标志、次数和消息 ID，不受 Journal 最近 1000 行保留限制；`stage=queued` 不表示客户端已接收或已播放。
+
+观测包装保留原调用参数、回调、返回值和 Bank 输出，不播放额外音频、不更改设备、服务、音效设置或磁盘客户端。客户端仅向有界队列写入记录，调试线程独立读取，因此声音设置邮箱超时不会停止专项采集；队列竞争、满队列或采集故障会明确输出 `coverage incomplete`，缺少记录时须先检查覆盖是否完整。该队列使用不等待的竞争策略，避免诊断等待阻塞音频线程。
+
+覆盖范围仅为已支持客户端的上述导入调用，不包含 DLL 内部调用或其他 CG 播放链路。已有 Wwise 调试输出会标记为 `Audio engine debug output`，不强制启用或替换引擎 Monitor 回调；没有调试输出不代表没有内部错误。`PostEvent` 的非零播放 ID 仅代表请求被接受，不证明实际出声。默认端点也不是已确认的游戏实际路由；`sysFx` 不代表所有 APO 的运行状态。模块加载、采样率不同或设置邮箱超时均不单独证明声音缺失的原因。
+
+请先切换“调试”等级并重新启动游戏，保留开场动画，再由本机玩家触发一次连杀；分别记录 CG、提示音、人声和 BGM 是否有声及发生时间。通过“查看详情 → 打开日志目录”反馈该次 `native.log`、`desktop.log`（跨日时附对应归档）。定向验证：`T7.NativeTests.exe --audio-playback-tests`、`T7.RuntimeTests.exe --audio-notifications` 与 `python -m pytest -q tests/python/test_kill_notifications.py`。
 
 ### 在 Visual Studio 中构建
 

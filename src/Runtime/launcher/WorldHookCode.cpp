@@ -26,6 +26,7 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
     verifyChatInputFunctions(process, imageBase);
     verifyWeaponTrailFunctions(process, imageBase);
     verifyRoundEndFunctions(process, imageBase);
+    verifyMovementCommandFunction(process, imageBase);
     for (const auto& entry : std::vector<std::pair<uint32_t, Bytes>>{
         {RID_LOOKUP_RVA, {0x55,0x8B,0xEC,0xFF,0x75,0x08}},
         {COMPONENT_RVA, {0x55,0x8B,0xEC,0x8B,0x55,0x08,0x56,0x8B,0x71,0x7C}},
@@ -309,6 +310,9 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     std::memcpy(page.data() + TERRAIN_CODE_OFFSET, terrain.data(), terrain.size());
     const auto sprint = buildSprintHook(address, imageBase, dash);
     std::memcpy(page.data() + SPRINT_CODE_OFFSET, sprint.data(), sprint.size());
+    const auto jumpPhysics = buildJumpPhysicsHook(address, imageBase, threadId);
+    static_assert(JUMP_PHYSICS_CODE_OFFSET + 0x400 <= CHAT_INPUT_CODE_OFFSET, "jump physics code capacity");
+    std::memcpy(page.data() + JUMP_PHYSICS_CODE_OFFSET, jumpPhysics.data(), jumpPhysics.size());
     const auto chatInput = buildChatInputHook(address, imageBase);
     std::memcpy(page.data() + CHAT_INPUT_CODE_OFFSET, chatInput.data(), chatInput.size());
     const auto bladePose = buildBladePoseHook(address, imageBase);

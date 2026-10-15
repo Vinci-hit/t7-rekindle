@@ -100,6 +100,8 @@ void AudioSettings::apply(const AudioValues& values) {
     if (!validAudioValues(values)) throw std::runtime_error("invalid audio settings");
     if (!process_ || pending_ || !hasValues_) throw std::runtime_error("audio mailbox is not ready to apply");
     const auto map = buildAudioMap(remote_ + 0x100, imageBase_);
+    if (map.size() > AUDIO_ROOT_OFFSET - 0x100)
+        throw std::runtime_error("audio settings map overlaps audio storage");
     write(process_, remote_ + 0x100, map.data(), map.size());
     write(process_, remote_ + 0x20, &lastValues_, sizeof(lastValues_));
     write(process_, remote_ + 0x30, &values, sizeof(values));
