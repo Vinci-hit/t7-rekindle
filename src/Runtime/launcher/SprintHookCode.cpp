@@ -5,7 +5,7 @@
 
 namespace t7 {
 namespace {
-constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = 0x380;
+constexpr uint32_t DIRECTIONS_OFFSET = 0x200;
 constexpr uint32_t SPEED_RVA = 0x3D2550, RUNNING_RVA = 0x3D2E20, STATE_RVA = 0x3D2570;
 constexpr uint32_t LINE_MOVE_RVA = 0x75D140, STOP_MOVE_RVA = 0x75D3B0;
 uint32_t floatBits(float value) {
@@ -47,7 +47,7 @@ void writeSprintDirections(Bytes& page) {
     nativeString(END_JUMP_EVENT_OFFSET, "EndJump");
     // Native states enumerate forward/left-forward/left/.../right-forward.
     const uint32_t states[]{1,2,6,1,4,3,5,4,8,9,7,8,1,2,6,1};
-    std::memcpy(page.data() + STATES_OFFSET, states, sizeof(states));
+    std::memcpy(page.data() + SPRINT_STATES_OFFSET, states, sizeof(states));
 }
 Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash) {
     const auto dashMoveMs = dash.enabled ? dash.moveMs : 0;
@@ -189,7 +189,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     // stop command's zero speed so the original TurnDir updater can select Turn.
     c.emit({0x83,0x3D}); c.word(game); c.emit({4}); const auto outsideGame = c.branch(0x85);
     c.emit({0x83,0x3D}); c.word(lastDash); c.emit({0}); const auto dashSpeedSelected = c.branch(0x85);
-    c.emit({0x8B,0xC7,0x83,0xE0,0x0F,0x83,0x3C,0x85}); c.word(address + STATES_OFFSET);
+    c.emit({0x8B,0xC7,0x83,0xE0,0x0F,0x83,0x3C,0x85}); c.word(address + SPRINT_STATES_OFFSET);
     c.emit({1}); const auto moving = c.branch(0x85);
     c.store(speed, 0); c.bind(moving); c.bind(dashSpeedSelected); c.bind(outsideGame);
     // Reapply only when the native key tree or a phase change altered the commanded speed.
@@ -202,7 +202,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x83,0x3D}); c.word(lastDash); c.emit({0}); const auto ordinary = c.branch(0x84);
     c.emit({0xA1}); c.word(dashMoving);
     c.bind(ordinary);
-    c.emit({0x8B,0x04,0x85}); c.word(address + STATES_OFFSET);
+    c.emit({0x8B,0x04,0x85}); c.word(address + SPRINT_STATES_OFFSET);
     c.emit({0x83,0x3D}); c.word(running); c.emit({0}); const auto walking = c.branch(0x84);
     std::vector<size_t> selected;
     for (const auto& state : std::array<std::pair<uint32_t, uint32_t>, 3>{{{2,10},{3,11},{9,12}}}) {

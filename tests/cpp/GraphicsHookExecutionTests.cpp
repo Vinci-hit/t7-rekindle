@@ -5,6 +5,8 @@
 #include "TerrainHookFixture.h"
 #include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
+#include "JumpPhysicsFixture.h"
+#include "MovementCommandFixture.h"
 #include "MovementAnimationFixture.h"
 #include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
@@ -90,6 +92,7 @@ void fixture(const t7::fs::path& path) {
     const auto loop = static_cast<uint32_t>(code.size());
     code.insert(code.end(), {0x6A,10,0xFF,0x15}); word(code, BASE + 0x1904);
     imm(0xB8, jumpPhysicsFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
+    imm(0xB8, movementCommandFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(1);
     const auto paused = branch(code, 0x84);
     imm(0xB8, roundEndFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
@@ -116,6 +119,8 @@ void prepare(HANDLE process) {
     terrainFixture::prepare(process);
     sprintFixture::prepare(process);
     movementAnimationFixture::prepare(process);
+    jumpPhysicsFixture::prepare(process);
+    movementCommandFixture::prepare(process);
     chatInputFixture::prepare(process);
     roundEndFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
@@ -363,6 +368,8 @@ bool verifyGraphicsHookExecution() {
             "remote motion mailbox must remain writable and non-executable");
         worldFixture::verify(client.process(), graphics.world(), worldMailbox);
         terrainFixture::verify(client.process(), graphics.world());
+        jumpPhysicsFixture::verify(client.process());
+        movementCommandFixture::verify(client.process(), worldMailbox);
         try { movementAnimationFixture::verify(client.process(), worldMailbox); }
         catch (const std::exception& error) { throw std::runtime_error(std::string("movement animation: ") + error.what()); }
         std::cout << "x86 movement animation gait/cache, defense release and unchanged physical speeds/timer passed\n";

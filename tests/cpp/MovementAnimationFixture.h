@@ -101,7 +101,7 @@ inline void verify(HANDLE process, uint32_t mailbox) {
         frame(0, 3, slow * .5f); // Preserve the native active-controller floor before remapping.
         writeWord(process, ACTIVE, 0); frame(.75f, 3, slow * .25f); writeWord(process, ACTIVE, 1);
     }
-    writeWord(process, KEYS, 0); frame(0, 3, 1.5f); // Stationary graph is untouched.
+    writeWord(process, KEYS, 0); frame(0, 0, 0); // A stationary command preserves native turning eligibility.
     writeWord(process, KEYS, 17); frame(3, 3, 3); // Crouch is untouched.
     writeWord(process, KEYS, 1); setFightState(process, 237); frame(3, 3, 3);
     setFightState(process, 439, tick); frame(3, static_cast<float>(sprintFixture::profile().speedMilli) / 1000.f, 3);

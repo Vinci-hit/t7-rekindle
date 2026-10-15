@@ -49,7 +49,9 @@ inline void verify(HANDLE process, uint32_t mailbox) {
             Sleep(1);
         }
         if (readWord(process, MOVABLE + 0x2C) != state || readFloat(process, worldFixture::CONTROLLER + 0x24) != speed)
-            throw std::runtime_error("queued movement command changed locomotion state/speed before animation");
+            throw std::runtime_error("queued movement command state/speed mismatch: keys=" + std::to_string(keys)
+                + " expectedState=" + std::to_string(state) + " actualState=" + std::to_string(readWord(process, MOVABLE + 0x2C))
+                + " expectedSpeed=" + std::to_string(speed) + " actualSpeed=" + std::to_string(readFloat(process, worldFixture::CONTROLLER + 0x24)));
     };
     // Every A/D edge is a new native command, not just a changed input cache.
     for (uint32_t keys : {1u,5u,1u,9u,5u,13u,9u,1u}) {
@@ -59,7 +61,7 @@ inline void verify(HANDLE process, uint32_t mailbox) {
             throw std::runtime_error("running A/D command blended a walking animation");
     }
     for (uint32_t keys = 0; keys < 16; ++keys)
-        frame(keys, 0, keys == 0 ? 0.f : 3.f, states[keys], keys == 0 ? 0.f : 3.f);
+        frame(keys, 0, keys == 0 ? 0.f : 3.f, states[keys], states[keys] == 1 ? 0.f : 3.f);
     for (uint32_t state : {223u,305u,237u,35u}) {
         setFightState(process, state); frame(5, 2, 3, 3, 3);
     }

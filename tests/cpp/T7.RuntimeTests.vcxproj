@@ -49,6 +49,7 @@
     <ClCompile Include="../../src/Runtime/launcher/BladeParryContacts.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/MovementCommandHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/MovementAnimationHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/RoundEndHookCode.cpp" />

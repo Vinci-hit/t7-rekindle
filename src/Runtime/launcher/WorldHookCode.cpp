@@ -2,6 +2,7 @@
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
 #include "SprintHookCode.h"
+#include "MovementCommandHookCode.h"
 #include "ChatInputHookCode.h"
 #include "WeaponTrailHookCode.h"
 #include "RoundEndHookCode.h"
@@ -323,6 +324,10 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     if (contactFrame.size() > MOVEMENT_ANIMATION_CODE_OFFSET - CONTACT_CODE_OFFSET)
         throw std::runtime_error("contact journal overlaps movement animation hook");
     std::memcpy(page.data() + CONTACT_CODE_OFFSET, contactFrame.data(), contactFrame.size());
+    const auto movementCommand = buildMovementCommandHook(address, imageBase, threadId);
+    if (movementCommand.size() > MOVEMENT_ANIMATION_CODE_OFFSET - MOVEMENT_COMMAND_CODE_OFFSET)
+        throw std::runtime_error("movement command hook overflow");
+    std::copy(movementCommand.begin(), movementCommand.end(), page.begin() + MOVEMENT_COMMAND_CODE_OFFSET);
     const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation);
     static_assert(MOVEMENT_ANIMATION_CODE_OFFSET + 0x1000 <= ROUND_END_CODE_OFFSET, "movement animation code capacity");
     std::copy(movementAnimation.begin(), movementAnimation.end(), page.begin() + MOVEMENT_ANIMATION_CODE_OFFSET);

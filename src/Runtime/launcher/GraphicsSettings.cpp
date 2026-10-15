@@ -2,6 +2,8 @@
 #include "RemoteImage.h"
 #include "RoundEndHookCode.h"
 #include "MovementAnimationHookCode.h"
+#include "MovementCommandHookCode.h"
+#include "SprintHookCode.h"
 #include <algorithm>
 #include <cstring>
 
@@ -84,7 +86,10 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
             animationPatched = true;
             writeClientMemory(process, imageBase + MOVEMENT_ANIMATION_RVA, movementAnimationJump(base + worldOffset, imageBase));
         }
-        std::vector<MemoryPatch> patches{{GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL, jump}};
+        std::vector<MemoryPatch> patches{
+            {GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL, jump},
+            {JUMP_PHYSICS_RVA, JUMP_PHYSICS_ORIGINAL, jumpPhysicsJump(base + worldOffset, imageBase)},
+            {MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL, movementCommandJump(base + worldOffset, imageBase)}};
         if (!audioRoot.empty()) {
             auto replacement = originalAudioRoot;
             const auto path = base + GRAPHICS_PAGE_SIZE + AUDIO_ROOT_OFFSET;
@@ -100,6 +105,8 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
     } catch (...) {
         // install() runs before the first ResumeThread, so rollback cannot race execution.
         if (patched) {
+            writeClientMemory(process, imageBase + JUMP_PHYSICS_RVA, JUMP_PHYSICS_ORIGINAL);
+            writeClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL);
             writeClientMemory(process, imageBase + GRAPHICS_TICK_RVA, GRAPHICS_TICK_ORIGINAL);
             if (!audioRoot.empty()) writeClientMemory(process, imageBase + AUDIO_ROOT_INIT_RVA, originalAudioRoot);
         }
