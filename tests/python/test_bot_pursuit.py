@@ -49,7 +49,7 @@ def test_protection_requires_previous_close_engagement(engaged):
 
 
 def test_close_combat_still_allows_target_distribution_among_teammates(pursuing):
-    world = scene(pursuing, elapsed=400, current=(1.8, 0, .2))
+    world = scene(pursuing, elapsed=bot.STRATEGY_MS, current=(1.8, 0, .2))
     for rid, y in ((3, -1), (4, 0), (5, 1)):
         world['actors'][str(rid)]['position'] = [2.6, y, .2]
         actors.data(pursuing, rid)['opponentId'] = 1
@@ -64,7 +64,7 @@ def test_no_progress_expires_protection_and_does_not_restart_it(pursuing):
     scene(pursuing, elapsed=500, current=(5, 0, .2), challenger=(40, 0, .2))
     assert sense(pursuing)['targetId'] == 1
     assert 'pursuit' not in actors.data(pursuing, 2)
-    scene(pursuing, elapsed=400, current=(4.5, 0, .2))
+    scene(pursuing, elapsed=bot.STRATEGY_MS, current=(4.5, 0, .2))
     assert sense(pursuing)['targetId'] == 12
     assert actors.data(pursuing, 2)['pursuit']['targetId'] == 12
 
@@ -112,7 +112,8 @@ def test_retreat_protection_distinguishes_incidental_hits_from_serious_threats(p
 def test_protection_never_retains_an_invalid_or_distant_target(pursuing, monkeypatch, invalid):
     value = actors.data(pursuing, 2)
     value['targetSince'] = pursuing.now - 1300
-    world = scene(pursuing, elapsed=400, current=(6.1 if invalid == 'range' else 5, 0, .2))
+    world = scene(pursuing, elapsed=bot.STRATEGY_MS if invalid == 'range' else 100,
+                  current=(6.1 if invalid == 'range' else 5, 0, .2))
     if invalid == 'dead':
         pursuing.session['life'] = {'state': 'dead'}
     elif invalid == 'missing':

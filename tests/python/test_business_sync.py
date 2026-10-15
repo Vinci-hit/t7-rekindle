@@ -252,10 +252,22 @@ try:
     context = host_runtime.encode({'nowMs': deadline, 'connections': [1]})
     event = timer[2]
     state, sends, timers, logs = runtime.dispatch(event, state, context)
-    assert [packet['reason'] for packet in sends][-3:] == ['instance-round-state-end', 'instance-settlement', 'instance-finish-game']
+    assert [packet['reason'] for packet in sends][-2:] == ['instance-round-result', 'instance-round-state-end']
     session = host_runtime.decode(state)['sessions']['1']
-    assert session['roundEnded'] and not session['groundEnabled'] and not session['pending']
+    assert session['roundEnded'] and not session['groundEnabled']
+    assert session['pending'] == {'round-finish': deadline + 5000}
     assert runtime.dispatch(event, state, context)[1:3] == ([], [])
+    timer = next(item for item in timers if item[0] == '1:round-finish')
+    assert timer[1] == 5000
+    runtime.prepare()
+    state = runtime.switch(state)
+    context = host_runtime.encode({'nowMs': deadline + 4999, 'connections': [1]})
+    assert runtime.dispatch(timer[2], state, context)[1:3] == ([], [])
+    context = host_runtime.encode({'nowMs': deadline + 5000, 'connections': [1]})
+    state, sends, timers, logs = runtime.dispatch(timer[2], state, context)
+    assert [packet['reason'] for packet in sends] == ['instance-settlement', 'instance-finish-game']
+    assert not host_runtime.decode(state)['sessions']['1']['pending']
+    assert runtime.dispatch(timer[2], state, context)[1:3] == ([], [])
     print(json.dumps({'level': wire.USER_LEVEL, 'version': runtime.version()}))
 finally:
     runtime.close()

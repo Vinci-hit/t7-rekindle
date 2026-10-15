@@ -192,7 +192,7 @@ def test_back_facing_parry_does_not_block(arena):
     assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
 
 
-def test_hurt_interrupts_attack_and_new_inputs_but_preserves_movement(arena):
+def test_hurt_interrupts_attack_and_defers_new_inputs_but_preserves_movement(arena):
     battle.startAction(arena, 300550, actorId=2)
     arena.session["bot"]["moving"] = True
     arena.later(bot.MOVE_TIMER, 50)
@@ -214,6 +214,10 @@ def test_hurt_interrupts_attack_and_new_inputs_but_preserves_movement(arena):
     body = struct.pack(">HIib", 1, 0, 300550, 0)
     assert battle.message(arena, 4, 1, body)
     assert not arena.result["send"]
+    assert battle.actionState(arena)["buffered"] == {"intent": 300550, "released": False}
+    advance(arena, combat.hurtTimer(1))
+    assert states(arena)[-1] == (1, 241)
+    assert "buffered" not in battle.actionState(arena)
 
 
 def test_charge_recovery_and_expired_swing_never_hit(arena):

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: head('编辑公告')}"></head>
+<body class="shell">
+<aside th:replace="~{fragments :: nav('announcements')}"></aside>
+<main class="content">
+  <a class="back-link" th:href="@{/admin/announcements}">← 公告列表</a>
+  <header class="page-header"><div><p class="eyebrow">启动器首页</p><h1 th:text="${entry == null ? '新建公告' : '编辑公告'}"></h1><p class="muted">标题与摘要显示在首页，正文通过“阅读全文”打开。</p></div><span th:if="${entry != null}" class="rule-tag" th:text="${entry.enabled ? '已发布' : (entry.publishedAt == null ? '草稿' : '已下线')}"></span></header>
+  <p class="notice" role="status" th:if="${param.saved}">草稿已保存，线上内容保持不变。</p>
+  <p class="notice" role="status" th:if="${param.published}">公告已发布。启动器启动或返回首页时获取最新内容，刷新间隔至少 60 秒。</p>
+  <p class="notice" role="status" th:if="${param.unpublished}">公告已下线。首页将展示其他已发布公告中的最新一条；全部下线时显示内置公告。</p>
+  <p class="notice form-error" role="alert" th:if="${error != null}" th:text="${error}"></p>
+  <section class="panel">
+    <h2>编辑稿</h2><p class="muted">保存草稿不会影响线上公告。点击“发布公告”将发布当前表单内容，并使它成为首页最新公告。</p>
+    <form th:action="${entry == null} ? @{/admin/announcements} : @{/admin/announcements/{id}(id=${entry.announcementId})}" method="post" class="stack announcement-editor">
+      <label for="title">标题</label><input id="title" name="title" th:value="${draft.title}" required th:maxlength="${titleLimit}">
+      <label for="summary">摘要</label><textarea id="summary" name="summary" rows="3" required th:maxlength="${summaryLimit}" th:text="${draft.summary}" aria-describedby="summaryHelp"></textarea>
+      <span class="footnote" id="summaryHelp" th:text="'纯文本，最多 ' + ${summaryLimit} + ' 个字符。'"></span>
+      <label for="bodyMarkdown">正文（Markdown）</label><textarea id="bodyMarkdown" name="bodyMarkdown" rows="16" required th:maxlength="${bodyLimit}" th:text="${draft.bodyMarkdown}" aria-describedby="markdownHelp" class="markdown-input"></textarea>
+      <span class="footnote" id="markdownHelp" th:text="'最多 ' + ${bodyLimit} + ' 个字符；支持标题、段落、列表、粗体、斜体和行内代码。HTML、图片与链接按文本展示。'"></span>
+      <div class="actions"><button type="submit" class="secondary">保存草稿</button><button th:if="${entry != null}" type="submit" th:formaction="@{/admin/announcements/{id}/publish(id=${entry.announcementId})}" data-confirm="确认发布当前表单内容？此公告将成为首页最新公告。">发布公告</button></div>
+    </form>
+  </section>
+  <section class="panel" th:if="${entry != null && entry.publishedAt != null}"><h2>发布状态</h2><p class="muted" th:text="'最近发布时间（UTC）：' + ${entry.publishedAt}"></p>
+    <form th:if="${entry.enabled}" th:action="@{/admin/announcements/{id}/unpublish(id=${entry.announcementId})}" method="post" data-confirm="确认下线此公告？草稿与发布内容会保留。"><button type="submit" class="danger">下线公告</button></form>
+  </section>
+</main>
+</body>
+</html>

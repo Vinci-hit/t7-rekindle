@@ -8,6 +8,7 @@ from Business.scripts.codec import battle_flow
 from test_battle_actions import ATTACKS, BLOCKS, makeFlow, advanceAction, animationStates, sendAction
 from test_melee_combat import arena, advance, hp, states
 from test_terrain_contact import obstacle
+from dash_fixture import profile
 
 
 DASH = 700250
@@ -72,8 +73,8 @@ def test_dash_syncs_animation_duration_separately_from_state_start(requestDelayM
     ]
 
 
-@pytest.mark.parametrize("state,duration", [(439, 2033), (443, 0), (combat.HURT_STATE, 0), (235, 0)])
-def test_targeted_sync_limits_dash_duration_to_the_strike(state, duration):
+@pytest.mark.parametrize("state,duration", [(439, 2033), (443, 933), (combat.HURT_STATE, 0), (235, 0)])
+def test_targeted_sync_uses_dash_process_and_rebound_durations(state, duration):
     flow = makeFlow()
     request(flow)
     battle.syncState(flow, state, targetId=2)
@@ -230,21 +231,22 @@ def test_dash_can_be_parried_and_interrupts_its_contact_window(arena):
     assert hp(arena, 2) == 100
     assert (1, 443) in states(arena)
     assert combat.hitTimer(1) not in arena.session["pending"]
-    assert arena.session["pending"][battle.ACTION_TIMER] == arena.now + 350
+    assert arena.session["pending"][battle.ACTION_TIMER] == arena.now + 933
 
 
-def test_dash_rebounds_on_terrain_without_damage_or_buffered_attack(arena):
+def test_dash_rebounds_on_terrain_without_damage_and_preserves_held_input(arena):
     request(arena)
     sendAction(arena, 300560)
     obstacle(arena)
     advance(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
     assert states(arena)[-1] == (1, 443)
-    assert "buffered" not in battle.actionState(arena)
+    assert battle.actionState(arena)["buffered"] == {"intent": 300560, "released": False}
     assert combat.hitTimer(1) not in arena.session["pending"]
-    assert arena.session["pending"][battle.ACTION_TIMER] == arena.now + 350
+    assert arena.session["pending"][battle.ACTION_TIMER] == arena.now + 933
     advance(arena, battle.ACTION_TIMER)
-    assert states(arena)[-1] == (1, 2)
+    assert states(arena)[-1] == (1, 235)
+    assert "buffered" not in battle.actionState(arena)
 
 
 def test_hurt_cancels_dash_timers_and_contact(arena):
@@ -256,3 +258,75 @@ def test_hurt_cancels_dash_timers_and_contact(arena):
     app.handleTimer(arena, combat.hitTimer(1))
     assert hp(arena, 2) == 100
     assert states(arena)[-1] == (1, combat.HURT_STATE)
+
+
+@pytest.mark.parametrize('duration,source', [(1600, 'table'), (1333, 'animation')])
+def test_dash_uses_loaded_duration_without_speed_modifiers_or_extra_phases(duration, source):
+    flow = makeFlow()
+    flow.context['dashAttack'] = profile(durationMs=duration, durationSource=source)
+    request(flow)
+    deadline = flow.now + duration
+    assert flow.session['pending'][battle.ACTION_TIMER] == deadline
+    packet = battle_flow.decode_battle_state_sync_simple(flow.result['send'][-1]['body'])
+    assert (packet.state, packet.state_time_ms) == (439, duration)
+    flow.now = deadline - 1
+    app.handleTimer(flow, battle.ACTION_TIMER)
+    assert animationStates(flow) == [439]
+    advanceAction(flow)
+    assert animationStates(flow) == [439, 2]
+
+
+def test_disabled_dash_leaves_normal_attacks_available():
+    flow = makeFlow()
+    flow.context['dashAttack'] = profile(enabled=False)
+    request(flow)
+    assert not flow.result['send'] and not flow.session['pending']
+    sendAction(flow, 300560)
+    assert animationStates(flow) == [235]
+
+
+def test_missing_runtime_profile_reports_once_instead_of_using_defaults():
+    flow = makeFlow()
+    del flow.context['dashAttack']
+    request(flow)
+    request(flow)
+    assert not flow.result['send']
+    assert len(flow.result['logs']) == 1
+    assert flow.result['logs'][0]['level'] == 'ERROR'
+
+
+@pytest.mark.parametrize('elapsed,hit', [(199, False), (200, True), (800, True), (801, False)])
+def test_dash_contact_start_and_end_come_from_action_snapshot(arena, elapsed, hit):
+    arena.context['dashAttack'] = profile(durationMs=1500, moveMs=700, contactStartMs=200, contactEndMs=800)
+    request(arena)
+    assert arena.session['pending'][combat.hitTimer(1)] == arena.now + 200
+    arena.context['dashAttack'] = profile(contactEndMs=100)
+    arena.now += elapsed
+    arena.context['botWorld']['sampledAt'] = arena.now
+    combat.worldUpdated(arena)
+    assert hp(arena, 2) == (60 if hit else 100)
+
+
+def test_rebound_sync_and_recovery_keep_the_started_action_profile(arena):
+    arena.context['dashAttack'] = profile(reboundMs=777)
+    request(arena)
+    arena.context['dashAttack']['reboundMs'] = 100
+    obstacle(arena)
+    advance(arena, combat.hitTimer(1))
+    packet = next(item for item in arena.result['send'] if item['reason'] == 'battle-model-state-443')
+    assert struct.unpack_from('>H', packet['body'], 12)[0] == 777
+    deadline = arena.now + 777
+    assert arena.session['pending'][battle.ACTION_TIMER] == deadline
+    arena.now = deadline - 1
+    app.handleTimer(arena, battle.ACTION_TIMER)
+    assert battle.actionState(arena)['reaction'] == 'terrain-rebound'
+    advance(arena, battle.ACTION_TIMER)
+    assert states(arena)[-1] == (1, 2)
+
+
+def test_old_dash_without_a_snapshot_requires_full_runtime_restart():
+    flow = makeFlow()
+    request(flow)
+    del flow.session['action']['dash']
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(14, flow.state)

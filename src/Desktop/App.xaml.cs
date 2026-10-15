@@ -55,6 +55,7 @@ namespace T7.Rekindle.Desktop
             var window = new MainWindow { DataContext = viewModel };
             MainWindow = window;
             window.Show();
+            viewModel.StartAnnouncementChecks();
             viewModel.StartUpdateChecks(DateTime.UtcNow);
             _ = viewModel.Account.RestoreAsync();
         }

@@ -31,7 +31,7 @@ def advancePhase(flow, actorId, delay):
 @pytest.mark.parametrize('actorId', ACTOR_IDS)
 @pytest.mark.parametrize('intent,chain', battle.BLOCK_CHAINS.items())
 @pytest.mark.parametrize('earlyRelease', [False, True])
-def test_guard_prepare_and_release_share_player_immediate_timers(multi, actorId, intent, chain, earlyRelease):
+def test_guard_release_returns_directly_to_idle_for_every_actor(multi, actorId, intent, chain, earlyRelease):
     sample(multi)
     multi.later(actors.PULSE_TIMER, bot.MOVE_MS)
     pulseDue = multi.session['pending'][actors.PULSE_TIMER]
@@ -43,13 +43,13 @@ def test_guard_prepare_and_release_share_player_immediate_timers(multi, actorId,
         assert battle.actionTimer(actorId) not in multi.session['pending']
     multi.now += 1
     battle.releaseAction(multi, battle.BLOCK_RELEASE, actorId)
-    advancePhase(multi, actorId, 0)
-    expected = (chain[0], chain[2], 2) if earlyRelease else (*chain, 2)
+    expected = (chain[0], 2) if earlyRelease else (*chain[:2], 2)
     assert states(multi) == [(actorId, state) for state in expected]
     assert multi.now < pulseDue == multi.session['pending'][actors.PULSE_TIMER]
     assert battle.actionState(multi, actorId)['index'] == -1
     assert battle.actionTimer(actorId) not in multi.session['pending']
     before = deepcopy(multi.result)
+    battle.releaseAction(multi, battle.BLOCK_RELEASE, actorId)
     app.handleTimer(multi, battle.actionTimer(actorId))
     assert multi.result == before
 
@@ -81,13 +81,14 @@ def test_weapon_phases_keep_exact_shared_durations_without_ai_ticks(multi, actor
     sample(multi)
     started = multi.now
     battle.startAction(multi, intent, released=True, actorId=actorId)
+    dash = battle.actionState(multi, actorId).get('dash')
     chain = battle.attackChain(intent)
     indexes = [1] if intent == battle.DASH_ATTACK else [0, *range(battle.strikeIndex(intent), len(chain))]
     for index in indexes:
         assert states(multi)[-1] == (actorId, chain[index])
-        advancePhase(multi, actorId, battle.phaseMs(intent, index))
+        advancePhase(multi, actorId, battle.phaseMs(intent, index, dash=dash))
     assert states(multi) == [(actorId, chain[index]) for index in indexes] + [(actorId, 2)]
-    assert multi.now == started + sum(battle.phaseMs(intent, index) for index in indexes)
+    assert multi.now == started + sum(battle.phaseMs(intent, index, dash=dash) for index in indexes)
     assert battle.actionTimer(actorId) not in multi.session['pending']
 
 

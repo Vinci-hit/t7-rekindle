@@ -66,20 +66,23 @@ python scripts/build.py --project managed --configuration Debug
 
 ### QQ 账号服务
 
-构建前设置 `$env:T7_AUTH_BASE_URL = 'https://HOST'`，地址作为 `AuthBaseUrl` 嵌入启动器，运行时不提供地址编辑入口。
+构建前设置 `$env:T7R_SERVER_BASE_URL = 'https://HOST'`，地址作为 `AuthBaseUrl` 嵌入启动器，运行时不提供地址编辑入口。CI 使用同名 GitHub Actions 仓库变量 `T7R_SERVER_BASE_URL`。
 Debug 构建额外允许本机回环 HTTP（如 `localhost`、`127.0.0.1`、`[::1]`），Release 始终只接受 HTTPS。
 本地调试示例：
 
 ```powershell
-$env:T7_AUTH_BASE_URL = 'http://localhost:8080'
+$env:T7R_SERVER_BASE_URL = 'http://localhost:8080'
 python scripts/build.py --project managed --configuration Debug
 ```
 
 地址只填写服务端根地址，不追加 `/api/v1/auth`；修改后需要重新生成启动器。
-未配置时仅禁用账号登录，本地游戏功能不受影响。QQ 登录使用 WebView2 Evergreen Runtime；安装器和登录窗口均提供缺失时的官方安装入口。
+首页公告也复用此服务地址，但匿名访问 `/api/v1/announcements/latest`，不依赖账号登录。启动及返回首页时获取，两次请求至少间隔 60 秒，单次超时 8 秒；无公告或请求失败时使用内置公告，不写远端公告磁盘缓存。后台发布流程见[公告管理](../server/README.md#公告管理)。
+未配置时禁用账号登录并使用内置公告，本地游戏功能不受影响。QQ 登录使用 WebView2 Evergreen Runtime；安装器和登录窗口均提供缺失时的官方安装入口。
 SDK、WPF 程序集和 x64 `WebView2Loader.dll` 随产品目录分发，打包检查将验证这些文件。
 
 账号定向测试：`T7.ManagedHarness.exe --account-tests`。服务端迁移、接口、SSE 代理设置及 QQ 实机验证见 [认证服务说明](../server/README.md#qq-扫码登录)。
+
+公告定向测试：`T7.ManagedHarness.exe --announcement-tests artifacts/ui-announcements`，覆盖匿名接口、刷新节流、关闭取消、离线兜底及三种主题；省略输出目录时仅执行断言。
 
 日志定向测试：`T7.ManagedHarness.exe --log-tests artifacts/ui-log-levels`，覆盖等级过滤、中文显示、配置兼容、保存失败回滚及三种主题；省略输出目录时仅执行断言。
 

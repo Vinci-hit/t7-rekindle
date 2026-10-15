@@ -64,23 +64,27 @@ def roundInfo(now, duration=GAME_MS):
             + struct.pack(">iQiQi", 3, 0, 4, duration, 0))
 
 
-def instanceInfo(now, startedAt=None):
+def roundResult(now, result):
+    return struct.pack(">HQQii", 0x68, now, 1, result, 1)
+
+
+def instanceInfo(now, startedAt=None, *, resourceId=RESOURCE_ID, startPattern=START_PATTERN):
     return room_flow.encode_minimal_instance_update(
         server_time_ms=now, instance_id=1,
         instance_start_time_ms=now if startedAt is None else startedAt,
-        resource_id=RESOURCE_ID, start_pattern=START_PATTERN)
+        resource_id=resourceId, start_pattern=startPattern)
 
 
-def actorInfo(now, camp, playerName=USER_NAME):
+def actorInfo(now, camp, playerName=USER_NAME, *, userId=USER_ID, startPattern=START_PATTERN):
     return room_flow.encode_instance_update_actor_basic_info(
-        server_time_ms=now, instance_id=1, actor_mid=ACTOR_ID, user_id=USER_ID,
+        server_time_ms=now, instance_id=1, actor_mid=ACTOR_ID, user_id=userId,
         user_name=playerName, user_image_id=7, level=USER_LEVEL, actor_state=4,
-        hero_resource_id=HERO_ID, camp=camp, start_pattern=START_PATTERN)
+        hero_resource_id=HERO_ID, camp=camp, start_pattern=startPattern)
 
 
-def actorState(now, current):
+def actorState(now, current, *, userId=USER_ID):
     return room_flow.encode_actor_update_state(
-        user_id=USER_ID, actor_mid=ACTOR_ID, actor_state=current, update_time_ms=now)
+        user_id=userId, actor_mid=ACTOR_ID, actor_state=current, update_time_ms=now)
 
 
 def actorVision(camp, heroId=HERO_ID, actorName=USER_NAME, *, runtimeMovement=False,
@@ -123,7 +127,11 @@ def battleHeroes(sequence, runtimeMovement=False):
         body[28:] for body in bodies)
 
 
-def startPattern():
+def startPattern(startPattern=7):
+    if startPattern == 6:
+        return struct.pack(">HH", 0x194, startPattern)
+    if startPattern != 7:
+        raise ValueError("unsupported start-pattern data")
     return struct.pack(">HH8i", 0x194, 7, *([0] * 8))
 
 
@@ -140,8 +148,8 @@ def heartbeat(body):
     return b"\0\2" + body[2:14]
 
 
-def matchStart(body):
+def matchStart(body, error=0):
     if not 37 <= len(body) <= 2100:
         raise ValueError("match-start body outside evidenced 37..2100-byte bound")
     # The match-pattern union remains opaque; the source listener echoes it.
-    return b"\0\2" + body[6:-1] + bytes(201)
+    return b"\0\2" + body[6:-1] + struct.pack(">i", error) + bytes(197)

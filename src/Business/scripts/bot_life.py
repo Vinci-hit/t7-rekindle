@@ -39,7 +39,7 @@ def clearPerception(value):
     value.update(reactAt=None, repathAt=0)
 
 
-def announceKill(flow, attacker, target):
+def announceKill(flow, attacker, target, *, weaponId=None):
     from . import combat
     winner = actors.data(flow, attacker)
     victim = actors.data(flow, target)
@@ -57,7 +57,8 @@ def announceKill(flow, attacker, target):
     streak = min(kill_flow.MAX_STREAK, winner.get('killStreak', 0) + 1)
     winner['killStreak'] = streak
     flow.send(kill_flow.INSTANCE_COMMAND, kill_flow.encode_kill_event(
-        server_time_ms=flow.now, source_rid=attacker, target_rid=target, weapon_tid=wire.WEAPON_ID), 'combat-kill')
+        server_time_ms=flow.now, source_rid=attacker, target_rid=target,
+        weapon_tid=wire.WEAPON_ID if weaponId is None else weaponId), 'combat-kill')
     if streak >= 2:
         flow.send(kill_flow.SCORE_COMMAND, kill_flow.encode_score_stat_message(
             server_time_ms=flow.now, entity_rid=attacker, count=streak), 'combat-kill-streak')
@@ -73,7 +74,7 @@ def announceKill(flow, attacker, target):
                               f"kills={winner['kills']} points={winner['battlePoints']} target-deaths={victim['deaths']}")
 
 
-def die(flow, actorId, attacker, position):
+def die(flow, actorId, attacker, position, *, weaponId=None):
     from . import bot, combat, scene
     if actorId == wire.ACTOR_ID or flow.session.get('roundEnded') or not actors.active(flow, actorId):
         return
@@ -86,7 +87,7 @@ def die(flow, actorId, attacker, position):
     value.update(health=0, status='dead', life=dict(state='dead', diedAt=flow.now,
                  respawnAt=flow.now + RESPAWN_MS, epoch=flow.session['instanceStartedAt']))
     # DEAD_NOTIFY unregisters the RID as well as closing GePlayer's life gate.
-    announceKill(flow, attacker, actorId)
+    announceKill(flow, attacker, actorId, weaponId=weaponId)
     battle.syncState(flow, DEATH_STATE, actorId, targetId=attacker)
     notifyDeath(flow, actorId)
     if scene.checkKillTarget(flow, actors.data(flow, attacker).get('camp', 1)):

@@ -418,8 +418,13 @@ void Session::monitorClient() {
 }
 
 void Session::monitorWorld() {
-    if (!server_ || !server_->needsWorld()) return;
+    if (!server_) return;
     try {
+        const auto snapshot = server_->snapshot();
+        bootstrap_.publishPlayerId(snapshot.playerId);
+        bootstrap_.publishServerLatency(snapshot.serverLatencyMs);
+        bootstrap_.publishRemoteMotion(snapshot.remoteMotion);
+        if (!server_->needsWorld()) return;
         WorldSnapshot world;
         if (bootstrap_.pollWorld(world)) server_->updateWorld(world);
     } catch (const std::exception& error) {
@@ -452,7 +457,8 @@ void Session::executeCheck(const Command& command) {
         PythonHost python(fs::path(wide(packageRoot_)), run.path() / "revisions");
         try {
             if (cancelled(command.id)) throw std::runtime_error("check cancelled");
-            python.checkResources(fs::path(wide(command.clientDirectory)));
+            const auto resources = python.checkResources(fs::path(wide(command.clientDirectory)));
+            for (const auto& diagnostic : resources.diagnostics) log(diagnostic.message, diagnostic.level);
         } catch (...) { failure = std::current_exception(); }
         try {
             for (const auto& line : python.closeRevision()) log(line, DiagnosticLogLevel::Warn);
@@ -657,4 +663,7 @@ void Session::setState(uint32_t state, uint32_t operation, uint64_t operationId,
     snapshot_.state = state; snapshot_.operation = operation; snapshot_.operationId = operationId; snapshot_.phase = phase;
 }
 
+}
+
+namespace t7::bridge {
 }

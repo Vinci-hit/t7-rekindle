@@ -12,6 +12,7 @@ bool verifyClientCode();
 bool verifyClientImports();
 bool verifyClientAdaptation();
 bool verifyCameraInput();
+bool verifyDefenseAssist();
 bool verifyRemoteImage();
 bool verifyDebugClient();
 bool verifyClientWindowMonitor();
@@ -21,6 +22,7 @@ bool verifyEndpointStorage();
 bool verifyStartupGate();
 bool verifyMovementResources();
 bool verifyStartupAnimation();
+bool verifyBladeParryContacts();
 int runDebugClientFixture();
 int runInputMethodDebugFixture();
 
@@ -51,7 +53,7 @@ int main() {
     assert(t7::MovementOverlayInfo::kLocalHeroResourceId == 110001u);
     assert(t7::MovementOverlayInfo::kGravityMilli == -10000);
     return verifyOutputDevice() && verifyGraphicsSettings() && verifyAudioDiagnostics() && verifyModuleLookup() && verifyAp32() && verifyClientCode() && verifyClientImports()
-        && verifyClientAdaptation() && verifyCameraInput() && verifyRemoteImage() && verifyInputMethodRegistry() && verifyInputMethodDebugClient()
+        && verifyClientAdaptation() && verifyCameraInput() && verifyDefenseAssist() && verifyRemoteImage() && verifyInputMethodRegistry() && verifyInputMethodDebugClient()
         && verifyDebugClient() && verifyClientWindowMonitor() && verifyMovementResources()
-        && verifyStartupAnimation() && verifyEndpointStorage() && verifyStartupGate() ? 0 : 1;
+        && verifyStartupAnimation() && verifyEndpointStorage() && verifyStartupGate() && verifyBladeParryContacts() ? 0 : 1;
 }

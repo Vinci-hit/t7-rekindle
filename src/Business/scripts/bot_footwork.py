@@ -4,9 +4,9 @@ import math
 from . import actors, battle, body_collision, bot_profiles, bot_tactics
 
 ENGAGE_RANGE = 6.
-POSITION_MS = 2000
 STEP_MIN_MS, STEP_MAX_MS, TARGET_DRIFT = 350, 900, .4
 GAPS = {'aggressive': 1.1, 'balanced': 1.2, 'defensive': 1.3, 'berserker': 1.1}
+# Saved sessions may still contain a circling step; the next plan discards it.
 MODES = ('press', 'retreat', 'circle')
 
 
@@ -39,17 +39,6 @@ def lockReason(value):
     return None
 
 
-def initiative(flow, snapshot, actorId):
-    value = actors.data(flow, actorId)
-    if math.dist(snapshot['bot'], snapshot['player']) > ENGAGE_RANGE or lockReason(value) == 'attack':
-        value.pop('pressAt', None)
-        return False
-    if 'pressAt' not in value:
-        duration = round(POSITION_MS * value.get('tempo', 100) / 100)
-        value['pressAt'] = flow.now + bot_profiles.vary(flow, actorId, duration, .7, 1.1)
-    return flow.now >= value['pressAt']
-
-
 def plan(flow, nav, snapshot, actorId):
     value = actors.data(flow, actorId)
     origin, target = snapshot['bot'], snapshot['player']
@@ -67,11 +56,8 @@ def plan(flow, nav, snapshot, actorId):
     if canDefend and ('hurtUntil' in value or action.get('reaction') or recovering
             or action.get('intent') in battle.BLOCK_CHAINS and action.get('index', -1) >= 0):
         gap = max(gap, 1.85 if profile == 'aggressive' else 2.05)
-    mode = 'press' if distance > gap + .2 else 'retreat' if distance < gap - .2 else 'circle'
-    if not canDefend and mode != 'press':
-        value.pop('stepPlan', None)
-        return None
-    if mode == 'circle' and ('tactic' in value or not lockReason(value) and flow.now >= value.get('pressAt', math.inf)):
+    mode = 'press' if distance > gap + .2 else 'retreat' if distance < gap - .2 else None
+    if mode is None or not canDefend and mode != 'press':
         value.pop('stepPlan', None)
         return None
     bodies = body_collision.obstacles(flow, actorId, actors.world(flow))
@@ -90,7 +76,7 @@ def plan(flow, nav, snapshot, actorId):
     previous, targetId = value.get('stepPlan', {}), snapshot.get('targetId', 1)
     if (previous.get('targetId') == targetId and flow.now < previous['until'] and previous['gap'] == gap
             and math.dist(previous['targetPosition'], target) <= TARGET_DRIFT
-            and (mode == previous['mode'] or mode == 'circle')):
+            and mode == previous['mode']):
         if math.dist(origin[:2], previous['goal'][:2]) <= .25:
             return None
         route = routeTo(previous['goal'])
@@ -103,8 +89,7 @@ def plan(flow, nav, snapshot, actorId):
         side = previous['side'] * (-1 if bot_profiles.rhythm(flow, actorId, 0, 3) == 0 else 1)
     else:
         side = 1 if bot_profiles.rhythm(flow, actorId, 0, 1) else -1
-    turn = bot_profiles.rhythm(flow, actorId, 18, 38) if mode == 'circle' else 35
-    offsets = (turn * side, -turn * side) if mode == 'circle' else (0, 35 * side, -35 * side, 70 * side, -70 * side)
+    offsets = (0, 35 * side, -35 * side, 70 * side, -70 * side)
     for degrees in offsets:
         goal = bot_tactics.groundGoal(nav, bot_tactics.pointAt(target, angle + math.radians(degrees), gap))
         if goal is None or math.dist(origin[:2], goal[:2]) <= .25:

@@ -5,11 +5,13 @@
 #include "TerrainHookFixture.h"
 #include "BladeHookFixture.h"
 #include "SprintHookFixture.h"
+#include "MovementAnimationFixture.h"
 #include "WeaponTrailHookFixture.h"
 #include "ChatInputHookFixture.h"
 #include "RoundEndHookFixture.h"
 #include "../../src/Runtime/launcher/ChatInputHookCode.h"
 #include "../../src/Runtime/launcher/WeaponTrailHookCode.h"
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -20,6 +22,7 @@ constexpr uint32_t FRAME = BASE + 0x3200, SETTING = BASE + 0x3300, CLIENT = BASE
 constexpr uint32_t VARIANTS = BASE + 0x4000, INDEX = BASE + 0x3500, STATS = BASE + 0x3600;
 constexpr uint32_t RENDERER = BASE + 0x6000, WINDOW_STYLE = STATS + 48, RESTORE_COUNT = STATS + 52;
 constexpr uint32_t ADAPTER = BASE + 0x8000, ADAPTER_ORDINAL = 257;
+constexpr uint32_t BANK_COUNT = STATS + 80, BANK_RESULT = STATS + 84, BANK_NAMES = BASE + 0xA000;
 const GUID ADAPTER_ID{0x12345678,0x1234,0x5678,{0x9A,0xBC,0x12,0x34,0x56,0x78,0x9A,0xBC}};
 void require(bool v, const char* text) { if (!v) throw std::runtime_error(text); }
 void word(t7::Bytes& bytes, uint32_t v) { for (unsigned s = 0; s < 32; s += 8) bytes.push_back(static_cast<unsigned char>(v >> s)); }
@@ -52,6 +55,7 @@ void fixture(const t7::fs::path& path) {
     nt.OptionalHeader.MajorOperatingSystemVersion = 6; nt.OptionalHeader.MajorSubsystemVersion = 6;
     nt.OptionalHeader.SizeOfImage = 0x2E41000; nt.OptionalHeader.SizeOfHeaders = 0x200;
     nt.OptionalHeader.Subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
+    nt.OptionalHeader.DllCharacteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
     nt.OptionalHeader.SizeOfStackReserve = 0x100000; nt.OptionalHeader.SizeOfStackCommit = 0x1000;
     nt.OptionalHeader.SizeOfHeapReserve = 0x100000; nt.OptionalHeader.SizeOfHeapCommit = 0x1000;
     nt.OptionalHeader.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
@@ -96,6 +100,7 @@ void fixture(const t7::fs::path& path) {
     }
     code.insert(code.end(), {0xD9, 0x1D}); word(code, STATS + 24);
     code.insert(code.end(), {0x66, 0x0F, 0x7E, 0x05}); word(code, STATS + 28);
+    imm(0xB8, movementAnimationFixture::DISPATCH); code.insert(code.end(), {0xFF,0xD0});
     code.insert(code.end(), {0x83,0x3D}); word(code, worldFixture::FRAME_GATE); code.push_back(2);
     const auto running = branch(code, 0x85);
     code.insert(code.end(), {0xC7,0x05}); word(code, worldFixture::FRAME_GATE); word(code, 1);
@@ -109,6 +114,7 @@ void prepare(HANDLE process) {
     worldFixture::prepare(process);
     terrainFixture::prepare(process);
     sprintFixture::prepare(process);
+    movementAnimationFixture::prepare(process);
     chatInputFixture::prepare(process);
     roundEndFixture::prepare(process);
     t7::writeClientMemory(process, BASE + 0x2364E0, {0x55,0x8B,0xEC,0x8B,0x45,0x08,0x8B,0x45,0x1C,0x5D,0xC2,0x38,0});
@@ -178,6 +184,17 @@ void prepare(HANDLE process) {
         setter.insert(setter.end(), {0x0F,0x57,0xC0,0x5D,0xC2,8,0});
         t7::writeClientMemory(process, BASE + pair.first, setter);
     }
+    t7::Bytes root{0x68}; word(root, BASE + 0x17799F0);
+    root.insert(root.end(), {0xFF,0x15}); word(root, BASE + 0x16F6080);
+    t7::writeClientMemory(process, BASE + t7::AUDIO_ROOT_INIT_RVA, root);
+    writeWord(process, BASE + t7::AUDIO_LOAD_BANK_IAT_RVA, BASE + 0x1500);
+    // Record bank names and emulate both successful and already-loaded results.
+    t7::Bytes bank{0x8B,0x54,0x24,4,0x8B,0x0D}; word(bank, BANK_COUNT);
+    bank.insert(bank.end(), {0x89,0x14,0x8D}); word(bank, BANK_NAMES);
+    bank.insert(bank.end(), {0xFF,0x05}); word(bank, BANK_COUNT);
+    bank.insert(bank.end(), {0xA1}); word(bank, BANK_RESULT);
+    bank.insert(bank.end(), {0x0F,0x57,0xC0,0xC3});
+    t7::writeClientMemory(process, BASE + 0x1500, bank); writeWord(process, BANK_RESULT, 1);
 }
 uint32_t readCompleted(t7::GraphicsSettings& graphics, t7::GraphicsValues& values, bool expectApplied) {
     uint32_t result = 0; bool applied = false;
@@ -206,7 +223,7 @@ bool verifyGraphicsHookExecution() {
         client.start(path, t7::fileHash(path), {}, [&](HANDLE process, HANDLE thread) {
             prepare(process); bladeFixture::prepare(process); weaponTrailFixture::prepare(process);
             t7::installOutputDevice(process, BASE, selected);
-            const auto page = t7::buildWorldHook(0x10000000, BASE, GetThreadId(thread));
+            const auto page = t7::buildWorldHook(0x10000000, BASE, GetThreadId(thread), sprintFixture::profile());
             const auto sweep = t7::buildBladeSweepHook(0x10000000, BASE);
             require(std::equal(sweep.begin(), sweep.end(), page.begin() + t7::BLADE_SWEEP_CODE_OFFSET),
                 "weapon trail overwrote blade sweep code or constants");
@@ -238,7 +255,14 @@ bool verifyGraphicsHookExecution() {
                 require(rejected, "weapon trail accepted an unknown native function");
                 t7::writeClientMemory(process, BASE + anchor.first, {static_cast<unsigned char>(anchor.second)});
             }
-            graphics.install(process, BASE, GetThreadId(thread));
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, {0xCC});
+            rejected = false;
+            try { graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile()); }
+            catch (const std::runtime_error&) { rejected = true; }
+            require(rejected, "animation hook accepted an unknown native writer");
+            t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, {0xF3});
+            graphics.install(process, BASE, GetThreadId(thread), sprintFixture::profile(), movementAnimationFixture::profile(),
+                             false, L"C:\\Games\\T7\\Data\\Audio\\Wwise\\Windows");
         }, [](t7::DiagnosticLogLevel, const std::string& line) {
             if (line.find("exception") != std::string::npos || line.find("fault") != std::string::npos
                 || line.find("violation") != std::string::npos) std::cerr << line << '\n';
@@ -276,6 +300,27 @@ bool verifyGraphicsHookExecution() {
         require(readAudio(audio, sound, false) == 0, "audio accepted an uninitialized sound engine");
         writeWord(client.process(), BASE + 0x3700, 0x1B797B4);
         require(readAudio(audio, sound, false) == 1 && sound.musicVolume == .75f && sound.effectsVolume == .5f, "audio readback");
+        std::array<uint32_t, 6> banks{};
+        require(!audio.pollCombat(0, banks) && readWord(client.process(), BANK_COUNT) == 0, "lobby loaded combat banks");
+        auto completeBanks = [&](uint64_t epoch) {
+            const auto deadline = GetTickCount64() + 3000;
+            while (!audio.pollCombat(epoch, banks)) {
+                require(GetTickCount64() < deadline, "combat bank frame-thread response timeout"); Sleep(5);
+            }
+        };
+        completeBanks(100);
+        require(readWord(client.process(), BANK_COUNT) == 6
+                && std::all_of(banks.begin(), banks.end(), [](uint32_t value) { return value == 1; }), "combat banks were not loaded");
+        for (uint32_t i = 0; i < banks.size(); ++i) {
+            const auto name = readWord(client.process(), BANK_NAMES + i * 4);
+            const auto bytes = t7::readClientMemory(client.process(), name, std::strlen(t7::COMBAT_AUDIO_BANKS[i]) + 1);
+            require(std::memcmp(bytes.data(), t7::COMBAT_AUDIO_BANKS[i], bytes.size()) == 0, "combat event/media bank order");
+        }
+        require(!audio.pollCombat(100, banks), "same instance requested duplicate bank loads");
+        writeWord(client.process(), BANK_RESULT, 69); completeBanks(200);
+        require(readWord(client.process(), BANK_COUNT) == 12 && banks[0] == 69, "new instance did not accept resident banks");
+        writeWord(client.process(), BANK_RESULT, 66); completeBanks(300);
+        require(banks[0] == 66 && !audio.pollCombat(300, banks), "bank failure was hidden or retried every frame");
         sound.musicMuted = 1; sound.musicVolume = .25f; sound.effectsVolume = 0;
         audio.apply(sound);
         t7::AudioValues actual;
@@ -291,8 +336,22 @@ bool verifyGraphicsHookExecution() {
         const auto graphicsEntry = BASE + t7::GRAPHICS_TICK_RVA + 5
             + readWord(client.process(), BASE + t7::GRAPHICS_TICK_RVA + 1);
         const auto worldMailbox = readWord(client.process(), graphicsEntry + 10) - t7::WORLD_CODE_OFFSET;
+        MEMORY_BASIC_INFORMATION remoteMotionCode{}, remoteMotionData{};
+        require(VirtualQueryEx(client.process(), reinterpret_cast<void*>(static_cast<uintptr_t>(worldMailbox + t7::REMOTE_MOTION_CODE_OFFSET)),
+                               &remoteMotionCode, sizeof(remoteMotionCode)) == sizeof(remoteMotionCode)
+            && remoteMotionCode.Protect == PAGE_EXECUTE_READ,
+            "installed remote motion helper must be executable before fixture writes");
+        require(VirtualQueryEx(client.process(), reinterpret_cast<void*>(static_cast<uintptr_t>(worldMailbox + t7::REMOTE_MOTION_DATA_OFFSET)),
+                               &remoteMotionData, sizeof(remoteMotionData)) == sizeof(remoteMotionData)
+            && remoteMotionData.Protect == PAGE_READWRITE,
+            "remote motion mailbox must remain writable and non-executable");
         worldFixture::verify(client.process(), graphics.world(), worldMailbox);
         terrainFixture::verify(client.process(), graphics.world());
+        try { movementAnimationFixture::verify(client.process(), worldMailbox); }
+        catch (const std::exception& error) { throw std::runtime_error(std::string("movement animation: ") + error.what()); }
+        std::cout << "x86 movement animation gait/cache, defense release and unchanged physical speeds/timer passed\n";
+        movementAnimationFixture::verifyRemoteJump(client.process(), graphics.world(), worldMailbox);
+        std::cout << "x86 remote Jump/EndJump, airborne melee refresh and expiry passed\n";
         bladeFixture::verify(client.process(), graphics.world(), worldMailbox);
         weaponTrailFixture::verify(client.process());
         try { sprintFixture::verify(client.process()); }

@@ -47,8 +47,16 @@ def writeClient(root, *, padding=0, level=6):
     (root / 'vfs/map.vfs').write_bytes(archiveBytes([
         (NAV_PATH, navigation, 3), (SPAWN_PATH, ET.tostring(spawnXml()), 3)], padding=padding, level=level))
     (root / 'vfs/data1.vfs').write_bytes(archiveBytes([
-        (NAME_PATH, nameTable([('npc', f'测试电脑{i}') for i in range(30)]), 3)], padding=padding, level=level))
+        (NAME_PATH, nameTable([('npc', f'测试电脑{i}') for i in range(30)]), 3),
+        ('../data/table/s_res_pve_stage_cli.bin', stageTable(), 3)], padding=padding, level=level))
     return directory, sha256(navigation).hexdigest()
+
+
+def stageTable():
+    header = bytearray(140)
+    struct.pack_into('<4sIII', header, 0, b'MSES', 7, 4, 3)
+    struct.pack_into('<I', header, 132, 140)
+    return bytes(header) + struct.pack('<III', 1, 2, 3)
 
 
 def vint(value):

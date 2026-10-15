@@ -6,6 +6,7 @@ namespace bladeFixture {
 using worldFixture::BASE;
 using worldFixture::writeWord;
 constexpr uint32_t QUERY = BASE + 0x80000, OBSTACLES = BASE + 0x81000, HIT = BASE + 0x82000;
+constexpr uint32_t NORMALS = OBSTACLES + 0x100;
 constexpr uint32_t OBJECTS = BASE + 0x90000;
 inline uint32_t object(uint32_t index) { return OBJECTS + index * 0x1000; }
 inline void vector(HANDLE process, uint32_t address, std::array<float, 3> value) {
@@ -34,15 +35,16 @@ inline void prepare(HANDLE process) {
         vector(process, p + 0xC88, {270,150,1}); vector(process, p + 0xD88, {271,150,1});
     }
     writeWord(process, HIT, 0xBF800000);
-    for (uint32_t i = 0; i < 5; ++i) {
+    for (uint32_t i = 0; i < 6; ++i) {
         writeWord(process, OBSTACLES + i * 16, i < 3 ? 1 : 0);
         number(process, OBSTACLES + i * 16 + 4, 270.f + .25f * (i + 1));
         writeWord(process, OBSTACLES + i * 16 + 8,
-                  i < 3 ? object(i) + 0x600 : i == 3 ? terrainFixture::CHILD : terrainFixture::ACTOR_CHILD);
+                  i < 3 ? object(i) + 0x600 : i == 4 ? terrainFixture::ACTOR_CHILD : terrainFixture::CHILD);
+        vector(process, NORMALS + i * 16, {-1,0,0});
     }
     t7::WorldHookCode c;
     c.emit({0x60}); // EDI ray input, ESI collector. Synthetic planes use the native callback ABI.
-    for (uint32_t i = 0; i < 5; ++i) {
+    for (uint32_t i = 0; i < 6; ++i) {
         std::vector<size_t> skip;
         c.emit({0x83,0x3D}); c.word(OBSTACLES + i * 16); c.emit({0}); skip.push_back(c.branch(0x84));
         c.emit({0xF3,0x0F,0x10,0x47,16,0xF3,0x0F,0x5C,0x07,0x0F,0x57,0xC9,0x0F,0x2F,0xC1});
@@ -52,6 +54,10 @@ inline void prepare(HANDLE process) {
         skip.push_back(c.branch(0x82));
         c.emit({0x0F,0x2F,0x15}); c.word(OBSTACLES + 0x80); skip.push_back(c.branch(0x87));
         c.emit({0xF3,0x0F,0x11,0x15}); c.word(HIT + 0x10);
+        for (uint32_t axis = 0; axis < 3; ++axis) {
+            c.emit({0xA1}); c.word(NORMALS + i * 16 + axis * 4);
+            c.emit({0xA3}); c.word(HIT + axis * 4);
+        }
         c.emit({0x68}); c.word(HIT); c.emit({0xFF,0x35}); c.word(OBSTACLES + i * 16 + 8);
         c.emit({0x8B,0xCE,0x8B,0x06,0xFF,0x10});
         for (auto branch : skip) c.bind(branch);
@@ -135,6 +141,75 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
     require(value.contacts[0].contact.hit && value.contacts[0].contact.material == 4
             && value.contacts[2].along < value.contacts[0].along && value.contacts[3].along > value.contacts[0].along,
             "blade collector lost scene material or independently ordered contacts");
+    number(process, OBSTACLES + 3 * 16 + 4, 270.2f);
+    vector(process, NORMALS + 16, {0,0,1});
+    for (uint32_t state : {238u,244u,250u,256u,439u}) {
+        writeWord(process, object(0) + 0x738, state);
+        for (const auto& normal : std::array<std::array<float, 3>, 12>{{
+            {0,0,1}, {.6f,0,.8f}, {0,-.8f,.6f}, {.8660254f,0,.5f}, {.594f,0,.792f}, {-.6f,0,.8f},
+            {0,0,-1}, {-.6f,0,-.8f}, {0,.8f,-.6f}, {-.8660254f,0,-.5f}, {-.594f,0,-.792f}, {.6f,0,-.8f}
+        }}) {
+            vector(process, NORMALS + 3 * 16, normal);
+            const auto height = .25f - .02f - normal[0] * .2f / normal[2];
+            blade({270,150,height}, {271,150,height});
+            value = sample().actors[0].blade;
+            require(value.ready && !value.contacts[0].contact.hit && value.contacts[2].contact.hit
+                    && value.contacts[3].contact.hit, "ground or slope interrupted a blade or filtered a body contact");
+            const auto& ground = value.contacts.back();
+            require(ground.targetId == 0 && ground.contact.hit && ground.contact.material == 4
+                    && std::abs(ground.along - .2f) < .0001f && ground.contact.position[2] == height,
+                    "ground or slope lost its separate material feedback contact");
+            require(std::any_of(last.contacts.begin(), last.contacts.end(), [&](const auto& event) {
+                return event.actorId == 1 && event.hit.targetId == 0 && event.state == state
+                    && event.targetEntity == 0 && event.targetState == 0
+                    && event.hit.contact.position == ground.contact.position
+                    && event.hit.contact.normal == ground.contact.normal && event.hit.contact.material == 4;
+            }), "native journal lost ground feedback or treated its slot as an actor RID");
+        }
+    }
+    writeWord(process, object(0) + 0x738, 238);
+    vector(process, NORMALS + 16, {-1,0,0});
+    vector(process, NORMALS + 3 * 16, {0,0,-1});
+    blade({270,150,.25f}, {271,150,.25f});
+    writeWord(process, OBSTACLES + 5 * 16, 1);
+    number(process, OBSTACLES + 5 * 16 + 4, 270.625f);
+    value = sample().actors[0].blade;
+    require(value.contacts[0].contact.hit && value.contacts[0].contact.material == 4
+            && value.contacts[0].contact.normal == std::array<float,3>{-1,0,0}
+            && value.contacts[0].along == .625f, "earlier ground contact hid a later wall");
+    auto requireGroundAndWall = [&] {
+        require(value.contacts.back().contact.hit && value.contacts.back().targetId == 0
+                && value.contacts.back().contact.normal == std::array<float,3>{0,0,-1}
+                && std::abs(value.contacts.back().along - .2f) < .0001f,
+                "wall contact replaced earlier ground feedback");
+        require(std::count_if(last.contacts.begin(), last.contacts.end(), [](const auto& event) {
+            return event.actorId == 1 && event.hit.targetId == 0;
+        }) == 2, "native frame did not retain both ground and wall contacts");
+    };
+    requireGroundAndWall();
+    vector(process, NORMALS + 3 * 16, {-1,0,0});
+    number(process, OBSTACLES + 3 * 16 + 4, 270.625f);
+    vector(process, NORMALS + 5 * 16, {0,0,-1});
+    number(process, OBSTACLES + 5 * 16 + 4, 270.2f);
+    value = sample().actors[0].blade;
+    require(value.contacts[0].contact.hit && value.contacts[0].along == .625f
+            && value.contacts[0].contact.normal == std::array<float,3>{-1,0,0},
+            "later ground callback replaced a wall contact");
+    requireGroundAndWall();
+    vector(process, NORMALS + 3 * 16, {0,0,-1});
+    value = sample().actors[0].blade;
+    require(!value.contacts[0].contact.hit && value.contacts.back().contact.hit
+            && std::abs(value.contacts.back().along - .2f) < .0001f,
+            "ground slot did not retain the earliest contact independently");
+    writeWord(process, OBSTACLES + 5 * 16, 0);
+    blade({270,150,1}, {271,150,1});
+    for (const auto& normal : std::array<std::array<float, 3>, 3>{{{.8660831f,0,.4999f}, {0,0,-1}, {0,0,1}}}) {
+        vector(process, NORMALS + 3 * 16, normal);
+        value = sample().actors[0].blade;
+        require(value.contacts[0].contact.hit && !value.contacts.back().contact.hit,
+                "steep wall or ceiling was treated as ground or retained stale ground feedback");
+    }
+    vector(process, NORMALS + 3 * 16, {-1,0,0});
     writeWord(process, OBSTACLES + 3 * 16, 0);
     writeWord(process, worldFixture::PLAYER + 0x134, 0); value = sample().actors[0].blade;
     require(!value.contacts[2].contact.hit && value.contacts[3].contact.hit, "corpse consumed blade contact");
@@ -181,6 +256,50 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
     writeWord(process, terrainFixture::MAP + 0x1C, 0);
     require(!sample().actors[0].blade.ready, "missing scene world accepted as blade clear");
     writeWord(process, terrainFixture::MAP + 0x1C, terrainFixture::COLLISION);
+    // Fists have no ribbon mesh: use their bone-attached entity, never the sheathed blade.
+    const auto fist = object(0);
+    writeWord(process, fist + 0x798, 100000); writeWord(process, fist + 0x810, 100000);
+    writeWord(process, fist + 0xA08, 1000);
+    writeWord(process, fist + 0xA4C, fist + 0xF00); writeWord(process, fist + 0xA48, fist + 0xF20);
+    vector(process, fist + 0xF00, {270.5f,150,1});
+    for (uint32_t i = 0; i < 9; ++i) number(process, fist + 0xF20 + i * 4, i == 2 || i == 4 || i == 6 ? 1.f : 0.f);
+    value = step().actors[0].blade;
+    require(value.ready && value.spanMs == 0 && std::abs(value.length - .3f) < .0001f
+            && std::abs(value.base[0] - 270.35f) < .0001f && std::abs(value.tip[0] - 270.65f) < .0001f
+            && value.contacts[2].contact.hit && !value.contacts[3].contact.hit,
+            "fist contact reused the sword or lost its native hand transform");
+    writeWord(process, fist + 0xA4C, 0);
+    require(!sample().actors[0].blade.ready, "missing fist transform fell back to a sword");
+    writeWord(process, fist + 0xA4C, fist + 0xF00);
+    number(process, fist + 0xF00, std::numeric_limits<float>::quiet_NaN());
+    require(!sample().actors[0].blade.ready, "non-finite fist pose accepted");
+    writeWord(process, fist + 0x798, 1030411); writeWord(process, fist + 0x810, 1030411);
+    writeWord(process, fist + 0xA08, 200);
+    value = step().actors[0].blade;
+    require(value.ready && value.spanMs == 0 && value.length == 1, "equipping sword retained fist geometry");
+    // A guard crossing wholly between consumer polls must survive in the frame log.
+    writeWord(process, worldFixture::ENTITY + 0x100 + 0x8C, object(1) + 0x700);
+    writeWord(process, object(1) + 0x738, 223);
+    vector(process, object(1) + 0xC88, {270.5f,150,1});
+    vector(process, object(1) + 0xD88, {270.5f,150,1.8f});
+    auto unconsumedFrame = [&] {
+        Sleep(16);
+        writeWord(process, worldFixture::FRAME_GATE, 2);
+        const auto until = GetTickCount64() + 3000;
+        while (t7::readClientMemory(process, worldFixture::FRAME_GATE, 4) != t7::Bytes{1,0,0,0}) {
+            require(GetTickCount64() < until, "retained guard frame timeout"); Sleep(1);
+        }
+    };
+    for (float y : {149.7f,150.f,150.3f}) {
+        vector(process, object(0) + 0xC88, {270,y,1.4f});
+        vector(process, object(0) + 0xD88, {271,y,1.4f});
+        unconsumedFrame();
+    }
+    const auto guardFrames = step();
+    require(std::any_of(guardFrames.contacts.begin(), guardFrames.contacts.end(), [](const auto& hit) {
+        return hit.weaponContact && hit.actorId == 1 && hit.hit.targetId == 2;
+    }), "guard collision between host polls was lost");
+    writeWord(process, worldFixture::ENTITY + 0x100 + 0x8C, 0);
     for (uint32_t i = 0; i < 3; ++i) writeWord(process, worldFixture::ENTITY + i * 0x100 + 0x88, 0);
     writeWord(process, worldFixture::ENTITY + 0x8C, 0); sample();
     writeWord(process, worldFixture::FRAME_GATE, 0);

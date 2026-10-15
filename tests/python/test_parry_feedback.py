@@ -38,7 +38,7 @@ def test_success_interrupts_both_phases_with_direction_specific_reactions(
         assert action["index"] == -1 and "buffered" not in action
         assert "reaction" in action
     for packet in arena.result["send"]:
-        if packet["command"] == 4:
+        if packet["command"] == 4 and packet["body"][:2] == b"\0\4":
             values = struct.unpack(">HHHHIHBQb", packet["body"])
             assert values[0] == 4 and values[-2] == 3 - values[1]
     # The obsolete attack timer must not play the original swing/recovery again.
@@ -105,8 +105,11 @@ def test_bot_think_and_key_spam_do_not_overwrite_block_reactions(arena):
         assert battle.message(arena, 4, 1, body)
     battle.startAction(arena, 300560, actorId=2)
     assert not arena.result["send"]
-    assert arena.session["action"] == original
+    assert arena.session["action"] == {**original, "buffered": {"intent": 300580, "released": True}}
     assert arena.session["bot"]["status"] == "parry-success"
+    advance(arena, battle.ACTION_TIMER)
+    assert states(arena)[-1] == (1, 2)
+    assert "buffered" not in battle.actionState(arena)
 
 
 def test_bot_auto_release_before_success_timer_preserves_feedback_state(arena):

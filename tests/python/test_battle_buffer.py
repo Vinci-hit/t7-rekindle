@@ -11,7 +11,7 @@ from test_battle_actions import (
 )
 
 
-ATTACK_PHASES = [(0, False), (0, True), (1, False), (2, True), (3, True)]
+ATTACK_PHASES = [(0, False), (0, True), (1, False), (2, True)]
 PARRY_BUFFER_PHASES = [(phase, released) for phase, released in ATTACK_PHASES if phase >= 2]
 
 
@@ -30,30 +30,56 @@ def attackPhaseFlow(intent, phase, released):
 def recoveryFlow(intent=300560):
     flow = makeFlow()
     sendAction(flow, intent)
-    sendAction(flow, 300020 if intent in ATTACK_TIMES else 300620)
-    if intent in ATTACK_TIMES:
-        advanceAction(flow)
-        advanceAction(flow)
+    sendAction(flow, 300020)
+    advanceAction(flow)
+    advanceAction(flow)
     return flow
 
 
-@pytest.mark.parametrize("activeIntent,_", ATTACKS + BLOCKS)
+def bufferFlow(intent=300560):
+    return attackPhaseFlow(intent, 2, True)
+
+
+@pytest.mark.parametrize("activeIntent,activeChain", BLOCKS)
 @pytest.mark.parametrize("nextIntent,nextChain", ATTACKS + BLOCKS)
-def test_recovery_buffers_all_directions_without_extending_deadline(activeIntent, _, nextIntent, nextChain):
-    flow = recoveryFlow(activeIntent)
-    before = deepcopy(flow.result)
-    deadline = flow.session["pending"][ACTION_TIMER]
-    flow.now = max(flow.now, deadline - 1)
-    sendAction(flow, nextIntent)
-    assert flow.result["send"] == before["send"]
-    assert flow.result["timers"] == before["timers"]
-    assert flow.session["pending"][ACTION_TIMER] == deadline
+@pytest.mark.parametrize("phase", [0, 1])
+def test_parry_release_accepts_next_action_immediately(activeIntent, activeChain, nextIntent, nextChain, phase):
+    flow = makeFlow()
+    sendAction(flow, activeIntent)
+    if phase == 1:
+        advanceAction(flow)
+    sendAction(flow, 300620)
+    assert animationStates(flow) == [*activeChain[:phase + 1], 2]
+    assert ACTION_TIMER not in flow.session["pending"]
     previous = animationStates(flow)
-    advanceAction(flow)
+    sendAction(flow, nextIntent)
     assert animationStates(flow) == [*previous, nextChain[0]]
     assert flow.session["action"].get("buffered") is None
     prepare = ATTACK_TIMES[nextIntent][0] if nextIntent in ATTACK_TIMES else 0
-    assert flow.session["pending"][ACTION_TIMER] == deadline + prepare
+    assert flow.session["pending"][ACTION_TIMER] == flow.now + prepare
+    advanceAction(flow)
+    assert animationStates(flow) == [*previous, *nextChain[:2]]
+    assert ACTION_TIMER not in flow.session["pending"]
+
+
+@pytest.mark.parametrize("activeIntent,_", ATTACKS)
+@pytest.mark.parametrize("nextIntent,nextChain", ATTACKS + BLOCKS)
+def test_attack_recovery_is_immediately_interrupted_by_attack_or_parry(activeIntent, _, nextIntent, nextChain):
+    flow = recoveryFlow(activeIntent)
+    oldDeadline = flow.session["pending"][ACTION_TIMER]
+    flow.now = oldDeadline - 1
+    previous = animationStates(flow)
+    sendAction(flow, nextIntent)
+    assert animationStates(flow) == [*previous, nextChain[0]]
+    assert flow.session["action"]["intent"] == nextIntent
+    assert flow.session["action"]["index"] == 0
+    assert flow.session["action"].get("buffered") is None
+    prepare = ATTACK_TIMES[nextIntent][0] if nextIntent in ATTACK_TIMES else 0
+    assert flow.session["pending"][ACTION_TIMER] == flow.now + prepare
+    if prepare:
+        flow.now = oldDeadline
+        app.handleTimer(flow, ACTION_TIMER)
+        assert animationStates(flow) == [*previous, nextChain[0]]
     advanceAction(flow)
     assert animationStates(flow) == [*previous, *nextChain[:2]]
     assert ACTION_TIMER not in flow.session["pending"]
@@ -83,20 +109,24 @@ def test_attack_buffer_windows_do_not_interrupt_current_action(
         buffered = {**buffered, "released": nextIntent in ATTACK_TIMES}
     assert flow.session["action"]["released"] is True
     assert flow.session["action"]["buffered"] == buffered
-    while flow.session["action"]["index"] < len(activeChain) - 1:
+    while flow.session["action"]["index"] < 2:
         advanceAction(flow)
         assert flow.session["action"]["intent"] == activeIntent
         assert flow.session["action"]["buffered"] == buffered
     deadline = flow.session["pending"][ACTION_TIMER]
-    assert deadline == 1000 + sum(ATTACK_TIMES[activeIntent])
+    assert deadline == 1000 + sum(ATTACK_TIMES[activeIntent][:2])
     previous = animationStates(flow)
     advanceAction(flow)
-    assert flow.session["action"].get("buffered") is None
     if buffered["released"]:
-        assert animationStates(flow) == [*previous, 2]
+        assert animationStates(flow) == [*previous, activeChain[-1]]
+        assert flow.session["pending"][ACTION_TIMER] == deadline + ATTACK_TIMES[activeIntent][-1]
+        advanceAction(flow)
+        assert animationStates(flow) == [*previous, activeChain[-1], 2]
+        assert flow.session["action"].get("buffered") is None
         assert flow.session["action"]["index"] == -1
         assert ACTION_TIMER not in flow.session["pending"]
         return
+    assert flow.session["action"].get("buffered") is None
     assert animationStates(flow) == [*previous, nextChain[0]]
     prepare = ATTACK_TIMES[nextIntent][0] if nextIntent in ATTACK_TIMES else 0
     assert flow.session["pending"][ACTION_TIMER] == deadline + prepare
@@ -111,21 +141,20 @@ def test_later_attack_phases_replace_early_buffer_without_queueing():
     sendAction(flow, 300020)
     advanceAction(flow)
     sendAction(flow, 300580)
-    advanceAction(flow)
     sendAction(flow, 300540)
     advanceAction(flow)
     sendAction(flow, 300020)
     advanceAction(flow)
     advanceAction(flow)
     advanceAction(flow)
-    assert animationStates(flow) == [235, 238, 239, 253, 256, 257, 2]
-    assert flow.now == 1000 + sum(ATTACK_TIMES[300560]) + sum(ATTACK_TIMES[300540])
+    assert animationStates(flow) == [235, 238, 253, 256, 257, 2]
+    assert flow.now == 1000 + sum(ATTACK_TIMES[300560][:2]) + sum(ATTACK_TIMES[300540])
     assert flow.session["action"].get("buffered") is None
     assert ACTION_TIMER not in flow.session["pending"]
 
 
 def test_last_press_wins_across_attack_and_parry_without_queueing_older_intents():
-    flow = recoveryFlow()
+    flow = bufferFlow()
     ground = {"position": [1., 2., 3.], "heading": 90, "mask": 1, "tick": 200}
     flow.session["ground"] = deepcopy(ground)
     previous = animationStates(flow)
@@ -147,11 +176,11 @@ def test_last_press_wins_across_attack_and_parry_without_queueing_older_intents(
     assert all(packet.state_time_ms == 0 for packet in packets)
 
 
-@pytest.mark.parametrize("activeIntent,_", ATTACKS + BLOCKS)
+@pytest.mark.parametrize("activeIntent,_", ATTACKS)
 @pytest.mark.parametrize("intent,chain", ATTACKS + BLOCKS)
 @pytest.mark.parametrize("releaseBeforeStart", [True, False])
 def test_buffered_action_requires_held_key_at_handoff(activeIntent, _, intent, chain, releaseBeforeStart):
-    flow = recoveryFlow(activeIntent)
+    flow = bufferFlow(activeIntent)
     sendAction(flow, intent)
     previous = animationStates(flow)
     deadline = flow.session["pending"][ACTION_TIMER]
@@ -162,20 +191,22 @@ def test_buffered_action_requires_held_key_at_handoff(activeIntent, _, intent, c
     assert animationStates(flow) == previous
     assert flow.session["pending"][ACTION_TIMER] == deadline
     advanceAction(flow)
-    assert flow.session["action"].get("buffered") is None
     if releaseBeforeStart:
+        previous = [*previous, dict(ATTACKS)[activeIntent][-1]]
+        assert animationStates(flow) == previous
+        advanceAction(flow)
         assert animationStates(flow) == [*previous, 2]
+        assert flow.session["action"].get("buffered") is None
         assert flow.session["action"]["index"] == -1
         assert ACTION_TIMER not in flow.session["pending"]
         return
+    assert flow.session["action"].get("buffered") is None
     started = flow.now
     assert animationStates(flow) == [*previous, chain[0]]
     flow.now += 10
     sendAction(flow, release)
     if intent not in ATTACK_TIMES:
-        assert animationStates(flow) == [*previous, chain[0], chain[2]]
-        advanceAction(flow)
-        assert animationStates(flow) == [*previous, chain[0], chain[2], 2]
+        assert animationStates(flow) == [*previous, chain[0], 2]
         assert flow.now == started + 10
         assert ACTION_TIMER not in flow.session["pending"]
         return
@@ -215,7 +246,7 @@ def test_releasing_buffered_action_discards_it_without_restoring_an_older_attack
 
 @pytest.mark.parametrize("intent,chain", ATTACKS + BLOCKS)
 def test_repress_after_a_buffered_tap_tracks_the_last_press_as_held(intent, chain):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     release = 300020 if intent in ATTACK_TIMES else 300620
     sendAction(flow, intent)
     sendAction(flow, release)
@@ -226,13 +257,13 @@ def test_repress_after_a_buffered_tap_tracks_the_last_press_as_held(intent, chai
     assert animationStates(flow)[-2:] == list(chain[:2])
     assert ACTION_TIMER not in flow.session["pending"]
     sendAction(flow, release)
-    assert animationStates(flow)[-1] == chain[2]
+    assert animationStates(flow)[-1] == (chain[2] if intent in ATTACK_TIMES else 2)
 
 
 @pytest.mark.parametrize("activeIntent,_", BLOCKS)
 @pytest.mark.parametrize("phase", [0, 1])
 @pytest.mark.parametrize("intent", [intent for intent, _ in BLOCKS])
-def test_parry_presses_before_recovery_do_not_restart_or_buffer(activeIntent, _, phase, intent):
+def test_parry_presses_during_prepare_and_hold_do_not_restart_or_buffer(activeIntent, _, phase, intent):
     flow = makeFlow()
     sendAction(flow, activeIntent)
     if phase >= 1:
@@ -248,7 +279,7 @@ def test_parry_presses_before_recovery_do_not_restart_or_buffer(activeIntent, _,
 
 @pytest.mark.parametrize("body", [actionBody(300550)[:-1], actionBody(300550, 2)])
 def test_invalid_packets_do_not_replace_a_buffered_intent(body):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300580)
     before = deepcopy(flow.state)
     with pytest.raises(ValueError):
@@ -257,7 +288,7 @@ def test_invalid_packets_do_not_replace_a_buffered_intent(body):
 
 
 def test_unmapped_weapon_does_not_replace_a_buffered_intent(monkeypatch):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300580)
     before = deepcopy(flow.state)
     monkeypatch.setattr(wire, "WEAPON_ID", 999999)
@@ -267,7 +298,7 @@ def test_unmapped_weapon_does_not_replace_a_buffered_intent(monkeypatch):
 
 
 def test_unrelated_release_and_unsupported_action_do_not_change_buffered_parry():
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300580)
     sendAction(flow, 300020)
     sendAction(flow, 300670)
@@ -283,7 +314,7 @@ def test_unrelated_release_and_unsupported_action_do_not_change_buffered_parry()
 ])
 @pytest.mark.parametrize("event", ["timer", "input"])
 def test_disabled_actions_clear_the_buffer_without_dispatch(sessionValues, event):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300550)
     flow.session.update(sessionValues)
     before = deepcopy(flow.result["send"])
@@ -299,7 +330,7 @@ def test_disabled_actions_clear_the_buffer_without_dispatch(sessionValues, event
 
 @pytest.mark.parametrize("transition", ["leave", "begin"])
 def test_scene_transitions_discard_buffered_intent_and_old_timer(spawnPoints, transition):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300550)
     if transition == "leave":
         scene.leave(flow, struct.pack(">Hb", 2, 0))
@@ -315,7 +346,7 @@ def test_scene_transitions_discard_buffered_intent_and_old_timer(spawnPoints, tr
 
 
 def test_closed_session_discards_buffer_and_ignores_the_late_timer():
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, 300550)
     result = app.handleEvent({"type": "closed", "connection": 1}, flow.state, {"nowMs": flow.now})
     assert result["state"]["sessions"] == {}
@@ -328,7 +359,7 @@ def test_closed_session_discards_buffer_and_ignores_the_late_timer():
     (300550, None), (300550, 300020), (300580, None), (300580, 300620),
 ])
 def test_host_reload_preserves_the_buffer_and_other_sessions(tmp_path, intent, release):
-    flow = recoveryFlow()
+    flow = bufferFlow()
     sendAction(flow, intent)
     if release is not None:
         sendAction(flow, release)
@@ -345,14 +376,14 @@ def test_host_reload_preserves_the_buffer_and_other_sessions(tmp_path, intent, r
         context = host_runtime.encode({"nowMs": deadline, "connections": [1, 2]})
         encoded, sends, _, _ = runtime.dispatch(host_runtime.encode(event), encoded, context)
         assert len(sends) == 1 and sends[0]["connection"] == 1
-        expected = 2 if release is not None else (241 if intent == 300550 else 305)
+        expected = 239 if release is not None else (241 if intent == 300550 else 305)
         assert battle_flow.decode_battle_state_sync_simple(sends[0]["body"]).state == expected
         value = host_runtime.decode(encoded)
         action = value["sessions"]["1"]["action"]
-        assert action["intent"] == (intent if release is None else 0)
-        assert action["index"] == (0 if release is None else -1)
-        assert action["released"] is False
-        assert action.get("buffered") is None
+        assert action["intent"] == (intent if release is None else 300560)
+        assert action["index"] == (0 if release is None else 3)
+        assert action["released"] is (release is not None)
+        assert action.get("buffered") == (None if release is None else {"intent": intent, "released": True})
         assert value["sessions"]["2"] == before["sessions"]["2"]
         assert flow.state == before
     finally:

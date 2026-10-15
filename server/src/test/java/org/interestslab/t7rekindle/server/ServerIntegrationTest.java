@@ -80,6 +80,9 @@ class ServerIntegrationTest {
     @Autowired PresenceService presence;
     @Autowired AuthMapper db;
     @Autowired AdminMapper adminDb;
+    @Autowired AnnouncementService announcements;
+    @Autowired org.interestslab.t7rekindle.server.persistence.AnnouncementMapper announcementDb;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
     private static final String PASSWORD = "TEST_PASSWORD";
     private static final String NEXT_PASSWORD = "CHANGED_TEST_PASSWORD";
     private static final AdminIdentity ADMIN = new AdminIdentity(0, false);
@@ -144,6 +147,7 @@ class ServerIntegrationTest {
     }
 
     @BeforeEach void reset() {
+        jdbc.update("DELETE FROM announcement");
         jdbc.update("DELETE FROM account_presence");
         jdbc.update("DELETE FROM auth_session");
         jdbc.update("DELETE FROM account");
@@ -156,10 +160,98 @@ class ServerIntegrationTest {
 
     @Test void startupMigratesBeforeInitializingAdmin() {
         assertThat(flyway.info().applied()).extracting(migration -> migration.getScript())
-                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql", "V004__qq_group_verification.sql");
+                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql", "V004__qq_group_verification.sql", "V005__announcements.sql");
         assertThat(flyway.info().pending()).isEmpty();
         assertThat(adminDb.admin()).isNotNull();
         assertThat(admins.initialize()).isNull();
+    }
+
+    @Test void announcementDraftsPublishAtomicallyAndLatestFallsBackAfterUnpublish() throws Exception {
+        var draft = new org.interestslab.t7rekindle.server.domain.AnnouncementModels.Draft("第一条", "摘要一", "正文一");
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(status().isNoContent())
+                .andExpect(header().string("Cache-Control", "no-store"));
+        String first = announcements.create(ADMIN, draft);
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(status().isNoContent());
+        announcements.save(ADMIN, first, draft, true);
+        jdbc.update("UPDATE announcement SET published_at='2020-01-01' WHERE announcement_id=?", first);
+        var next = new org.interestslab.t7rekindle.server.domain.AnnouncementModels.Draft("第二条", "摘要二", "## 正文二");
+        String second = announcements.create(ADMIN, next);
+        announcements.save(ADMIN, second, next, true);
+        announcements.save(ADMIN, second, draft, false);
+        mvc.perform(get("/api/v1/announcements/latest").header("Authorization", "Bearer EXPIRED"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.announcementId").value(second))
+                .andExpect(jsonPath("$.title").value("第二条")).andExpect(jsonPath("$.summary").value("摘要二"))
+                .andExpect(jsonPath("$.bodyMarkdown").value("## 正文二"))
+                .andExpect(jsonPath("$.publishedAt").exists()).andExpect(jsonPath("$.enabled").doesNotExist());
+        announcements.unpublish(ADMIN, second);
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(jsonPath("$.announcementId").value(first));
+        announcements.save(ADMIN, second, draft, true);
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(jsonPath("$.announcementId").value(second))
+                .andExpect(jsonPath("$.title").value("第一条"));
+        jdbc.update("UPDATE announcement SET published_at='2021-01-01'");
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(jsonPath("$.announcementId").value(
+                first.compareTo(second) > 0 ? first : second));
+        announcements.unpublish(ADMIN, first);
+        announcements.unpublish(ADMIN, second);
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM announcement", Integer.class)).isEqualTo(2);
+        assertThat(adminDb.audits(0)).extracting(Audit::action).contains("ANNOUNCEMENT_CREATED",
+                "ANNOUNCEMENT_DRAFT_SAVED", "ANNOUNCEMENT_PUBLISHED", "ANNOUNCEMENT_UNPUBLISHED");
+        mvc.perform(get("/api/v1/auth/session")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/announcements/latest")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/announcements/other")).andExpect(status().isUnauthorized());
+    }
+
+    @Test void announcementAdminFormsRetainInvalidInputAndRequireAdminCsrfAndPasswordChange() throws Exception {
+        var session = new MockHttpSession();
+        session.setAttribute(SecurityConfig.ADMIN_IDENTITY, ADMIN);
+        mvc.perform(get("/admin/announcements")).andExpect(redirectedUrl("/admin/login"));
+        mvc.perform(get("/admin/announcements").session(session)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("公告管理")));
+        mvc.perform(get("/admin/announcements/new").session(session)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("name=\"_csrf\"")));
+        mvc.perform(post("/admin/announcements").session(session).param("title", "标题"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/admin/announcements").session(session).with(csrf())
+                .param("title", "保留标题").param("summary", "摘要").param("bodyMarkdown", ""))
+                .andExpect(status().isBadRequest()).andExpect(model().attributeExists("error"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("保留标题")));
+        String location = mvc.perform(post("/admin/announcements").session(session).with(csrf())
+                .param("title", "<script>test</script>").param("summary", "摘要").param("bodyMarkdown", "</textarea><script>test</script>"))
+                .andExpect(status().is3xxRedirection()).andReturn().getResponse().getRedirectedUrl();
+        String edit = location.split("\\?")[0];
+        mvc.perform(get(edit).session(session)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("&lt;script&gt;")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<script>test"))));
+        mvc.perform(post(edit + "/publish").session(session).with(csrf())
+                .param("title", "上线标题").param("summary", "上线摘要").param("bodyMarkdown", "上线正文"))
+                .andExpect(status().is3xxRedirection());
+        mvc.perform(post(edit).session(session).with(csrf()).param("title", "待发布")
+                .param("summary", "草稿摘要").param("bodyMarkdown", "草稿正文")).andExpect(status().is3xxRedirection());
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(jsonPath("$.title").value("上线标题"));
+        mvc.perform(post(edit + "/publish").session(session).with(csrf()).param("title", "待发布")
+                .param("summary", "").param("bodyMarkdown", "保留正文")).andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("保留正文")));
+        mvc.perform(post(edit + "/unpublish").session(session).with(csrf())).andExpect(status().is3xxRedirection());
+        mvc.perform(get("/api/v1/announcements/latest")).andExpect(status().isNoContent());
+        mvc.perform(get("/admin/announcements/missing").session(session)).andExpect(status().isNotFound());
+        jdbc.update("UPDATE admin_account SET must_change_password=TRUE");
+        mvc.perform(get("/admin/announcements").session(session)).andExpect(redirectedUrl("/admin/password"));
+        mvc.perform(post(edit + "/unpublish").session(session).with(csrf())).andExpect(redirectedUrl("/admin/password"));
+    }
+
+    @Test void announcementWriteAndAuditRollBackTogether() {
+        var draft = new org.interestslab.t7rekindle.server.domain.AnnouncementModels.Draft("标题", "摘要", "正文");
+        String id = announcements.create(ADMIN, draft);
+        var failedAudit = mock(AdminMapper.class);
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture audit error"))
+                .when(failedAudit).audit(any(), any(), any());
+        var service = new AnnouncementService(announcementDb, failedAudit, admins, transactions);
+        var changed = new org.interestslab.t7rekindle.server.domain.AnnouncementModels.Draft("修改标题", "修改摘要", "修改正文");
+        assertThatThrownBy(() -> service.save(ADMIN, id, changed, true))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+        assertThat(announcements.latest()).isNull();
+        assertThat(announcements.entry(id).title()).isEqualTo("标题");
     }
 
     @Test void fixedExpiryAndExplicitTakeoverKeepBothCredentialsValid() {

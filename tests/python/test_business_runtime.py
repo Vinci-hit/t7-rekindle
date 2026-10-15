@@ -157,3 +157,30 @@ def test_closed_connection_does_not_receive_startup_responses(role):
     assert late["send"] == late["timers"] == []
     assert late["state"]["phase"] == "waiting"
     assert late["state"]["sessions"] == {}
+
+
+def test_remote_motion_effects_require_online_context_and_valid_remote_actor():
+    effect = dict(rid=2, instanceStartedAt=1000, airborne=True, jumping=True)
+    result = dict(state={}, send=[], timers=[], logs=[], remoteMotion=[effect])
+    host_runtime.validateTransition(result, dict(roomGateway={}, connections=[1]))
+    for changed in (dict(effect, rid=1), dict(effect, jumping=1), dict(effect, airborne=False),
+                    dict(effect, instanceStartedAt=0)):
+        with pytest.raises(ValueError):
+            host_runtime.validateTransition(dict(result, remoteMotion=[changed]), dict(roomGateway={}, connections=[1]))
+    with pytest.raises(ValueError):
+        host_runtime.validateTransition(result, {})
+    with pytest.raises(ValueError):
+        host_runtime.validateTransition(dict(result, remoteMotion=[effect, effect]), dict(roomGateway={}))
+
+
+def test_remote_motion_position_requires_finite_bounded_vectors():
+    effect = dict(rid=2, instanceStartedAt=1000, airborne=True, jumping=True,
+                  position=[1., 2., 3.], velocity=[0., 0., 5.])
+    context = dict(roomGateway={}, connections=[1])
+    result = dict(state={}, send=[], timers=[], logs=[], remoteMotion=[effect])
+    host_runtime.validateTransition(result, context)
+    for changed in (dict(effect, position=[float('nan'), 0., 0.]),
+                    dict(effect, position=[100001., 0., 0.]), dict(effect, velocity=[41., 0., 0.]),
+                    dict(effect, velocity=[0., 0.])):
+        with pytest.raises(ValueError):
+            host_runtime.validateTransition(dict(result, remoteMotion=[changed]), context)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .pve_flow import StageProgress, encode_progress, decode_progress
+
 import struct
 from dataclasses import dataclass
 
@@ -68,6 +70,7 @@ class MinimalLoginIdentity:
     gm_privilege: int = 0
     level: int = 1
     url: bytes = b""
+    pve_stages: tuple[StageProgress, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,7 +340,7 @@ def decode_sync_login_response(data: bytes) -> SyncLoginResponse:
 
 
 def encode_minimal_login_success(identity: MinimalLoginIdentity) -> bytes:
-    """Encode the zero-filled login-success candidate proven by current metadata."""
+    """Encode minimal account fields with optional native PVE chapter progress."""
 
     header = _pack(
         struct.Struct(">HiI"),
@@ -362,14 +365,15 @@ def encode_minimal_login_success(identity: MinimalLoginIdentity) -> bytes:
             bytes(_QUEST_DATA_ZERO_SIZE),
             basic_prefix,
             bytes(_USER_BASIC_INFO_SIZE - len(basic_prefix)),
-            bytes(_PVE_DATA_ZERO_SIZE + _HERO_PRODUCE_DATA_ZERO_SIZE),
+            encode_progress(identity.pve_stages),
+            bytes(_HERO_PRODUCE_DATA_ZERO_SIZE),
             _encode_tdr_string(identity.url, maximum_size=512, field_name="url"),
         )
     )
 
 
 def decode_minimal_login_success(data: bytes) -> MinimalLoginIdentity:
-    """Decode only the zero-filled candidate shape emitted above."""
+    """Decode the supported minimal account and PVE chapter shape."""
 
     fixed_header = struct.Struct(">HiI")
     if len(data) < fixed_header.size:
@@ -395,14 +399,14 @@ def decode_minimal_login_success(data: bytes) -> MinimalLoginIdentity:
     if basic_image_id != user_image_id or data[offset + 8:basic_end] != bytes(_USER_BASIC_INFO_SIZE - 8):
         raise ValueError("minimal login-success user_basic_info is not the supported fixture")
     offset = basic_end
-    zero_tail_size = _PVE_DATA_ZERO_SIZE + _HERO_PRODUCE_DATA_ZERO_SIZE
-    if data[offset:offset + zero_tail_size] != bytes(zero_tail_size):
-        raise ValueError("minimal login-success pve/hero data is not zero-filled")
-    offset += zero_tail_size
+    pve_stages, offset = decode_progress(data, offset)
+    if data[offset:offset + _HERO_PRODUCE_DATA_ZERO_SIZE] != bytes(_HERO_PRODUCE_DATA_ZERO_SIZE):
+        raise ValueError("minimal login-success hero data is not zero-filled")
+    offset += _HERO_PRODUCE_DATA_ZERO_SIZE
     url, offset = _decode_tdr_string(data, offset, maximum_size=512, field_name="url")
     if offset != len(data):
         raise ValueError(f"minimal login-success packet has {len(data) - offset} trailing bytes")
-    return MinimalLoginIdentity(user_id, user_name, user_image_id, gm_privilege, level, url)
+    return MinimalLoginIdentity(user_id, user_name, user_image_id, gm_privilege, level, url, pve_stages)
 
 
 def encode_tpdu_base(value: TpduBase) -> bytes:

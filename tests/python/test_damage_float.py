@@ -98,7 +98,7 @@ def test_delayed_native_contact_only_shows_local_damage_with_original_sequence(m
     sample(multi)
     attack(multi, attacker, intent)
     event = native(multi, attacker=attacker, target=target, occurredAt=multi.now + 100)
-    multi.now += battle.phaseMs(intent, battle.strikeIndex(intent)) + 10
+    multi.now += battle.phaseMs(intent, battle.strikeIndex(intent), dash=battle.actionState(multi, attacker).get('dash')) + 10
     app.handleTimer(multi, battle.actionTimer(attacker))
     assert battle.actionState(multi, attacker)['seq'] != event['seq']
 

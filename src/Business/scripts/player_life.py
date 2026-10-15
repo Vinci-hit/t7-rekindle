@@ -40,7 +40,7 @@ def canChoose(flow):
             and life['epoch'] == flow.session.get('instanceStartedAt') and flow.now >= life['respawnAt'])
 
 
-def die(flow, attacker, position):
+def die(flow, attacker, position, *, weaponId=None):
     from . import combat, scene
     if not actors.active(flow, wire.ACTOR_ID) or not battle.enabled(flow):
         return
@@ -55,7 +55,7 @@ def die(flow, attacker, position):
         state='dead', diedAt=flow.now, respawnAt=flow.now + RESPAWN_MS,
         epoch=flow.session['instanceStartedAt']))
     # Resolve HUD identities before DEAD_NOTIFY unregisters the local entity RID.
-    bot_life.announceKill(flow, attacker, wire.ACTOR_ID)
+    bot_life.announceKill(flow, attacker, wire.ACTOR_ID, weaponId=weaponId)
     battle.syncState(flow, bot_life.DEATH_STATE, targetId=attacker)
     controls.activate(flow)
     flow.send(4, battle_flow.encode_battle_dead_notify(entity_rid=wire.ACTOR_ID, server_time_ms=flow.now),
@@ -117,6 +117,7 @@ def respawn(flow):
         flow.later(RESPAWN_TIMER, RETRY_MS)
         return
     position, heading = point
+    flow.session.pop('weaponId', None)
     flow.session.update(spawnPosition=position, spawnHeading=heading, health=combat.MAX_HEALTH,
                         contactLifeAt=flow.now, contactSwings=[],
                         life={**life, 'state': 'spawning', 'spawnedAt': flow.now})

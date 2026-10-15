@@ -8,6 +8,7 @@ import pytest
 from Business.scripts import app, battle, bot, contracts as wire, controls, scene
 from Business.scripts.codec import battle_flow, move_flow
 from Business.scripts.navigation import NavMesh
+from dash_fixture import profile
 
 
 def flowAt(now=1000, *, playing=True):
@@ -18,7 +19,7 @@ def flowAt(now=1000, *, playing=True):
         "instanceStartedAt": 100, "moveClock": controls.MOVE_CLOCK,
         "controlBaseline": wire.BASELINE_ID, "bot": bot.createBot(1),
     }
-    return app.Flow({"connection": 1}, state, {"nowMs": now})
+    return app.Flow({"connection": 1}, state, {"nowMs": now, "dashAttack": profile()})
 
 
 @pytest.fixture
@@ -177,6 +178,7 @@ def test_bot_completes_each_direction_independently(intent):
     assert flow.session["bot"]["action"]["index"] == -1
     states = [battle_flow.decode_battle_state_sync_simple(item["body"]) for item in flow.result["send"]]
     assert all(item.instance_id == wire.BOT_ID for item in states)
+    assert all(item.state not in (227, 228, 229, 230) for item in states)
     assert states[-1].state == battle_flow.ACT_STATE_IDLE
     assert "action" not in flow.session
 

@@ -127,8 +127,8 @@ def test_configuration_is_edited_only_in_settings_and_error_is_inline():
     assert _find(home, "TextBox") == []
     settings = _xaml(ROOT / "src/Desktop/Views/GameSettingsPage.xaml")
     fields = _find(settings, "TextBox")
-    assert [item.attrib["AutomationProperties.Name"] for item in fields] == ["玩家名称", "游戏根目录"]
-    assert all("UpdateSourceTrigger=Explicit" in item.attrib["Text"] for item in fields)
+    assert [item.attrib["AutomationProperties.Name"] for item in fields] == ["玩家名称", "游戏根目录", "服务器 IP 或域名", "游戏服务器端口"]
+    assert all("UpdateSourceTrigger=Explicit" in item.attrib["Text"] for item in fields[:2])
     assert all(item.attrib["IsReadOnly"] == "{Binding AreSessionFieldsLocked}" for item in fields)
     assert {"{Binding NameFieldError}", "{Binding DirectoryFieldError}"} <= {item.attrib.get("Text") for item in _find(settings, "TextBlock")}
     assert not any("保存" in item.attrib.get("Content", "") for item in _find(settings, "Button"))
@@ -276,7 +276,7 @@ def test_project_information_uses_the_public_repository():
     assert metadata["BuildsUrl"] == "$(RepositoryUrl)/actions/workflows/ci.yml"
     assert metadata["IssuesUrl"] == "$(RepositoryUrl)/issues"
     assert metadata["UpdateBaseUrl"] == "$(T7_UPDATE_BASE_URL)"
-    assert metadata["AuthBaseUrl"] == "$(T7_AUTH_BASE_URL)"
+    assert metadata["AuthBaseUrl"] == "$(T7R_SERVER_BASE_URL)"
     assert metadata["BuildChannel"] == "$(T7_BUILD_CHANNEL)"
     assert metadata["PreviewRunId"] == "$(T7_PREVIEW_RUN_ID)"
     assert metadata["PreviewRunNumber"] == "$(T7_PREVIEW_RUN_NUMBER)"

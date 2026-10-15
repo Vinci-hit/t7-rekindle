@@ -13,6 +13,7 @@
   <ItemDefinitionGroup><Link><SubSystem>Console</SubSystem><AdditionalDependencies>ole32.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AbiLayoutTests.cpp" />
+    <ClCompile Include="BladeParryContactsTests.cpp" />
     <ClCompile Include="GraphicsSettingsTests.cpp" />
     <ClCompile Include="AudioDiagnosticsTests.cpp" />
     <ClCompile Include="OutputDeviceTests.cpp" />
@@ -23,8 +24,10 @@
     <ClCompile Include="../../src/Runtime/launcher/AudioDiagnostics.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/AudioHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ClientWorld.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/BladeParryContacts.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/WorldHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/SprintHookCode.cpp" />
+    <ClCompile Include="../../src/Runtime/launcher/MovementAnimationHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/ChatInputHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/RoundEndHookCode.cpp" />
     <ClCompile Include="../../src/Runtime/launcher/TerrainHookCode.cpp" />
@@ -39,6 +42,7 @@
     <ClCompile Include="ClientImportsTests.cpp" />
     <ClCompile Include="ClientAdaptationTests.cpp" />
     <ClCompile Include="CameraInputTests.cpp" />
+    <ClCompile Include="DefenseAssistTests.cpp" />
     <ClCompile Include="RemoteImageTests.cpp" />
     <ClCompile Include="DebugClientTests.cpp" />
     <ClCompile Include="ClientWindowMonitorTests.cpp" />

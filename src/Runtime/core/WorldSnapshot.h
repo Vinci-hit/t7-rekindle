@@ -10,6 +10,7 @@ struct TerrainContact {
     std::array<float, 3> position{}, normal{}, direction{};
 };
 constexpr size_t MAX_WORLD_ACTORS = 20;
+constexpr size_t MAX_BLADE_CONTACTS = MAX_WORLD_ACTORS + 2; // Blocking scene, actor RIDs, non-blocking ground.
 struct BladeContact {
     TerrainContact contact{};
     uint32_t targetId = 0; // Zero is scene geometry; otherwise the actor RID.
@@ -17,13 +18,23 @@ struct BladeContact {
 };
 struct BladeTrace {
     bool ready = false;
+    bool poseReady = false;
     uint32_t spanMs = 0;
     float length = 0;
     std::array<float, 3> base{}, tip{};
-    std::array<BladeContact, MAX_WORLD_ACTORS + 1> contacts{};
+    std::array<BladeContact, MAX_BLADE_CONTACTS> contacts{};
+};
+struct RemoteMotion {
+    uint64_t instanceStartedAt = 0;
+    uint32_t rid = 0;
+    bool airborne = false, jumping = false;
+    uint64_t expiresAt = 0;
+    bool ownsPosition = false;
+    std::array<float, 3> position{}, velocity{};
 };
 struct ActorSnapshot {
     bool ready = false;
+    bool airborne = false, jumping = false;
     uint32_t targetId = 0;
     std::array<float, 3> position{};
     float heading = 0;
@@ -41,6 +52,7 @@ struct BladeContactEvent {
     double occurredAt = 0;
     std::array<float, 3> sourcePosition{}, targetPosition{};
     float sourceHeading = 0, targetHeading = 0;
+    bool weaponContact = false;
 };
 // Internal Runtime -> Business data, not part of the launcher C ABI.
 struct WorldSnapshot {

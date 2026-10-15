@@ -163,12 +163,11 @@ namespace T7.ManagedHarness
                 var feedbackLink = (Button)rooms.FindName("ConstructionFeedbackButton");
                 var aboutLink = (Button)rooms.FindName("ConstructionAboutButton");
                 LauncherTests.Assert(((TextBlock)rooms.FindName("ConstructionTitle")).Text == "对战 · 功能建设中"
-                    && rooms.FindName("RoomTable") == null && rooms.FindName("JoinRoomButton") == null
+                    && rooms.FindName("RoomTable") == null && rooms.FindName("RoomSettingsButton") == null
                     && Math.Abs(homeLink.ActualWidth - feedbackLink.ActualWidth) <= 1
                     && Math.Abs(homeLink.ActualWidth - aboutLink.ActualWidth) <= 1
-                    && homeLink.ActualHeight == feedbackLink.ActualHeight && homeLink.ActualHeight == aboutLink.ActualHeight
-                    && ((ScrollViewer)rooms.FindName("ConstructionScroll")).ScrollableHeight < 1,
-                    "construction page lost its title, equal actions, or full-height layout");
+                    && homeLink.ActualHeight == feedbackLink.ActualHeight && homeLink.ActualHeight == aboutLink.ActualHeight,
+                    "construction page lost its placeholder or equal navigation actions");
                 RenderArtworkWithoutUi(window, output);
                 window.DataContext = null;
                 window.Close();

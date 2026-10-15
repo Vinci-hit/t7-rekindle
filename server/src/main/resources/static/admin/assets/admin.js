@@ -2,7 +2,8 @@
 
 document.querySelectorAll("form").forEach((form) => {
   form.addEventListener("submit", (event) => {
-    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+    const confirmation = event.submitter?.dataset.confirm || form.dataset.confirm;
+    if (confirmation && !window.confirm(confirmation)) {
       event.preventDefault();
       return;
     }

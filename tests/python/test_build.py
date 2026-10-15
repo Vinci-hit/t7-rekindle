@@ -196,6 +196,12 @@ def test_managed_sdk_is_pinned_to_the_portable_toolchain():
     assert f"'sdk\\{sdk['version']}\\Sdks'" in portable
 
 
+def test_ci_passes_server_base_url_from_repository_variables():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    environment = workflow.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+    assert "  T7R_SERVER_BASE_URL: ${{ vars.T7R_SERVER_BASE_URL }}\n" in environment
+
+
 def test_ci_installs_the_pinned_sdk_before_building():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     steps = workflow.split("      - name: ")

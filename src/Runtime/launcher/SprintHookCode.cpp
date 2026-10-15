@@ -6,10 +6,8 @@
 namespace t7 {
 namespace {
 constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = 0x380;
-constexpr uint32_t JUMP_EVENT_OFFSET = 0x180, END_JUMP_EVENT_OFFSET = 0x198;
 constexpr uint32_t SPEED_RVA = 0x3D2550, RUNNING_RVA = 0x3D2E20, STATE_RVA = 0x3D2570;
 constexpr uint32_t LINE_MOVE_RVA = 0x75D140, STOP_MOVE_RVA = 0x75D3B0;
-constexpr uint32_t ANIMATION_VTABLE_RVA = 0x177722C, ANIMATION_EVENT_RVA = 0x3BEEC0;
 uint32_t floatBits(float value) {
     uint32_t result; std::memcpy(&result, &value, sizeof(result)); return result;
 }
@@ -47,14 +45,18 @@ void writeSprintDirections(Bytes& page) {
     const uint32_t states[]{1,2,6,1,4,3,5,4,8,9,7,8,1,2,6,1};
     std::memcpy(page.data() + STATES_OFFSET, states, sizeof(states));
 }
-Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
+Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash) {
+    const auto dashMoveMs = dash.enabled ? dash.moveMs : 0;
+    const auto dashSpeed = dash.enabled ? static_cast<float>(dash.speedMilli) / 1000.f : 0.f;
     // State contains identities/timestamps, never a pointer reused across frames.
     const auto data = address + SPRINT_DATA_OFFSET;
     const auto epoch = data, identity = data + 8, began = data + 12, tracking = data + 16; // 0 idle, 1 warming, 2 running.
     const auto lastDash = data + 20, lastKeys = data + 24, game = data + 28;
     const auto now = data + 32, offline = data + 36, speed = data + 40, running = data + 44;
     const auto jumping = data + 48, animationIdentity = data + 52;
-    const auto dashBegan = data + 56, dashMoving = data + 60;
+    const auto phaseTick = data + 56, dashMoving = data + 60;
+    const auto sequence = data + 64, lastSequence = data + 68;
+    const auto jumpSequence = data + 72;
     WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
@@ -89,7 +91,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     c.emit({0x3B,0x3D}); c.word(identity); const auto sameEntity = c.branch(0x84);
     for (auto branch : changed) c.bind(branch);
     c.store(tracking, 0); c.store(lastDash, 0); c.store(jumping, 0); c.store(animationIdentity, 0);
-    c.store(dashMoving, 0);
+    c.store(dashMoving, 0); c.store(lastSequence, 0);
     for (uint32_t offset : {0u, 4u}) {
         c.emit({0x8B,0x46,static_cast<unsigned char>(0x68 + offset),0xA3}); c.word(epoch + offset);
     }
@@ -103,6 +105,8 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     component(0x17ADDFC, 0); c.emit({0xA3}); c.word(offline);
     component(0x1783860, 0x178380C);
     c.emit({0x8B,0x70,0x38}); // ESI battle state
+    c.emit({0x8B,0x48,0x40,0x89,0x0D}); c.word(sequence);
+    c.emit({0x8B,0x48,0x48,0x89,0x0D}); c.word(phaseTick);
     component(0x178692C, 0x17868BC);
     c.emit({0x83,0x78,0x60,6}); invalid.push_back(c.branch(0x82));
     c.emit({0x8B,0x40,0x54}); nonzero(0xC0);
@@ -122,15 +126,25 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     };
     c.emit({0x83,0x3D}); c.word(game); c.emit({4}); const auto notGame = c.branch(0x85);
     c.emit({0x8B,0xC6,0x2D}); c.word(438);
-    c.emit({0x83,0xF8,1}); const auto dash = c.branch(0x86);
+    c.emit({0x83,0xF8,1}); const auto dashBranch = c.branch(0x86);
     const auto normal = c.bytes.size();
     c.emit({0x83,0x3D}); c.word(lastDash); c.emit({0}); const auto noRestore = c.branch(0x84);
     c.emit({0x8B,0xC7}); move(RUN_SPEED); c.store(lastDash, 0);
     c.bind(noRestore);
     std::vector<size_t> reset;
     c.emit({0x83,0x3D}); c.word(game); c.emit({4}); reset.push_back(c.branch(0x85));
-    // Ordinary attacks and parries retain JOG_SPEED and clear the run timer until idle.
+    // Airborne melee keeps an established run's momentum; reactions still cancel it.
+    std::vector<size_t> airborneMelee;
+    c.emit({0x80,0x7B,0x20,0}); const auto groundedMelee = c.branch(0x84);
+    c.emit({0x83,0x3D}); c.word(tracking); c.emit({2}); const auto noCarriedRun = c.branch(0x85);
+    for (uint32_t state : {235u,237u,238u,239u,241u,243u,244u,245u,
+                           247u,249u,250u,251u,253u,255u,256u,257u}) {
+        c.emit({0x81,0xFE}); c.word(state); airborneMelee.push_back(c.branch(0x84));
+    }
+    c.bind(groundedMelee); c.bind(noCarriedRun);
+    // Ground attacks and parries clear run eligibility until idle.
     c.emit({0x83,0xFE,2}); reset.push_back(c.branch(0x85));
+    for (auto branch : airborneMelee) c.bind(branch);
     c.emit({0x8B,0xC7,0x83,0xE0,0x13,0x83,0xF8,1}); reset.push_back(c.branch(0x85));
     // Carry an established run through jump input/takeoff/landing while still moving forward.
     c.emit({0x83,0x3D}); c.word(tracking); c.emit({2}); const auto keepRunning = c.branch(0x84);
@@ -149,22 +163,23 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     const auto resetDone = c.jump();
 
     c.bind(notGame); c.emit({0x33,0xFF}); const auto inactive = c.jump(); c.bind(inactive, normal);
-    c.bind(dash);
-    // State 439 owns a timed forward move, independent of the longer strike animation.
+    c.bind(dashBranch);
+    // Movement and blade contacts use the same native action clock, including delayed first frames.
     c.store(tracking, 0); c.store(speed, 0);
-    c.emit({0x3B,0x35}); c.word(lastDash); const auto samePhase = c.branch(0x84);
-    c.emit({0xA1}); c.word(now); c.emit({0xA3}); c.word(dashBegan); c.bind(samePhase);
     c.emit({0x33,0xD2,0x81,0xFE}); c.word(439); const auto preparation = c.branch(0x85);
-    c.emit({0xA1}); c.word(now); c.emit({0x2B,0x05}); c.word(dashBegan);
-    c.emit({0x3D}); c.word(DASH_MOVE_MS); const auto expired = c.branch(0x83);
-    c.store(speed, floatBits(DASH_SPEED)); c.emit({0x42});
+    c.emit({0xA1}); c.word(now); c.emit({0x2B,0x05}); c.word(phaseTick);
+    c.emit({0x3D}); c.word(dashMoveMs); const auto expired = c.branch(0x83);
+    c.store(speed, floatBits(dashSpeed)); c.emit({0x42});
     c.bind(preparation); c.bind(expired);
     c.emit({0x3B,0x35}); c.word(lastDash); const auto phaseChanged = c.branch(0x85);
+    c.emit({0xA1}); c.word(sequence); c.emit({0x3B,0x05}); c.word(lastSequence);
+    const auto sequenceChanged = c.branch(0x85);
     c.emit({0x3B,0x3D}); c.word(lastKeys); const auto keysChanged = c.branch(0x85);
     c.emit({0x3B,0x15}); c.word(dashMoving); const auto sameDash = c.branch(0x84);
-    c.bind(phaseChanged); c.bind(keysChanged);
+    c.bind(phaseChanged); c.bind(sequenceChanged); c.bind(keysChanged);
     c.emit({0x89,0x35}); c.word(lastDash); c.emit({0x89,0x3D}); c.word(lastKeys);
-    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(DASH_SPEED);
+    c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(lastSequence);
+    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed);
     c.bind(sameDash); c.bind(warming); c.bind(armed); c.bind(resetDone);
     // Reapply only when the native key tree or a phase change altered the actual velocity.
     c.emit({0x8B,0x4B,0x38,0xA1}); c.word(speed); c.emit({0x3B,0x41,0x24});
@@ -186,7 +201,11 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     c.bind(walking); for (auto branch : selected) c.bind(branch);
     c.emit({0x3B,0x43,0x2C}); const auto sameState = c.branch(0x84);
     c.emit({0x50,0x8B,0xCB}); c.call(imageBase + STATE_RVA); c.bind(sameState);
-    c.emit({0xA1}); c.word(running); c.emit({0x38,0x83}); c.word(0xCC);
+    // RUN arms dash inputs and the HUD; airborne movement keeps only its speed and direction.
+    c.emit({0xA1}); c.word(running);
+    c.emit({0x80,0x7B,0x20,0}); const auto groundedRun = c.branch(0x84);
+    c.emit({0x33,0xC0}); c.bind(groundedRun);
+    c.emit({0x38,0x83}); c.word(0xCC);
     const auto sameRunning = c.branch(0x84);
     c.emit({0x50,0x8B,0xCB}); c.call(imageBase + RUNNING_RVA); c.bind(sameRunning);
     // Observe the native physical jump, not queued input or behavior-tree event delivery.
@@ -204,8 +223,20 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
         c.emit({0x80,0x7B,flag,0}); grounded.push_back(c.branch(0x84));
     }
     c.emit({0x42}); for (auto branch : grounded) c.bind(branch);
-    c.emit({0x3B,0x15}); c.word(jumping); noAnimation.push_back(c.branch(0x84));
+    c.emit({0x3B,0x15}); c.word(jumping); const auto jumpChanged = c.branch(0x85);
+    c.emit({0x85,0xD2}); noAnimation.push_back(c.branch(0x84));
+    c.emit({0xA1}); c.word(sequence); c.emit({0x3B,0x05}); c.word(jumpSequence);
+    noAnimation.push_back(c.branch(0x84));
+    // Combat can replace the lower-body pose without a physical landing edge.
+    // Reassert Jump once per melee phase/recovery; the native graph has no Jump self-transition.
+    std::vector<size_t> refreshJump;
+    for (uint32_t state : AIRBORNE_ANIMATION_STATES) {
+        c.emit({0x81,0xFE}); c.word(state); refreshJump.push_back(c.branch(0x84));
+    }
+    noAnimation.push_back(c.jump());
+    c.bind(jumpChanged); for (auto branch : refreshJump) c.bind(branch);
     c.emit({0x89,0x15}); c.word(jumping);
+    c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(jumpSequence);
     c.emit({0x85,0xD2,0xB8}); c.word(address + END_JUMP_EVENT_OFFSET);
     c.emit({0xBA}); c.word(address + JUMP_EVENT_OFFSET);
     c.emit({0x0F,0x45,0xC2,0x50}); c.call(imageBase + ANIMATION_EVENT_RVA);
@@ -213,7 +244,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase) {
     const auto done = c.jump();
     for (auto branch : invalid) c.bind(branch);
     c.store(tracking, 0); c.store(lastDash, 0); c.store(identity, 0);
-    c.store(dashMoving, 0);
+    c.store(dashMoving, 0); c.store(lastSequence, 0);
     c.store(jumping, 0); c.store(animationIdentity, 0);
     c.bind(done);
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D,0xC3});

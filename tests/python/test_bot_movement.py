@@ -237,22 +237,24 @@ def test_old_state_defaults_to_jog_and_current_warmup_survives_migration(walking
         assert not app.validateState(state)
 
 
-def test_close_target_waits_for_turn_before_reaction_delay(walking):
+def test_close_target_prepares_while_turning_but_waits_for_valid_facing(walking):
     bot.stopMotion(walking)
     value = walking.session["bot"]
-    value.update(heading=180, lastTurnAt=walking.now)
+    value.update(heading=180, lastTurnAt=walking.now, reactAt=None)
+    readyAt = None
     for _ in range(4):
         walking.now += 100
         snapshot(walking, (1.5, 0., .2))
         tick(walking)
         assert value["action"]["index"] == -1
-        assert value["reactAt"] is None
+        if readyAt is None:
+            readyAt = value['reactAt']
+            assert round(bot.REACTION_MS * .65) <= readyAt - walking.now <= round(bot.REACTION_MS * 1.2)
+        assert value['reactAt'] == readyAt
     walking.now += 100
     snapshot(walking, (1.5, 0., .2))
     tick(walking)
     assert value["heading"] == 0
-    assert round(bot.REACTION_MS * .65) <= value["reactAt"] - walking.now <= round(bot.REACTION_MS * 1.2)
-    walking.now = value["reactAt"]
-    snapshot(walking, (1.5, 0., .2))
-    tick(walking)
+    assert walking.now >= readyAt
     assert value["action"]["index"] == 0
+    assert walking.session['pending'][bot.ACTION_TIMER] - walking.now == battle.phaseMs(value['action']['intent'], 0)

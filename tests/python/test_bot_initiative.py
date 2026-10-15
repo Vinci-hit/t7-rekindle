@@ -30,7 +30,8 @@ def test_valid_melee_opportunity_does_not_wait_for_the_flanking_goal(multi, prof
         multi.now += 100
     assert value['attackCount'] == 1
     assert value['action']['intent'] in battle.ATTACK_CHAINS
-    assert value['path'] and actors.timerName(bot.MOVE_TIMER, 3) in multi.session['pending']
+    assert not value['path'] and actors.timerName(bot.MOVE_TIMER, 3) not in multi.session['pending']
+    assert 'tactic' not in value
     assert value['position'] == [-1.7, .15, .2]
 
 
@@ -52,13 +53,13 @@ def test_small_continuous_turns_do_not_reset_attack_readiness(multi):
 
 
 @pytest.mark.parametrize('profile', list(bot_profiles.PROFILES))
-def test_long_positioning_yields_to_a_body_clear_close_approach(multi, profile):
+def test_body_clear_close_approach_starts_immediately_and_stays_clear(multi, profile):
     placements = {1: ((0, 0, .2), 180), 2: ((-1., 0, .2), 0), 3: ((-3, 0, .2), 0)}
     value = actors.data(multi, 3)
     value.update(profile=profile, tempo=100)
     fight(multi, placements)
     bot.think(multi, 3)
-    assert value['status'] in ('flank', 'rear', 'support')
+    assert value['status'] == 'press'
     multi.now += 2400
     fight(multi, placements)
     bot.think(multi, 3)
@@ -147,7 +148,7 @@ def test_initiative_still_requires_native_contact_and_facing(multi, fault):
     assert value['attackCount'] == 0
 
 
-def test_successful_attack_restarts_positioning_budget_without_changing_weapon_timing(multi):
+def test_successful_attack_discards_legacy_budget_without_changing_weapon_timing(multi):
     fight(multi, {1: ((1.5, 0, .2), 180), 2: ((0, 0, .2), 0)})
     value = actors.data(multi, 2)
     value.update(reactAt=multi.now, pressAt=multi.now - 1)
@@ -163,11 +164,12 @@ def test_successful_attack_restarts_positioning_budget_without_changing_weapon_t
 
 
 @pytest.mark.parametrize('reset', ['lost', 'stale', 'stop', 'respawn'])
-def test_initiative_clock_clears_when_engagement_ends(multi, reset):
+def test_attack_readiness_and_legacy_budget_clear_when_engagement_ends(multi, reset):
     fight(multi, {1: ((3, 0, .2), 180), 2: ((0, 0, .2), 0)})
     bot.think(multi, 2)
     value = actors.data(multi, 2)
-    assert 'pressAt' in value
+    assert type(value['reactAt']) is int
+    value['pressAt'] = multi.now + 2000
     assert app.validateState(multi.state)
     if reset == 'lost':
         multi.now += 100
@@ -181,6 +183,7 @@ def test_initiative_clock_clears_when_engagement_ends(multi, reset):
     else:
         bot_life.clearPerception(value)
     assert 'pressAt' not in value
+    assert value['reactAt'] is None
 
 
 @pytest.mark.parametrize('invalid', [-1, True, '1000'])

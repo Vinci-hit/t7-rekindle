@@ -1,0 +1,213 @@
+#pragma once
+#include "SprintHookFixture.h"
+#include "../../src/Runtime/launcher/MovementAnimationHookCode.h"
+
+namespace movementAnimationFixture {
+using worldFixture::BASE;
+using worldFixture::writeWord;
+using sprintFixture::readWord;
+constexpr uint32_t DATA = BASE + 0xF000, DISPATCH = BASE + 0xF100;
+constexpr uint32_t VELOCITY = DATA + 4, WRITES = DATA + 8, VARIABLE = DATA + 12, ACTIVE = DATA + 16;
+inline t7::MovementAnimationProfile profile() { return {true, 1030411, 2.25f, 1.75f, .75f, 4.25f}; }
+inline void writeFloat(HANDLE process, uint32_t address, float value) {
+    uint32_t bits; std::memcpy(&bits, &value, 4); writeWord(process, address, bits);
+}
+inline float readFloat(HANDLE process, uint32_t address) {
+    const auto bits = readWord(process, address); float value; std::memcpy(&value, &bits, 4); return value;
+}
+inline void prepare(HANDLE process) {
+    t7::WorldHookCode c;
+    c.emit({0x8B,0x0D}); c.word(DATA); c.emit({0x85,0xC9}); const auto disabled = c.branch(0x84);
+    c.call(BASE + 0x3D2A10); c.bind(disabled); c.emit({0xC3});
+    t7::writeClientMemory(process, DISPATCH, c.bytes);
+    writeWord(process, worldFixture::TABLE + 0x2C, BASE + 0xF500);
+    writeWord(process, worldFixture::TABLE + 0x40, BASE + 0xF520);
+    c.bytes.clear(); c.emit({0xA1}); c.word(ACTIVE); c.emit({0xC3});
+    t7::writeClientMemory(process, BASE + 0xF500, c.bytes);
+    t7::writeClientMemory(process, BASE + 0xF520, {0xD9,0x41,0x24,0xC3});
+    writeWord(process, ACTIVE, 1);
+    writeWord(process, BASE + 0x177722C + 0x54, BASE + 0xF540);
+    c.bytes.clear(); c.emit({0x8B,0x44,0x24,4,0xA3}); c.word(VARIABLE);
+    c.emit({0x8B,0x44,0x24,8,0x89,0x41,0x34,0xFF,0x05}); c.word(WRITES); c.emit({0xC2,8,0});
+    t7::writeClientMemory(process, BASE + 0xF540, c.bytes);
+    writeWord(process, BASE + 0x2D37918, 123);
+    writeFloat(process, BASE + 0x1A71B3C, 1.5f);
+    const uint32_t directions[]{0,0,1,8,7,6,5,4,3,2,1,8,2};
+    for (uint32_t i = 0; i < 13; ++i) writeWord(process, DATA + 0x80 + i * 4, directions[i]);
+    // Native updater stack layout and MoveDir cache precede the hooked speed block.
+    c.bytes.clear(); c.emit({0x55,0x8B,0xEC,0x83,0xE4,0xF8,0x83,0xEC,0x1C,0x53,0x56,0x57,0x8B,0xF1});
+    c.emit({0xA1}); c.word(VELOCITY); c.emit({0x89,0x44,0x24,0x10,0x8B,0x46,0x2C,0x8B,0x04,0x85});
+    c.word(DATA + 0x80); c.emit({0x89,0x46,0x60,0xE9});
+    c.word(BASE + t7::MOVEMENT_ANIMATION_RVA - (BASE + 0x3D2A10 + static_cast<uint32_t>(c.bytes.size()) + 4));
+    t7::writeClientMemory(process, BASE + 0x3D2A10, c.bytes);
+    // Original cache comparison, active-controller floor, and single native variable setter.
+    c.bytes = t7::MOVEMENT_ANIMATION_ORIGINAL;
+    c.emit({0xF3,0x0F,0x10,0x4C,0x24,0x10,0x0F,0x2E,0xC1,0x9F,0xF6,0xC4,0x44,0x7B,0x5A,
+        0x8B,0x4E,0x38,0xF3,0x0F,0x11,0x4E,0x5C,0x8B,0x01,0x8B,0x40,0x2C,0xFF,0xD0,0x3C,1,0x75,0x2E,
+        0x8B,0x4E,0x38,0x8B,0x01,0x8B,0x40,0x40,0xFF,0xD0,0xD9,0x5C,0x24,0x18,
+        0xF3,0x0F,0x10,0x44,0x24,0x18,0xF3,0x0F,0x10,0x0D}); c.word(BASE + 0x1A71B3C);
+    c.emit({0x0F,0x2F,0xC1,0x72,0x0D,0x0F,0x2F,0x4E,0x5C,0x76,7,0xC7,0x46,0x5C}); c.word(0x3FC00000);
+    if (c.bytes.size() != 0x3D2BF2 - t7::MOVEMENT_ANIMATION_RVA) throw std::runtime_error("animation fixture writer offset");
+    c.emit({0x8B,0x4E,0x58,0xF3,0x0F,0x10,0x46,0x5C,0x8B,0x01,0x51,0xF3,0x0F,0x11,0x04,0x24,0xFF,0x35});
+    c.word(BASE + 0x2D37918); c.emit({0xFF,0x50,0x54,0x5F,0x5E,0x5B,0x8B,0xE5,0x5D,0xC3});
+    t7::writeClientMemory(process, BASE + t7::MOVEMENT_ANIMATION_RVA, c.bytes);
+}
+inline void verify(HANDLE process, uint32_t mailbox) {
+    using namespace sprintFixture;
+    using worldFixture::MOVABLE;
+    const auto config = profile();
+    writeWord(process, worldFixture::FRAME_GATE, 1); Sleep(30);
+    uint32_t tick = 10000;
+    writeWord(process, CLOCK_MODE, 1); writeWord(process, DATA, MOVABLE);
+    writeWord(process, MOVABLE + 8, worldFixture::ENTITY);
+    writeWord(process, FIGHT + 0x98, static_cast<uint32_t>(config.weaponId));
+    const auto eventCount = readWord(process, ANIMATION_EVENTS);
+    auto frame = [&](float velocity, float physical, float animation) {
+        writeFloat(process, VELOCITY, velocity); writeWord(process, CLOCK, tick);
+        writeWord(process, worldFixture::FRAME_GATE, 2);
+        const auto deadline = GetTickCount64() + 3000;
+        while (readWord(process, worldFixture::FRAME_GATE) != 1) {
+            if (GetTickCount64() > deadline) throw std::runtime_error("animation frame timeout");
+            Sleep(1);
+        }
+        const auto actual = readFloat(process, ANIMATION + 0x34);
+        if (readFloat(process, worldFixture::CONTROLLER + 0x24) != physical
+            || std::abs(actual - animation) > .00001f || readFloat(process, MOVABLE + 0x5C) != actual
+            || readWord(process, VARIABLE) != 123)
+            throw std::runtime_error("animation gait/cache/physical speed mismatch: expected="
+                + std::to_string(animation) + " actual=" + std::to_string(actual));
+    };
+    for (uint32_t keys : {1u, 5u, 9u}) {
+        writeWord(process, KEYS, keys);
+        const auto slow = keys == 1 ? config.forwardSlow : config.lateralSlow;
+        for (const auto& block : std::array<std::pair<uint32_t, uint32_t>, 4>{{{305,223},{308,224},{307,225},{306,226}}}) {
+            setFightState(process, block.first, tick); frame(5, 3, slow);
+            setFightState(process, block.second, tick); frame(3, 3, slow);
+            const auto writes = readWord(process, WRITES);
+            setFightState(process, 2, tick); frame(3, 3, slow);
+            if (readWord(process, WRITES) != writes) throw std::runtime_error("unchanged mapped animation was written again");
+            if (readWord(process, mailbox + t7::SPRINT_DATA_OFFSET + 12) != tick)
+                throw std::runtime_error("animation change altered defense run-timer reset");
+            tick += 999; frame(3, 3, slow);
+            ++tick; frame(3, 5, slow);
+            frame(4, 5, (slow + config.forwardSprint) * .5f);
+            frame(5, 5, config.forwardSprint);
+        }
+    }
+    for (uint32_t keys : {2u, 6u, 10u, 4u, 8u}) {
+        writeWord(process, KEYS, keys);
+        const auto slow = keys & 2 ? config.backwardSlow : config.lateralSlow;
+        frame(3, 3, slow); frame(1.5f, 3, slow * .5f);
+        frame(0, 3, slow * .5f); // Preserve the native active-controller floor before remapping.
+        writeWord(process, ACTIVE, 0); frame(.75f, 3, slow * .25f); writeWord(process, ACTIVE, 1);
+    }
+    writeWord(process, KEYS, 0); frame(0, 3, 1.5f); // Stationary graph is untouched.
+    writeWord(process, KEYS, 17); frame(3, 3, 3); // Crouch is untouched.
+    writeWord(process, KEYS, 1); setFightState(process, 237); frame(3, 3, 3);
+    setFightState(process, 439, tick); frame(3, static_cast<float>(sprintFixture::profile().speedMilli) / 1000.f, 3);
+    setFightState(process, 2, tick); frame(3, 3, config.forwardSlow);
+    writeWord(process, MOVABLE + 0x20, 1); frame(3, 3, 3); writeWord(process, MOVABLE + 0x20, 0);
+    writeWord(process, MOVABLE + 8, worldFixture::ENTITY + 0x100); frame(3, 3, 3);
+    writeWord(process, MOVABLE + 8, worldFixture::ENTITY);
+    writeWord(process, FIGHT + 0x98, 100000); frame(3, 3, 3);
+    writeWord(process, FIGHT + 0x98, static_cast<uint32_t>(config.weaponId)); frame(3, 3, config.forwardSlow);
+    if (readWord(process, ANIMATION_EVENTS) != eventCount) throw std::runtime_error("gait mapping sent an animation event");
+    writeWord(process, DATA, 0); writeWord(process, KEYS, 0); writeWord(process, CLOCK_MODE, 0);
+    writeWord(process, worldFixture::FRAME_GATE, 0);
+}
+inline void verifyRemoteJump(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
+    using namespace sprintFixture;
+    constexpr auto peerMovable = worldFixture::MOVABLE + 0x100;
+    constexpr auto peerAnimation = ANIMATION + 0x100;
+    writeWord(process, worldFixture::FRAME_GATE, 1); Sleep(30);
+    writeWord(process, peerMovable + 0x58, peerAnimation);
+    writeWord(process, peerAnimation, BASE + 0x177722C);
+    writeWord(process, peerAnimation + 0x30, peerAnimation);
+    const auto count = readWord(process, ANIMATION_EVENTS);
+    std::array<t7::RemoteMotion, t7::MAX_WORLD_ACTORS> motion{};
+    motion[1] = { (uint64_t{1} << 32) + 1234, 2, true, true, GetTickCount64() + 5000 };
+    reader.publishRemoteMotion(motion);
+    auto frame = [&] {
+        writeWord(process, worldFixture::FRAME_GATE, 2);
+        const auto until = GetTickCount64() + 3000;
+        while (readWord(process, worldFixture::FRAME_GATE) != 1) {
+            if (GetTickCount64() > until) throw std::runtime_error("remote jump frame timeout");
+            Sleep(1);
+        }
+    };
+    frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 1 || readWord(process, ANIMATION_NAME) != 0x706D754A)
+        throw std::runtime_error("remote snapshot did not deliver Jump");
+    if ((readWord(process, peerMovable + 0x20) & 0x00FF00FF) != 0x00010001)
+        throw std::runtime_error("remote Jump did not set physical animation flags");
+    frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 1)
+        throw std::runtime_error("remote Jump restarted on an unchanged frame");
+    // A reaction must not be overwritten by a repeated Jump event.
+    const auto savedState = readWord(process, FIGHT + 0x38);
+    writeWord(process, FIGHT + 0x38, 240);
+    writeWord(process, FIGHT + 0x40, readWord(process, FIGHT + 0x40) + 1);
+    frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 1)
+        throw std::runtime_error("remote Jump overwrote a parry reaction");
+    writeWord(process, FIGHT + 0x38, savedState);
+    // A melee phase may replace the pose while the actor is still physically airborne.
+    writeWord(process, FIGHT + 0x40, readWord(process, FIGHT + 0x40) + 1);
+    frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 2)
+        throw std::runtime_error("remote airborne melee did not restore Jump");
+    motion[1].jumping = false; motion[1].airborne = false; ++motion[1].expiresAt;
+    reader.publishRemoteMotion(motion); frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 3 || readWord(process, ANIMATION_NAME) != 0x4A646E45)
+        throw std::runtime_error("remote landing did not deliver EndJump");
+    if ((readWord(process, peerMovable + 0x20) & 0x00FF00FF) != 0)
+        throw std::runtime_error("remote landing retained airborne flags");
+    // Falling from a ledge is not a new jump.
+    motion[1].airborne = true; ++motion[1].expiresAt;
+    reader.publishRemoteMotion(motion); frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 3)
+        throw std::runtime_error("remote ledge fall fabricated Jump");
+    motion[1].jumping = true; ++motion[1].expiresAt;
+    reader.publishRemoteMotion(motion); frame();
+    motion[1].expiresAt = GetTickCount64() - 1;
+    reader.publishRemoteMotion(motion); frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 5 || readWord(process, ANIMATION_NAME) != 0x4A646E45)
+        throw std::runtime_error("remote expired snapshot did not end Jump");
+    motion[1].expiresAt = GetTickCount64() + 5000;
+    reader.publishRemoteMotion(motion); frame();
+    ++motion[1].instanceStartedAt; ++motion[1].expiresAt;
+    reader.publishRemoteMotion(motion); frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 6)
+        throw std::runtime_error("remote animation accepted another instance epoch");
+    writeWord(process, worldFixture::INSTANCE + 0x68, 1235); frame();
+    if (readWord(process, ANIMATION_EVENTS) != count + 7)
+        throw std::runtime_error("reused remote animation identity retained a previous epoch");
+    writeWord(process, worldFixture::INSTANCE + 0x68, 1234);
+    --motion[1].instanceStartedAt; ++motion[1].expiresAt;
+    motion[1].airborne = motion[1].jumping = false;
+    reader.publishRemoteMotion(motion); frame();
+    // Native per-frame translation owns remote XYZ without touching local RID 1.
+    const auto peerPosition = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x110, 12);
+    const auto localPosition = readWord(process, worldFixture::CONTROLLER + 0x10);
+    motion[1].ownsPosition = true;
+    motion[1].position = {280.f, 160.f, 2.f}; motion[1].velocity = {0, 0, 0};
+    motion[1].expiresAt = GetTickCount64() + 5000;
+    reader.publishRemoteMotion(motion); frame(); frame();
+    float remoteZ = 0;
+    const auto zBytes = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x100 + 0x18, 4);
+    std::memcpy(&remoteZ, zBytes.data(), 4);
+    if (remoteZ != 2.f || readWord(process, worldFixture::CONTROLLER + 0x10) != localPosition)
+        throw std::runtime_error("remote per-frame position failed or overwrote local actor");
+    motion[1].position[2] = 2.5f;
+    reader.publishRemoteMotion(motion); frame();
+    const auto movedZ = t7::readClientMemory(process, worldFixture::CONTROLLER + 0x100 + 0x18, 4);
+    std::memcpy(&remoteZ, movedZ.data(), 4);
+    if (remoteZ != 2.5f) throw std::runtime_error("remote pose update did not replace the prior target");
+    const auto slot = mailbox + t7::REMOTE_MOTION_DATA_OFFSET + sizeof(t7::RemoteMotionMailbox);
+    writeWord(process, static_cast<uint32_t>(slot + 12), 0);
+    t7::writeClientMemory(process, worldFixture::CONTROLLER + 0x110, peerPosition);
+    writeWord(process, peerMovable + 0x58, 0);
+    writeWord(process, worldFixture::FRAME_GATE, 0);
+}
+
+}

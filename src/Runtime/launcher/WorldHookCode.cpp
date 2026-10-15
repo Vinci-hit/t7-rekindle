@@ -5,6 +5,8 @@
 #include "ChatInputHookCode.h"
 #include "WeaponTrailHookCode.h"
 #include "RoundEndHookCode.h"
+#include "MovementAnimationHookCode.h"
+#include <algorithm>
 #include <cstring>
 
 namespace t7 {
@@ -29,6 +31,7 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
         {COMPONENT_RVA, {0x55,0x8B,0xEC,0x8B,0x55,0x08,0x56,0x8B,0x71,0x7C}},
         {IS_DEAD_RVA, {0x83,0x79,0x34,0x01,0x0F,0x95,0xC0,0xC3}},
         {POSITION_RVA, {0x55,0x8B,0xEC,0x8B,0x49,0x38,0x83,0xEC,0x0C}},
+        {0x296030, {0x53,0x8B,0xDC,0x83,0xEC,0x08,0x83,0xE4,0xF0}},
         {CONTROLLER_POSITION_RVA, {0x53,0x8B,0xDC,0x83,0xEC,0x08,0x83,0xE4,0xF0}},
         {HEADING_RVA, {0x8B,0x49,0x38,0x8B,0x01,0x8B,0x40,0x74,0xFF,0xE0}},
         {CONTROLLER_HEADING_RVA, {0xD9,0x81,0xAC,0x00,0x00,0x00,0xC3}}
@@ -37,7 +40,93 @@ void verifyWorldFunctions(HANDLE process, uint32_t imageBase) {
             throw std::runtime_error("world reader function signature mismatch");
     }
 }
-Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
+Bytes buildRemoteMotionHook(uint32_t address, uint32_t imageBase) {
+    WorldHookCode c;
+    c.emit({0x60,0x83,0xEC,32}); // EBX movable, EDI sampled actor, EDX RID; only the game thread calls this helper.
+    std::vector<size_t> done;
+    c.emit({0x83,0xFA,2}); done.push_back(c.branch(0x82));
+    c.emit({0x83,0xFA,static_cast<unsigned char>(MAX_WORLD_ACTORS)}); done.push_back(c.branch(0x87));
+    c.emit({0x8D,0x72,0xFF,0x6B,0xF6,static_cast<unsigned char>(sizeof(RemoteMotionMailbox)),0x81,0xC6}); c.word(address + REMOTE_MOTION_DATA_OFFSET);
+    c.emit({0x8B,0x6E,12,0x8B,0xC5,0xA8,1}); done.push_back(c.branch(0x84));
+    for (unsigned char offset : std::array<unsigned char, 2>{0, 4}) {
+        c.emit({0x8B,0x4E,offset,0x3B,0x0D}); c.word(address + FRAME_DATA_OFFSET + 16 + offset);
+        done.push_back(c.branch(0x85));
+    }
+    c.emit({0x8B,0x05}); c.word(address + FRAME_DATA_OFFSET);
+    c.emit({0x2B,0x46,8});
+    c.emit({0x3B,0x6E,12}); done.push_back(c.branch(0x85)); // Consistent epoch, deadline and flags.
+    // Snapshot translation is applied once per game frame. Do not enqueue native
+    // teleport commands beside the client's independent airborne integrator.
+    c.emit({0x85,0xC0}); const auto positionExpired = c.branch(0x89);
+    c.emit({0xF7,0xC5}); c.word(8); const auto animationOnly = c.branch(0x84);
+    for (unsigned char offset = 0; offset < 28; offset += 4)
+        c.emit({0x8B,0x56,static_cast<unsigned char>(40 + offset),0x89,0x54,0x24,offset});
+    c.emit({0x3B,0x6E,12}); done.push_back(c.branch(0x85));
+    c.emit({0x8B,0x05}); c.word(address + FRAME_DATA_OFFSET);
+    c.emit({0x2B,0x44,0x24,24,0x85,0xC0}); const auto positiveAge = c.branch(0x89);
+    c.emit({0x33,0xC0}); c.bind(positiveAge);
+    c.emit({0x83,0xF8,50}); const auto ageBounded = c.branch(0x86);
+    c.emit({0xB8}); c.word(50); c.bind(ageBounded);
+    c.emit({0xF3,0x0F,0x2A,0xC0,0xF3,0x0F,0x59,0x05});
+    c.word(address + REMOTE_MOTION_CODE_OFFSET + 0xF00);
+    for (unsigned char axis = 0; axis < 3; ++axis) {
+        c.emit({0xF3,0x0F,0x10,0x4C,0x24,static_cast<unsigned char>(12 + axis * 4),
+            0xF3,0x0F,0x59,0xC8,0xF3,0x0F,0x58,0x4C,0x24,static_cast<unsigned char>(axis * 4),
+            0xF3,0x0F,0x11,0x4C,0x24,static_cast<unsigned char>(axis * 4)});
+    }
+    c.emit({0x8B,0x4B,0x38,0x8B,0x11,0x81,0x7A,0x30}); c.word(imageBase + 0x296030);
+    const auto unsupportedController = c.branch(0x85);
+    c.emit({0x8B,0xC4,0x50}); c.call(imageBase + 0x296030);
+    c.bind(unsupportedController); c.bind(animationOnly); c.bind(positionExpired);
+    c.emit({0x8B,0x05}); c.word(address + FRAME_DATA_OFFSET); c.emit({0x2B,0x46,8});
+    c.emit({0x8B,0x4B,0x58,0x85,0xC9}); done.push_back(c.branch(0x84));
+    c.emit({0x81,0x39}); c.word(imageBase + ANIMATION_VTABLE_RVA); done.push_back(c.branch(0x85));
+    c.emit({0x83,0x79,0x30,0}); done.push_back(c.branch(0x84));
+    std::vector<size_t> newEpoch;
+    for (unsigned char offset : std::array<unsigned char, 2>{0, 4}) {
+        c.emit({0x8B,0x56,offset,0x3B,0x56,static_cast<unsigned char>(32 + offset)});
+        newEpoch.push_back(c.branch(0x85));
+    }
+    c.emit({0x3B,0x4E,16}); const auto sameIdentity = c.branch(0x84);
+    for (auto branch : newEpoch) c.bind(branch);
+    c.emit({0x89,0x4E,16,0xC7,0x46,20,0,0,0,0,0xC7,0x46,24,0,0,0,0});
+    for (unsigned char offset : std::array<unsigned char, 2>{0, 4}) {
+        c.emit({0x8B,0x56,offset,0x89,0x56,static_cast<unsigned char>(32 + offset)});
+    }
+    c.bind(sameIdentity);
+    c.emit({0x33,0xD2}); // Expired samples land; ledge falls never fabricate a jump.
+    c.emit({0x85,0xC0}); const auto expired = c.branch(0x89);
+    c.emit({0x8B,0xC5,0xD1,0xE8,0x83,0xE0,1,0x88,0x43,0x20});
+    c.emit({0x8B,0xC5,0x83,0xE0,6,0x83,0xF8,6}); const auto notJumping = c.branch(0x85);
+    c.emit({0x42});
+    const auto flagsReady = c.jump();
+    c.bind(expired); c.emit({0xC6,0x43,0x20,0});
+    c.bind(notJumping); c.bind(flagsReady); c.emit({0x88,0x53,0x22});
+    c.emit({0x8B,0x87}); c.word(offsetof(ActorMailbox, blade) + offsetof(BladeMailbox, sequence));
+    c.emit({0x3B,0x56,20}); const auto changed = c.branch(0x85);
+    c.emit({0x85,0xD2}); done.push_back(c.branch(0x84));
+    c.emit({0x3B,0x46,24}); done.push_back(c.branch(0x84));
+    // Hurt/parry/death retain their graph pose even when the physical body is airborne.
+    c.emit({0x8B,0xAF}); c.word(offsetof(ActorMailbox, blade) + offsetof(BladeMailbox, state));
+    std::vector<size_t> refresh;
+    for (auto state : AIRBORNE_ANIMATION_STATES) {
+        c.emit({0x81,0xFD}); c.word(state); refresh.push_back(c.branch(0x84));
+    }
+    done.push_back(c.jump());
+    c.bind(changed); for (auto branch : refresh) c.bind(branch);
+    c.emit({0x89,0x56,20,0x89,0x46,24,0x85,0xD2,0xB8}); c.word(address + END_JUMP_EVENT_OFFSET);
+    c.emit({0xBA}); c.word(address + JUMP_EVENT_OFFSET);
+    c.emit({0x0F,0x45,0xC2,0x50}); c.call(imageBase + ANIMATION_EVENT_RVA);
+    for (auto branch : done) c.bind(branch);
+    c.emit({0x83,0xC4,32,0x61,0xC3});
+    if (c.bytes.size() > 0xF00) throw std::runtime_error("remote motion hook overflow");
+    c.bytes.resize(0xF04);
+    const float secondsPerMillisecond = .001f;
+    std::memcpy(c.bytes.data() + 0xF00, &secondsPerMillisecond, 4);
+    return c.bytes;
+}
+Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
+                     const MovementAnimationProfile& animation, bool customLobby) {
     if (!address || address > UINT32_MAX - WORLD_PAGE_SIZE || !imageBase
         || imageBase > UINT32_MAX - LOCAL_ACTOR_RVA - 4 || !threadId)
         throw std::runtime_error("world hook outside x86 range");
@@ -113,6 +202,12 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
         c.emit({0x3D}); c.word(0x47C35000);
         missing.push_back(c.branch(0x83));
     }
+    for (auto flag : {std::pair<size_t, uint32_t>{offsetof(ActorMailbox, airborne), 0x20},
+                      std::pair<size_t, uint32_t>{offsetof(ActorMailbox, jumping), 0x22}}) {
+        c.emit({0x0F,0xB6,0x43,static_cast<unsigned char>(flag.second),0x89,0x87}); c.word(static_cast<uint32_t>(flag.first));
+    }
+    c.emit({0x8B,0x15}); c.word(ridAddress);
+    c.call(address + REMOTE_MOTION_CODE_OFFSET);
     c.emit({0xC7,0x07,1,0,0,0});
     for (auto branch : missing) c.bind(branch);
     c.emit({0x81,0xC7}); c.word(ACTOR_STRIDE); c.emit({0xFF,0x05}); c.word(ridAddress);
@@ -206,9 +301,13 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     if (c.bytes.size() > TERRAIN_CODE_OFFSET - WORLD_CODE_OFFSET) throw std::runtime_error("world hook overflow");
     Bytes page(WORLD_PAGE_SIZE, 0);
     std::memcpy(page.data() + WORLD_CODE_OFFSET, c.bytes.data(), c.bytes.size());
+    const auto remoteMotion = buildRemoteMotionHook(address, imageBase);
+    std::copy(remoteMotion.begin(), remoteMotion.end(), page.begin() + REMOTE_MOTION_CODE_OFFSET);
+    static_assert(REMOTE_MOTION_DATA_OFFSET + MAX_WORLD_ACTORS * sizeof(RemoteMotionMailbox) <= WORLD_PAGE_SIZE,
+                  "remote motion capacity");
     const auto terrain = buildTerrainHook(address, imageBase);
     std::memcpy(page.data() + TERRAIN_CODE_OFFSET, terrain.data(), terrain.size());
-    const auto sprint = buildSprintHook(address, imageBase);
+    const auto sprint = buildSprintHook(address, imageBase, dash);
     std::memcpy(page.data() + SPRINT_CODE_OFFSET, sprint.data(), sprint.size());
     const auto chatInput = buildChatInputHook(address, imageBase);
     std::memcpy(page.data() + CHAT_INPUT_CODE_OFFSET, chatInput.data(), chatInput.size());
@@ -217,11 +316,14 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
     const auto bladeSweep = buildBladeSweepHook(address, imageBase);
     std::memcpy(page.data() + BLADE_SWEEP_CODE_OFFSET, bladeSweep.data(), bladeSweep.size());
     const auto contactFrame = buildContactFrameHook(address);
-    if (contactFrame.size() > ROUND_END_CODE_OFFSET - CONTACT_CODE_OFFSET)
-        throw std::runtime_error("contact journal overlaps round end hook");
+    if (contactFrame.size() > MOVEMENT_ANIMATION_CODE_OFFSET - CONTACT_CODE_OFFSET)
+        throw std::runtime_error("contact journal overlaps movement animation hook");
     std::memcpy(page.data() + CONTACT_CODE_OFFSET, contactFrame.data(), contactFrame.size());
+    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation);
+    static_assert(MOVEMENT_ANIMATION_CODE_OFFSET + 0x1000 <= ROUND_END_CODE_OFFSET, "movement animation code capacity");
+    std::copy(movementAnimation.begin(), movementAnimation.end(), page.begin() + MOVEMENT_ANIMATION_CODE_OFFSET);
     writeSprintDirections(page);
-    const auto roundEnd = buildRoundEndHooks(address, imageBase);
+    const auto roundEnd = buildRoundEndHooks(address, imageBase, customLobby);
     static_assert(ROUND_END_CODE_OFFSET + 0x1000 <= LIVE_ACTORS_OFFSET, "round end code capacity");
     static_assert(ROUND_END_DATA_OFFSET + sizeof(RoundEndMailbox) <= WORLD_CODE_OFFSET, "round end data capacity");
     std::memcpy(page.data() + ROUND_END_CODE_OFFSET, roundEnd.data(), roundEnd.size());

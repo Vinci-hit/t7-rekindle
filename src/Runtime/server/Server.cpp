@@ -3,6 +3,7 @@
 #include "../core/Protocol.h"
 #include "../core/DiagnosticLog.h"
 #include <algorithm>
+#include <optional>
 
 namespace t7 {
 namespace {
@@ -39,6 +40,9 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
     // and wire journals outside it unless the caller explicitly supplies a
     // writable session root.
     writableRoot_ = writableRoot.empty() ? defaultWritableRoot() : writableRoot;
+    if (!config_.roomGateway) config_.roomGateway = RoomGateway::load(writableRoot_ / "custom-room.ini");
+    validateConfig(config_);
+    boundConfig_ = config_;
     try {
         runDirectory_ = std::make_unique<RunDirectory>(writableRoot_ / "data");
         run_ = runDirectory_->path();
@@ -76,13 +80,16 @@ void Server::start(const Config& config, const fs::path& root, const fs::path& w
     } catch (...) { stop(); throw; }
 }
 void Server::stop() {
-    { std::lock_guard<std::mutex> lock(mutex_); stopping_ = true; ready_ = false; ioReady_ = false; snapshot_.status = "stopping"; stateChanged_.notify_all(); }
+    { std::lock_guard<std::mutex> lock(mutex_); stopping_ = true; ready_ = false; ioReady_ = false; snapshot_.status = "stopping";
+      for (const auto& item : gateways_) item.second->requestStop();
+      stateChanged_.notify_all(); }
     if (signals_) {
         try { signals_->stop(); }
         catch (const std::exception& e) { std::lock_guard<std::mutex> lock(mutex_); snapshot_.error = e.what(); }
     }
     if (business_.joinable()) business_.join();
     if (io_.joinable()) io_.join();
+    gateways_.clear();
     for (auto& socket : listeners_) { if (socket != INVALID_SOCKET) closesocket(socket); socket = INVALID_SOCKET; }
     std::unique_ptr<Journal> journal;
     {
@@ -149,6 +156,7 @@ void Server::fail(const std::exception& error) {
 void Server::queue(Event event, TimePoint due) {
     // 调用者持有 mutex；读取 socket 前应用背压。
     event.id = nextEvent_++;
+    event.receivedAt = clock_.millis();
     QueuedEvent queued; static_cast<Event&>(queued) = std::move(event);
     queued.queuedAt = detail::Clock::now(); queued.due = due;
     auto bytes = queued.body.size() + queued.serialized.size() + 256;
@@ -170,6 +178,8 @@ void Server::command(const std::string& name) {
 ServerSnapshot Server::snapshot() {
     std::lock_guard<std::mutex> lock(mutex_); auto result = snapshot_;
     result.connections = sessions_.size(); result.queuedEvents = events_.size(); result.queuedBytes = eventBytes_;
+    for (const auto& gateway : gateways_)
+        if (sessions_.count(gateway.first)) result.serverLatencyMs = gateway.second->latencyMs();
     auto now = clock_.millis();
     for (const auto& pair : sessions_) {
         const auto& s = pair.second;
@@ -184,8 +194,11 @@ std::vector<std::string> Server::lines() {
 }
 void Server::disconnect(uint64_t id, const std::string& reason, DiagnosticLogLevel level) {
     auto it = sessions_.find(id); if (it == sessions_.end()) return;
+    const auto role = it->second.role;
     closesocket(it->second.socket); sessions_.erase(it);
-    Event event; event.type = "closed"; event.connection = id; queue(std::move(event));
+    auto gateway = gateways_.find(id);
+    if (gateway != gateways_.end()) gateway->second->requestStop();
+    Event event; event.type = "closed"; event.connection = id; event.role = role; queue(std::move(event));
     journal_->add(level, "CONTROL", id, snapshot_.version, "connection-closed: " + reason);
 }
 void Server::acceptConnections() {
@@ -197,6 +210,10 @@ void Server::acceptConnections() {
             continue;
         }
         u_long nonblocking = 1; BOOL noDelay = TRUE;
+        if (i == 1 && config_.roomGateway && std::any_of(sessions_.begin(), sessions_.end(),
+                [](const auto& item) { return item.second.role == "logic"; })) {
+            closesocket(socket); continue;
+        }
         if (ioctlsocket(socket, FIONBIO, &nonblocking) ||
             setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char*>(&noDelay), sizeof(noDelay))) {
             auto error = WSAGetLastError(); closesocket(socket);
@@ -215,6 +232,14 @@ void Server::receiveFrame(uint64_t id, Session& session, const Bytes& frame) {
         session.authenticated = true; auto reply = changeKeyFrame();
         session.queued += reply.size(); session.send.push_back({std::move(reply), 0, "native", "method3-key"});
         event.type = "authenticated";
+        if (session.role == "logic" && config_.roomGateway) {
+            gateways_.emplace(id, std::make_shared<RoomGateway>(*config_.roomGateway,
+                [this, id](Bytes body) { return receiveGateway(id, std::move(body)); },
+                [this, id] {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (!stopping_) disconnect(id, "room service disconnected or reply failed", DiagnosticLogLevel::Error);
+                }));
+        }
     } else {
         if (frame[2] == 13) throw ConnectionClosed("client CLOSE");
         auto clear = decryptMethod3(frame);
@@ -377,6 +402,25 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         }
     }
     if (nextTimers.size() > 1024) throw std::runtime_error("timer capacity exceeded");
+    if (result.playerId && snapshot_.playerId && result.playerId != snapshot_.playerId)
+        throw std::runtime_error("original client identity cannot change during a session");
+    for (const auto& motion : result.remoteMotion) {
+        if (!boundConfig_.roomGateway || motion.rid < 2 || motion.rid > MAX_WORLD_ACTORS
+                || !motion.instanceStartedAt || (motion.jumping && !motion.airborne))
+            throw std::runtime_error("transition rejected: invalid remote animation");
+    }
+    std::optional<RoomGateway::Batch> gatewayBatch;
+    if (!result.gateway.empty()) {
+        const auto gatewayConnection = result.gateway.front().connection;
+        for (const auto& effect : result.gateway) {
+            auto session = sessions_.find(effect.connection);
+            if (effect.connection != gatewayConnection || (effect.op == "ack" && effect.connection != event.connection)
+                    || session == sessions_.end() || session->second.role != "logic"
+                    || gateways_.find(effect.connection) == gateways_.end())
+                throw std::runtime_error("transition rejected: invalid room gateway target");
+        }
+        gatewayBatch.emplace(gateways_.at(gatewayConnection)->prepare(result.gateway));
+    }
     // 所有替换队列都在无异常提交边界之前分配。
     std::map<uint64_t, std::deque<PendingWrite>> nextSends;
     for (const auto& total : totals) nextSends.emplace(total.first, sessions_.at(total.first).send);
@@ -386,6 +430,7 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
         session.send.swap(replacement.second); session.queued += totals.at(replacement.first);
     }
     state.swap(result.state); timers.swap(nextTimers); snapshot_.phase.swap(phase); snapshot_.timers = timers.size();
+    if (result.playerId) snapshot_.playerId = result.playerId;
     for (const auto& change : result.timers) {
         for (auto it = events_.begin(); it != events_.end();) {
             if (it->timerId != change.id) { ++it; continue; }
@@ -393,7 +438,12 @@ void Server::commit(Transition& result, const QueuedEvent& event, const std::str
             it = events_.erase(it);
         }
     }
+    for (auto motion : result.remoteMotion) {
+        motion.expiresAt = GetTickCount64() + 500;
+        snapshot_.remoteMotion[motion.rid - 1] = motion;
+    }
     committed = true;
+    if (gatewayBatch) gatewayBatch->commit();
     auto late = event.due == TimePoint::max() ? 0.0 : elapsedMs(event.due, event.queuedAt);
     journal_->add(DiagnosticLogLevel::Debug, "COMMIT", event.connection, version, label + event.type + " command=" + std::to_string(event.command)
         + " sends=" + std::to_string(result.send.size()) + " queueMs=" + std::to_string(elapsedMs(event.queuedAt, now))
@@ -413,6 +463,7 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         { std::lock_guard<std::mutex> lock(mutex_); world = world_; }
         if (event.type != "world") world.contacts.clear();
         auto result = python.dispatch(event, state, python.context(boundConfig_, clock_.millis(now), live, world));
+        if (boundConfig_.roomGateway) result.playerId = python.playerId(result.state);
         auto callbackMs = elapsedMs(now, detail::Clock::now());
         commit(result, event, python.version(), python.phase(result.state), now, callbackMs, state, timers, committed);
     } catch (const std::exception& e) {
@@ -423,7 +474,29 @@ void Server::dispatch(PythonHost& python, const QueuedEvent& event, const std::v
         if (stopping_) return;
         { std::lock_guard<std::mutex> lock(mutex_); snapshot_.error = e.what(); if (event.type == "control") ++snapshot_.completedControls; }
         journal_->add(DiagnosticLogLevel::Error, "ERROR", event.connection, python.version(), "event=" + std::to_string(event.id) + " " + e.what());
+        if (event.type == "gateway" || (!committed && boundConfig_.roomGateway
+                && (event.command == 59 || event.role == "instance"))) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            disconnect(event.connection, "invalid custom-room transition", DiagnosticLogLevel::Error);
+        }
     }
+    if (event.type == "closed") {
+        std::shared_ptr<RoomGateway> retired;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto found = gateways_.find(event.connection);
+            if (found != gateways_.end()) { retired = std::move(found->second); gateways_.erase(found); }
+        }
+        retired.reset();
+    }
+}
+bool Server::receiveGateway(uint64_t id, Bytes body) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_ || sessions_.find(id) == sessions_.end() || events_.size() >= 1024
+            || eventBytes_ + body.size() + 256 > 8 * 1024 * 1024) return false;
+    Event event; event.type = "gateway"; event.role = "logic"; event.connection = id;
+    event.body = std::move(body); queue(std::move(event));
+    return true;
 }
 bool Server::needsWorld() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -456,8 +529,16 @@ void Server::updateWorld(const WorldSnapshot& world) {
 void Server::businessLoop() {
     try {
         PythonHost python(root_, run_ / "revisions");
-        if (!boundConfig_.clientDirectory.empty())
-            python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
+        if (!boundConfig_.clientDirectory.empty()) {
+            const auto resources = python.checkResources(boundConfig_.clientDirectory, boundConfig_.playerName);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                boundConfig_.dashAttack = resources.dashAttack;
+                boundConfig_.movementAnimation = resources.movementAnimation;
+            }
+            for (const auto& diagnostic : resources.diagnostics)
+                journal_->add(diagnostic.level, "RESOURCE", 0, python.version(), diagnostic.message);
+        }
         std::string state = python.create(python.context(boundConfig_, clock_.millis(), {}));
         Timers timers;
         {

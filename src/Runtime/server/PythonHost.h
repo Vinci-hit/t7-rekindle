@@ -3,6 +3,7 @@
 #include "../core/WorldSnapshot.h"
 #include "../core/DiagnosticLog.h"
 #include <Python.h>
+#include "RoomGateway.h"
 
 namespace t7 {
 struct Event {
@@ -11,14 +12,23 @@ struct Event {
     uint16_t command = 0;
     Bytes body;
     std::string serialized;
+    uint64_t receivedAt = 0;
 };
 struct Outgoing { uint64_t connection; uint16_t command; Bytes body; std::string reason; };
 struct TimerChange { std::string id; int64_t delay; std::string event; uint64_t connection; };
 struct Transition {
     std::string state;
+    uint32_t playerId = 0;
     std::vector<Outgoing> send;
     std::vector<TimerChange> timers;
     std::vector<DiagnosticMessage> logs;
+    std::vector<GatewayEffect> gateway;
+    std::vector<RemoteMotion> remoteMotion;
+};
+struct ResourceCheck {
+    DashAttackProfile dashAttack;
+    MovementAnimationProfile movementAnimation;
+    std::vector<DiagnosticMessage> diagnostics;
 };
 class PythonHost {
 public:
@@ -29,7 +39,7 @@ public:
     std::string context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections,
                         const WorldSnapshot& world = {});
     std::string create(const std::string& context);
-    void checkResources(const fs::path& directory, const std::string& playerName = "");
+    ResourceCheck checkResources(const fs::path& directory, const std::string& playerName = "");
     std::vector<std::string> closeRevision();
     Transition dispatch(const Event& event, const std::string& state, const std::string& context);
     std::string prepare();
@@ -37,6 +47,7 @@ public:
     std::string version();
     std::vector<std::string> diagnostics();
     std::string phase(const std::string& state);
+    uint32_t playerId(const std::string& state);
 private:
     PyObject* module_ = nullptr;
     PyObject* runtime_ = nullptr;

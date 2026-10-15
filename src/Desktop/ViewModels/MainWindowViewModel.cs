@@ -58,14 +58,18 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<IReadOnlyList<string>> readGraphicsResolutions = null,
             Func<IReadOnlyList<OutputDeviceOption>> readOutputDevices = null,
             Func<Guid, IReadOnlyList<string>> readOutputDeviceResolutions = null,
-            Func<string, Task<ClientVersionResult>> readClientVersion = null)
+            Func<string, Task<ClientVersionResult>> readClientVersion = null,
+            Func<CancellationToken, Task<LauncherAnnouncement>> fetchAnnouncement = null,
+            Func<DateTime> announcementUtcNow = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            GameServer = new GameServerViewModel(_settings.StorageDirectory);
             _inspectDirectory = inspectDirectory;
             _readClientVersion = readClientVersion ?? (path => Task.Run(() => ClientVersionService.Read(path)));
             _locateDirectory = locateDirectory ?? ((path, token) => Task.Run(() => ClientDirectoryService.Locate(path, token), token));
             _interaction = interaction;
+            InitializeAnnouncements(fetchAnnouncement, announcementUtcNow);
             _isClientRunning = isClientRunning ?? GameSettingsFileService.IsClientRunning;
             _readGraphicsResolutions = readOutputDeviceResolutions ?? (readGraphicsResolutions == null
                 ? new Func<Guid, IReadOnlyList<string>>(Direct3DEnvironment.ReadResolutions) : _ => readGraphicsResolutions());
@@ -181,6 +185,7 @@ namespace T7.Rekindle.Desktop.ViewModels
                 OnPropertyChanged(nameof(IsAboutSelected));
                 OnPropertyChanged(nameof(IsMultiplayerSelected));
                 OnPropertyChanged(nameof(IsUpdateSelected));
+                if (IsHomeSelected && _announcementChecksStarted) _ = RefreshAnnouncementAsync();
             }
         }
         public bool IsHomeSelected { get => SelectedPage == 0; set { if (value) SelectedPage = 0; } }
@@ -193,8 +198,8 @@ namespace T7.Rekindle.Desktop.ViewModels
         }
         public string LogToggleText => LogsExpanded ? "收起本次记录" : "查看本次记录";
         public bool IsBusy => _operationActive || (_snapshot.State != SessionState.Idle && _snapshot.State != SessionState.Failed);
-        public bool AreSessionFieldsLocked => _operationActive ? _activeKind != OperationKind.Check
-            : IsBusy && _snapshot.State != SessionState.Checking;
+        public bool AreSessionFieldsLocked => (_operationActive ? _activeKind != OperationKind.Check
+            : IsBusy && _snapshot.State != SessionState.Checking);
         public bool CanClose => !IsBusy;
         public bool CanStart => !IsBusy && !_isValidating && !_directoryHasDraft && _directoryResult.IsValid && !HasPlayerNameError && !_hasSaveError;
         public bool CanCancel => _operationCancellation != null && !_operationCancellation.IsCancellationRequested
@@ -205,6 +210,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         public string StopButtonText => _snapshot.State == SessionState.FailedCleaning ? "重试清理" : "结束游戏";
         public string CancelButtonText => _activeKind == OperationKind.Check ? "取消检查" : "取消启动";
         public AboutViewModel About { get; }
+        public GameServerViewModel GameServer { get; }
         public AccountViewModel Account { get; } = AccountViewModel.CreateDefault();
         internal Task ValidationTask { get; private set; }
         public RelayCommand BrowseCommand { get; }
@@ -330,6 +336,9 @@ namespace T7.Rekindle.Desktop.ViewModels
         {
             if (_disposed) return;
             _disposed = true;
+            _announcementCancellation.Cancel();
+            _announcementApi?.Dispose();
+            _announcementCancellation.Dispose();
             _poller.Stop();
             About.PropertyChanged -= OnUpdateActivityChanged;
             About.Dispose();

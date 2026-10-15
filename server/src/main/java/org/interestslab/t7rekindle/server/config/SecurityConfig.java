@@ -40,6 +40,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(rules -> rules.dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/sessions", "/api/v1/auth/qq/sessions").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/announcements/latest").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint((request, response, error) -> errors.write(response, Problem.unauthorized()))
@@ -88,8 +89,10 @@ public class SecurityConfig {
         @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                 FilterChain chain) throws ServletException, IOException {
             response.setHeader("Cache-Control", "no-store");
-            if (!(request.getMethod().equals("POST") && List.of("/api/v1/auth/sessions", "/api/v1/auth/qq/sessions")
-                    .contains(request.getRequestURI()))) {
+            boolean publicRequest = request.getMethod().equals("POST")
+                    && List.of("/api/v1/auth/sessions", "/api/v1/auth/qq/sessions").contains(request.getRequestURI())
+                    || request.getMethod().equals("GET") && request.getRequestURI().equals("/api/v1/announcements/latest");
+            if (!publicRequest) {
                 try {
                     String authorization = request.getHeader("Authorization");
                     if (authorization == null || !authorization.startsWith("Bearer ")) throw Problem.unauthorized();

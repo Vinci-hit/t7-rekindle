@@ -116,7 +116,7 @@ def test_berserker_pursuit_progress_still_has_a_hard_cap(multi):
     for elapsed, distance in ((400, 9.5), (2000, 9), (2000, 8.5), (1500, 8)):
         world = arena(multi, {2: (0, 0, .2), 1: (distance, 0, .2), 12: (1.5, 0, .2)}, elapsed=elapsed)
         assert sense(multi, world)['targetId'] == 1
-    world = arena(multi, {2: (0, 0, .2), 1: (8, 0, .2), 12: (1.5, 0, .2)}, elapsed=300)
+    world = arena(multi, {2: (0, 0, .2), 1: (8, 0, .2), 12: (1.5, 0, .2)}, elapsed=bot_roaming.PERCEPTION_MS)
     assert sense(multi, world)['targetId'] == 12
 
 

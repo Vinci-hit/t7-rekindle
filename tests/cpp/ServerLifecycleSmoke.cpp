@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <thread>
 #include <utility>
 
@@ -311,6 +312,61 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 4 && (std::wstring(argv[1]) == L"--room-gateway" || std::wstring(argv[1]) == L"--room-scene")) {
+        WSADATA winsock{};
+        if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return 3;
+        int result = 0;
+        try {
+            const bool scene = std::wstring(argv[1]) == L"--room-scene";
+            t7::Config config; config.runtimeMovement = scene; config.playerName = "Player";
+            if (scene) config.clientDirectory = t7::fs::path(argv[2]) / "synthetic-client" / "Bin";
+            t7::Server server; server.start(config, argv[2], argv[3]);
+            std::cout << "READY " << server.boundConfig().ports[1];
+            if (scene) std::cout << ' ' << server.boundConfig().ports[2];
+            std::cout << std::endl;
+            std::string command;
+            while (std::getline(std::cin, command) && command != "stop") {
+                if (!scene) throw std::runtime_error("world sampling requires the scene fixture");
+                std::istringstream input(command);
+                std::string kind;
+                t7::WorldSnapshot world;
+                auto& actor = world.actors[0];
+                if (!(input >> kind >> world.instanceStartedAt >> actor.position[0]
+                        >> actor.position[1] >> actor.position[2] >> actor.heading)
+                        || (kind != "world" && kind != "contact" && kind != "weapon-contact"))
+                    throw std::runtime_error("invalid synthetic world sample");
+                const auto deadline = GetTickCount64() + 2000;
+                while (!server.needsWorld() && GetTickCount64() < deadline) Sleep(1);
+                world.ready = actor.ready = true; world.sampledAt = GetTickCount64();
+                if (kind != "world") {
+                    t7::BladeContactEvent event;
+                    event.weaponContact = kind == "weapon-contact";
+                    if (!(input >> event.sequence >> event.state >> event.hit.targetId))
+                        throw std::runtime_error("invalid synthetic blade contact");
+                    actor.entity = event.entity = 101; event.targetEntity = 102;
+                    event.actorId = 1; event.phaseAt = world.sampledAt - 50;
+                    event.occurredAt = static_cast<double>(world.sampledAt);
+                    event.instanceStartedAt = world.instanceStartedAt;
+                    event.sourcePosition = actor.position; event.sourceHeading = actor.heading;
+                    event.targetPosition = {actor.position[0] + 1, actor.position[1], actor.position[2]};
+                    event.targetHeading = 180;
+                    auto& contact = event.hit.contact;
+                    contact.ready = contact.hit = true; contact.material = 4;
+                    contact.position = {actor.position[0] + .6f, actor.position[1], actor.position[2] + 1};
+                    contact.normal = {-1,0,0}; contact.direction = {1,0,0};
+                    world.contactsReady = true; world.contactFrames = 1;
+                    world.contactBatchId = static_cast<uint32_t>(world.sampledAt);
+                    world.contacts.push_back(event);
+                }
+                server.updateWorld(world);
+            }
+            server.stop();
+            std::cout << "STOPPED" << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n'; result = 1;
+        }
+        WSACleanup(); return result;
+    }
     const auto dispatched = t7::detail::TimePoint{};
     const auto committed = dispatched + std::chrono::milliseconds(231);
     for (const auto* id : {"1:battle-action-phase", "1:bot-action-phase-20", "1:bot-release", "1:combat-hurt-2"}) {
@@ -375,6 +431,14 @@ int wmain(int argc, wchar_t** argv) {
             t7::PythonHost first(argv[1], ownerRoot);
             t7::Config worldConfig;
             worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client" / "Bin";
+            const auto resources = first.checkResources(worldConfig.clientDirectory);
+            if (resources.dashAttack.enabled || resources.dashAttack.weaponId != 1030411 || resources.diagnostics.empty())
+                throw std::runtime_error("missing dash resources did not produce a disabled profile with diagnostics");
+            auto& dash = worldConfig.dashAttack;
+            dash.enabled = true; dash.weaponId = 1030411; dash.weaponCategory = 32;
+            dash.durationMs = 1709; dash.moveMs = 1117; dash.speedMilli = 3210;
+            dash.contactStartMs = 100; dash.contactEndMs = 1300; dash.reboundMs = 777;
+            dash.durationSource = "table";
             t7::WorldSnapshot world;
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
@@ -400,6 +464,12 @@ int wmain(int argc, wchar_t** argv) {
             contactEvent.occurredAt = 1187.5; contactEvent.targetState = 223; contactEvent.targetEntity = 456;
             world.contacts.push_back(contactEvent);
             const auto context = first.context(worldConfig, 1250, {1}, world);
+            for (const char* field : {"\"dashAttack\":[\"dict\",", "\"enabled\":[\"bool\",true]",
+                "\"weaponId\":[\"int\",1030411]", "\"weaponCategory\":[\"int\",32]",
+                "\"durationMs\":[\"int\",1709]", "\"moveMs\":[\"int\",1117]", "\"speedMilli\":[\"int\",3210]",
+                "\"contactStartMs\":[\"int\",100]", "\"contactEndMs\":[\"int\",1300]", "\"reboundMs\":[\"int\",777]",
+                "\"durationSource\":[\"str\",\"table\"]", "\"animationPath\":[\"str\",\"\"]"})
+                if (context.find(field) == std::string::npos) throw std::runtime_error("business context lost the startup dash profile");
             for (const char* field : {"\"contactJournal\":[\"dict\",", "\"batchId\":[\"int\",7]",
                 "\"frames\":[\"int\",17]", "\"occurredAt\":[\"float\",1187.5]", "\"phaseAt\":[\"int\",900]",
                 "\"entity\":[\"int\",123]", "\"targetEntity\":[\"int\",456]", "\"targetState\":[\"int\",223]"})

@@ -14,6 +14,8 @@ VISION_GET_VISION_LIST_REQUEST = 0x0005
 VISION_LIST_RESPONSE = 0x0006
 VISION_GET_OBJECTS_REQUEST = 0x0007
 VISION_OBJECT_ACTOR = 0x00000001
+VISION_OBJECT_MONSTER = 0x00000003
+VISION_SIMPLE_ADD_EVENT = 0x0009
 
 INSTANCE_START_PATTERN_PRACTICE = 0x0000000E
 FIXED_LOCAL_USER_ID = 10000
@@ -227,8 +229,8 @@ def encode_vision_del_event(
     + svr_time:u64.
     """
 
-    if object_type != VISION_OBJECT_ACTOR:
-        raise ValueError(f"object_type must be ACTOR(1), got {object_type}")
+    if object_type not in (VISION_OBJECT_ACTOR, VISION_OBJECT_MONSTER):
+        raise ValueError(f"object_type must be ACTOR(1) or MONSTER(3), got {object_type}")
     try:
         return struct.pack(
             ">HiiQQ",
@@ -240,3 +242,43 @@ def encode_vision_del_event(
         )
     except struct.error as error:
         raise ValueError("vision del field is outside its TDR wire range") from error
+
+
+def encode_simple_monster_add_event(
+    *,
+    rid: int,
+    resource_id: int,
+    hero_id: int,
+    weapon_id: int,
+    position: tuple[float, float, float],
+    direction: tuple[float, float, float],
+    camp: int,
+    server_time_ms: int,
+    display_name: bytes = b"zombie",
+    instance_id: int = 1,
+    filter_group: int = 0,
+    subsystem_group: int = 0,
+) -> bytes:
+    """Encode one VISION SIMPLE_ADD_EVENT containing a monster object."""
+    if not isinstance(display_name, bytes) or b"\0" in display_name or len(display_name) >= 32:
+        raise ValueError("monster display name must fit its 32-byte TDR storage")
+    for vector in (position, direction):
+        if (not isinstance(vector, tuple) or len(vector) != 3
+                or not all(isinstance(value, (int, float)) and math.isfinite(value) for value in vector)):
+            raise ValueError("monster vectors must contain three finite values")
+    try:
+        monster = b"".join((
+            struct.pack(">Q", rid),
+            _encode_tdr_string(display_name, maximum_size=32, field_name="monster display name"),
+            struct.pack(">Hii", instance_id, resource_id, hero_id),
+            struct.pack(">i", weapon_id),
+            struct.pack(">ffffff", *position, *direction),
+            struct.pack(">iii", camp, filter_group, subsystem_group),
+        ))
+        return b"".join((
+            struct.pack(">Hii", VISION_SIMPLE_ADD_EVENT, 1, VISION_OBJECT_MONSTER),
+            monster,
+            struct.pack(">I", server_time_ms),
+        ))
+    except struct.error as error:
+        raise ValueError("monster vision field is outside its TDR wire range") from error

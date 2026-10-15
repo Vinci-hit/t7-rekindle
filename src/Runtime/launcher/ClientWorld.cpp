@@ -2,6 +2,7 @@
 #include "RemoteImage.h"
 #include "RoundEndHookCode.h"
 #include <cmath>
+#include <algorithm>
 #include <cstring>
 
 namespace t7 {
@@ -39,11 +40,13 @@ TerrainContact terrainContact(const TerrainMailbox& raw) {
 }
 BladeTrace bladeTrace(const BladeMailbox& raw) {
     BladeTrace value;
-    if (raw.poseReady != 1 || raw.traceReady != 1 || raw.spanMs > 100
+    if (raw.poseReady != 1
         || !validPosition(raw.base) || !validPosition(raw.tip)) return value;
     const auto length = std::hypot(raw.tip[0] - raw.base[0], raw.tip[1] - raw.base[1], raw.tip[2] - raw.base[2]);
     if (length < .01f || length > 8.f) return value;
-    value.ready = true; value.base = raw.base; value.tip = raw.tip;
+    value.poseReady = true; value.base = raw.base; value.tip = raw.tip;
+    if (raw.traceReady != 1 || raw.spanMs > 100) return value;
+    value.ready = true;
     value.length = length; value.spanMs = raw.spanMs;
     for (size_t i = 0; i < raw.contacts.size(); ++i) {
         const auto& source = raw.contacts[i];
@@ -52,7 +55,8 @@ BladeTrace bladeTrace(const BladeMailbox& raw) {
         hit.contact = terrainContact(source.contact);
         if (!hit.contact.ready || !hit.contact.hit || !std::isfinite(source.time) || !std::isfinite(source.along)
             || source.time < 0 || source.time > 1 || source.along < 0 || source.along > 1) return {};
-        hit.targetId = static_cast<uint32_t>(i); hit.time = source.time; hit.along = source.along;
+        hit.targetId = i <= MAX_WORLD_ACTORS ? static_cast<uint32_t>(i) : 0;
+        hit.time = source.time; hit.along = source.along;
     }
     return value;
 }
@@ -65,6 +69,44 @@ void ClientWorld::clear() {
     if (process_ && WaitForSingleObject(process_, 0) != WAIT_OBJECT_0)
         throw std::runtime_error("world bridge cleanup requires terminated owned client");
     process_ = nullptr; remote_ = 0; requestedAt_ = 0; pending_ = false; targets_ = {}; targetMasks_ = {};
+    parryContacts_.clear();
+    remotePublished_ = {}; remoteVersion_ = 0;
+}
+void ClientWorld::publishRemoteMotion(const std::array<RemoteMotion, MAX_WORLD_ACTORS>& motion) {
+    if (!process_) return;
+    for (size_t i = 1; i < motion.size(); ++i) {
+        const auto& source = motion[i];
+        if (!source.rid || (source.expiresAt == remotePublished_[i].expiresAt
+                && source.instanceStartedAt == remotePublished_[i].instanceStartedAt
+                && source.airborne == remotePublished_[i].airborne && source.jumping == remotePublished_[i].jumping
+                && source.ownsPosition == remotePublished_[i].ownsPosition
+                && source.position == remotePublished_[i].position && source.velocity == remotePublished_[i].velocity)) continue;
+        if (source.rid != i + 1 || !source.instanceStartedAt || (source.jumping && !source.airborne))
+            throw std::runtime_error("invalid remote animation publication");
+        const auto slot = remote_ + REMOTE_MOTION_DATA_OFFSET + static_cast<uint32_t>(i * sizeof(RemoteMotionMailbox));
+        RemoteMotionMailbox value;
+        value.epoch = source.instanceStartedAt;
+        value.expires = static_cast<uint32_t>(source.expiresAt);
+        if (source.ownsPosition && (!validPosition(source.position) || !validPosition(source.velocity)
+                || std::any_of(source.velocity.begin(), source.velocity.end(), [](float v) { return std::abs(v) > 40; })))
+            throw std::runtime_error("invalid remote motion position");
+        value.position = source.position; value.velocity = source.velocity;
+        value.sampledAt = static_cast<uint32_t>(GetTickCount64());
+        value.flags = ((++remoteVersion_ & 0x0FFFFFFFu) << 4) | 1u | (source.airborne ? 2u : 0u)
+            | (source.jumping ? 4u : 0u) | (source.ownsPosition ? 8u : 0u);
+        // Invalidate before publishing; native cache fields are exclusively game-thread owned.
+        uint32_t flags = 0;
+        SIZE_T actual = 0;
+        auto write = [&](uint32_t offset, const void* data, SIZE_T count) {
+            if (!WriteProcessMemory(process_, reinterpret_cast<void*>(static_cast<uintptr_t>(slot + offset)),
+                    data, count, &actual) || actual != count) throw std::runtime_error(errorText("remote animation publication"));
+        };
+        write(12, &flags, 4);
+        write(0, &value, 12);
+        write(40, &value.position, 28);
+        write(12, &value.flags, 4);
+        remotePublished_[i] = source;
+    }
 }
 void ClientWorld::request() {
     const uint32_t command = 1;
@@ -106,12 +148,45 @@ bool ClientWorld::poll(WorldSnapshot& value) {
     value.contactsReady = true; // Capability is independent of pose freshness or a temporarily missing scene.
     value.contactFrames = frame.frames; value.droppedContacts = frame.dropped;
     value.contactBatchId = frame.batchId;
+    if (value.droppedContacts || raw.ready != 1 || now - value.sampledAt > 250) parryContacts_.clear();
+    WorldSnapshot retainedPose;
+    uint32_t poseFrame = 0;
+    auto flushPose = [&] {
+        if (!retainedPose.ready) return;
+        parryContacts_.append(retainedPose);
+        for (auto& contact : retainedPose.contacts) {
+            if (value.contacts.size() < MAX_FRAME_CONTACTS) value.contacts.push_back(std::move(contact));
+            else ++value.droppedContacts;
+        }
+        retainedPose = {};
+    };
     if (raw.ready == 1 && raw.instanceStartedAt != 0 && frame.count) {
         const auto events = readClientMemory(process_, remote_ + CONTACTS_DATA_OFFSET, frame.count * sizeof(ContactEventMailbox));
         for (uint32_t i = 0; i < frame.count; ++i) {
             ContactEventMailbox source;
             std::memcpy(&source, events.data() + i * sizeof(source), sizeof(source));
             if (source.epoch != raw.instanceStartedAt) continue;
+            if (source.targetId == CONTACT_POSE_TARGET) {
+                if (source.actorId < 1 || source.actorId > MAX_WORLD_ACTORS
+                        || !validPosition(source.sourcePosition) || !std::isfinite(source.sourceYaw)
+                        || !validPosition(source.hit.contact.from) || !validPosition(source.hit.contact.to))
+                    throw std::runtime_error("invalid contact frame blade pose");
+                const auto at = sampleTime(source.tick, now);
+                if (!retainedPose.ready || poseFrame != source.targetEntity) {
+                    flushPose();
+                    retainedPose.ready = retainedPose.contactsReady = true;
+                    retainedPose.instanceStartedAt = source.epoch; retainedPose.sampledAt = at;
+                    poseFrame = source.targetEntity;
+                }
+                auto& actor = retainedPose.actors[source.actorId - 1];
+                actor.ready = true; actor.entity = source.entity;
+                actor.state = source.state; actor.sequence = source.sequence;
+                actor.phaseAt = sampleTime(source.phaseTick, now);
+                actor.position = source.sourcePosition; actor.heading = degrees(source.sourceYaw);
+                actor.blade.poseReady = true;
+                actor.blade.base = source.hit.contact.from; actor.blade.tip = source.hit.contact.to;
+                continue;
+            }
             const auto contact = terrainContact(source.hit.contact);
             if (!contact.hit || source.actorId < 1 || source.actorId > MAX_WORLD_ACTORS
                 || source.targetId > MAX_WORLD_ACTORS || source.actorId == source.targetId || source.spanMs > 100
@@ -129,7 +204,8 @@ bool ClientWorld::poll(WorldSnapshot& value) {
             event.occurredAt = static_cast<double>(sampleTime(source.tick, now)) - source.spanMs * (1. - source.hit.time);
             event.sourcePosition = source.sourcePosition; event.targetPosition = source.targetPosition;
             event.sourceHeading = degrees(source.sourceYaw); event.targetHeading = degrees(source.targetYaw);
-            value.contacts.push_back(event);
+            if (value.contacts.size() < MAX_FRAME_CONTACTS) value.contacts.push_back(event);
+            else ++value.droppedContacts;
         }
     }
     const auto actorBytes = readClientMemory(process_, remote_ + ACTORS_DATA_OFFSET,
@@ -145,12 +221,15 @@ bool ClientWorld::poll(WorldSnapshot& value) {
         actor.entity = source.blade.actorEntity; actor.state = source.blade.state; actor.sequence = source.blade.sequence;
         actor.phaseAt = sampleTime(source.blade.phaseTick, now);
         if (!actor.ready) continue;
+        actor.airborne = source.airborne != 0; actor.jumping = actor.airborne && source.jumping != 0;
         actor.position = source.position; actor.heading = heading; actor.targetId = source.targetId;
         actor.blade = bladeTrace(source.blade);
         for (size_t probe = 0; probe < 2; ++probe) actor.terrain[probe] = terrainContact(source.terrain[probe]);
         for (size_t target = 0; target < entries.size(); ++target)
             if (entries[target].ready == 1) actor.targetTerrain[target] = terrainContact(source.targetTerrain[target]);
     }
+    flushPose();
+    if (!value.ready) parryContacts_.clear();
     // Existing single-bot rounds still consume the pair fields after a hot reload.
     value.player = value.actors[0].position; value.bot = value.actors[1].position;
     value.playerHeading = value.actors[0].heading; value.botHeading = value.actors[1].heading;

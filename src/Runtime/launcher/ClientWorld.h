@@ -1,6 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 #include "../core/WorldSnapshot.h"
+#include "BladeParryContacts.h"
 
 namespace t7 {
 struct TerrainMailbox {
@@ -32,7 +33,7 @@ struct BladeMailbox {
     uint32_t traceReady = 0, spanMs = 0, previousTick = 0, previousWeapon = 0;
     uint64_t previousEpoch = 0;
     std::array<float, 3> previousBase{}, previousTip{};
-    std::array<BladeContactMailbox, MAX_WORLD_ACTORS + 1> contacts{};
+    std::array<BladeContactMailbox, MAX_BLADE_CONTACTS> contacts{};
     uint32_t actorEntity = 0, state = 0, sequence = 0, phaseTick = 0;
     uint32_t previousSequence = 0, previousEntity = 0;
 };
@@ -44,10 +45,11 @@ struct ActorMailbox {
     uint32_t targetMask = 0;
     std::array<TerrainMailbox, MAX_WORLD_ACTORS> targetTerrain{};
     BladeMailbox blade{};
+    uint32_t airborne = 0, jumping = 0;
 };
 static_assert(offsetof(ActorMailbox, targetTerrain) == 124, "actor mailbox layout");
 constexpr uint32_t ACTORS_DATA_OFFSET = 0x9000;
-constexpr uint32_t WORLD_CODE_OFFSET = 0x1000, WORLD_PAGE_SIZE = 0x270000;
+constexpr uint32_t WORLD_CODE_OFFSET = 0x1000, WORLD_PAGE_SIZE = 0x272000;
 constexpr uint32_t TERRAIN_CODE_OFFSET = 0x2000;
 constexpr uint32_t BLADE_POSE_CODE_OFFSET = 0x5000, BLADE_SWEEP_CODE_OFFSET = 0x6000;
 constexpr uint32_t BLADE_DATA_OFFSET = 0x18000;
@@ -55,6 +57,7 @@ constexpr uint32_t TERRAIN_TARGET_ONLY_OFFSET = 244;
 constexpr uint32_t FRAME_DATA_OFFSET = 0x19000, CONTACT_CODE_OFFSET = 0x1A000;
 constexpr uint32_t LIVE_ACTORS_OFFSET = 0x20000;
 constexpr uint32_t LIVE_CONTACTS_OFFSET = 0x30000, CONTACTS_DATA_OFFSET = 0x150000;
+constexpr uint32_t CONTACT_POSE_TARGET = UINT32_MAX;
 constexpr uint32_t MAX_FRAME_CONTACTS = 8192, GET_TICK_COUNT_IAT_RVA = 0x16F6228;
 struct ContactFrameMailbox {
     uint32_t tick = 0, count = 0, dropped = 0, frames = 0;
@@ -76,10 +79,23 @@ static_assert(LIVE_ACTORS_OFFSET + MAX_WORLD_ACTORS * sizeof(ActorMailbox) + 4 <
 static_assert(LIVE_CONTACTS_OFFSET + MAX_FRAME_CONTACTS * sizeof(ContactEventMailbox) <= CONTACTS_DATA_OFFSET, "live contact capacity");
 static_assert(CONTACTS_DATA_OFFSET + MAX_FRAME_CONTACTS * sizeof(ContactEventMailbox) <= WORLD_PAGE_SIZE, "contact response capacity");
 static_assert(ACTORS_DATA_OFFSET + MAX_WORLD_ACTORS * sizeof(ActorMailbox) + 4 <= BLADE_DATA_OFFSET, "world mailbox capacity");
+constexpr uint32_t REMOTE_MOTION_CODE_OFFSET = 0x270000, REMOTE_MOTION_DATA_OFFSET = 0x271000;
+struct RemoteMotionMailbox {
+    uint64_t epoch = 0;
+    uint32_t expires = 0, flags = 0;
+    uint32_t animation = 0, jumping = 0, sequence = 0;
+    uint64_t animationEpoch = 0;
+    std::array<float, 3> position{}, velocity{};
+    uint32_t sampledAt = 0;
+};
+static_assert(sizeof(RemoteMotionMailbox) == 72 && offsetof(RemoteMotionMailbox, position) == 40
+    && offsetof(RemoteMotionMailbox, sampledAt) == 64, "remote motion mailbox layout");
+Bytes buildRemoteMotionHook(uint32_t address, uint32_t imageBase);
 void verifyWorldFunctions(HANDLE process, uint32_t imageBase);
 void verifyTerrainFunctions(HANDLE process, uint32_t imageBase);
 Bytes buildTerrainHook(uint32_t address, uint32_t imageBase);
-Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId);
+Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash = {},
+                     const MovementAnimationProfile& animation = {}, bool customLobby = false);
 Bytes buildBladePoseHook(uint32_t address, uint32_t imageBase);
 Bytes buildBladeSweepHook(uint32_t address, uint32_t imageBase);
 Bytes buildContactFrameHook(uint32_t address);
@@ -89,6 +105,7 @@ public:
     void attach(HANDLE process, uint32_t address);
     void clear();
     bool poll(WorldSnapshot& value);
+    void publishRemoteMotion(const std::array<RemoteMotion, MAX_WORLD_ACTORS>& motion);
 private:
     void request();
     HANDLE process_ = nullptr;
@@ -97,5 +114,8 @@ private:
     bool pending_ = false;
     std::array<uint32_t, MAX_WORLD_ACTORS> targets_{};
     std::array<uint32_t, MAX_WORLD_ACTORS> targetMasks_{};
+    BladeParryContacts parryContacts_;
+    std::array<RemoteMotion, MAX_WORLD_ACTORS> remotePublished_{};
+    uint32_t remoteVersion_ = 0;
 };
 }

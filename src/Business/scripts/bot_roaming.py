@@ -1,9 +1,9 @@
 """Profile-based perception, last-seen search and independent lane patrols."""
 import math
 
-from . import actors, bot_profiles, bot_tactics, spawn_navigation
+from . import actors, bot_tactics, spawn_navigation
 
-PERCEPTION_MS, SEARCH_MS, SEARCH_SCAN_MS = 300, 6000, 2000
+PERCEPTION_MS, SEARCH_MS, SEARCH_SCAN_MS = 500, 6000, 2000
 SIGHT_RANGE = {'aggressive': 18., 'balanced': 16., 'defensive': 14., 'berserker': math.inf}
 NEAR_RANGE, VIEW_COS = 3., math.cos(math.radians(110))
 ENGAGED_NEAR_RANGE, DISENGAGE_MARGIN = 6., 2.
@@ -105,7 +105,7 @@ def sense(flow, nav, snapshot, actorId):
             pair = actors.pair(snapshot, actorId, current)
             remember(flow, actorId, current, pair['player'])
             return pair
-    value['senseAt'] = flow.now + bot_profiles.vary(flow, actorId, PERCEPTION_MS, .8, 1.2)
+    value['senseAt'] = flow.now + PERCEPTION_MS
     candidates = actors.enemies(flow, actorId, snapshot)
     visibleIds = [rid for rid in candidates if (retained if rid == tracked else
                   perceived(actors.pose(snapshot, rid)))]
@@ -179,8 +179,7 @@ def goal(flow, nav, actorId):
     current = value.get('roamGoal')
     if current is not None and math.dist(origin[:2], current[:2]) <= ARRIVAL_RADIUS:
         value.pop('roamGoal')
-        value['roamWaitUntil'] = flow.now + 250 + randomStep(value) % 650
-        return None, 'patrol-wait'
+        current = None
     if current is not None:
         return current, 'advance' if value.get('roamCount', 0) == 1 else 'patrol'
     count = value.get('roamCount', 0)

@@ -1,6 +1,8 @@
 #include "PythonHost.h"
 #include <memory>
 #include <mutex>
+#include <cmath>
+#include <limits>
 
 namespace t7 {
 namespace {
@@ -120,6 +122,7 @@ Object contactJournal(const WorldSnapshot& world) {
         put(value.get(), "targetPhaseAt", PyLong_FromUnsignedLongLong(event.targetPhaseAt));
         put(value.get(), "occurredAt", PyFloat_FromDouble(event.occurredAt));
         put(value.get(), "along", PyFloat_FromDouble(event.hit.along));
+        put(value.get(), "weaponContact", PyBool_FromLong(event.weaponContact));
         put(value.get(), "sourcePosition", Py_BuildValue("[fff]", event.sourcePosition[0], event.sourcePosition[1], event.sourcePosition[2]));
         put(value.get(), "targetPosition", Py_BuildValue("[fff]", event.targetPosition[0], event.targetPosition[1], event.targetPosition[2]));
         put(value.get(), "sourceHeading", PyFloat_FromDouble(event.sourceHeading));
@@ -134,6 +137,75 @@ PyObject* field(PyObject* object, const char* key) {
     PyObject* value = PyDict_GetItemString(object, key);
     if (!value) throw std::runtime_error(std::string("missing field: ") + key);
     return value;
+}
+Object dashValue(const DashAttackProfile& profile) {
+    auto value = checked(PyDict_New());
+    put(value.get(), "enabled", PyBool_FromLong(profile.enabled ? 1 : 0));
+    put(value.get(), "weaponId", PyLong_FromLong(profile.weaponId));
+    put(value.get(), "weaponCategory", PyLong_FromLong(profile.weaponCategory));
+    for (const auto& entry : std::initializer_list<std::pair<const char*, uint32_t>>{
+        {"durationMs", profile.durationMs}, {"moveMs", profile.moveMs}, {"speedMilli", profile.speedMilli},
+        {"contactStartMs", profile.contactStartMs}, {"contactEndMs", profile.contactEndMs}, {"reboundMs", profile.reboundMs}})
+        put(value.get(), entry.first, PyLong_FromUnsignedLong(entry.second));
+    put(value.get(), "durationSource", PyUnicode_FromString(profile.durationSource.c_str()));
+    put(value.get(), "animationPath", PyUnicode_FromString(profile.animationPath.c_str()));
+    return value;
+}
+DashAttackProfile readDash(PyObject* value) {
+    auto integer = [&](const char* key, long minimum, long maximum) {
+        auto item = field(value, key);
+        if (!PyLong_CheckExact(item)) throw std::runtime_error(std::string("invalid dash integer: ") + key);
+        const auto number = PyLong_AsLong(item);
+        if (PyErr_Occurred()) throw std::runtime_error(error());
+        if (number < minimum || number > maximum) throw std::runtime_error(std::string("dash integer out of range: ") + key);
+        return static_cast<int32_t>(number);
+    };
+    DashAttackProfile profile;
+    auto enabled = field(value, "enabled");
+    if (!PyBool_Check(enabled)) throw std::runtime_error("invalid dash enabled flag");
+    profile.enabled = enabled == Py_True;
+    profile.weaponId = integer("weaponId", 0, INT32_MAX);
+    profile.weaponCategory = integer("weaponCategory", -1, 32767);
+    profile.durationMs = static_cast<uint32_t>(integer("durationMs", 0, 65535));
+    profile.moveMs = static_cast<uint32_t>(integer("moveMs", 0, 65535));
+    profile.speedMilli = static_cast<uint32_t>(integer("speedMilli", 0, INT32_MAX));
+    profile.contactStartMs = static_cast<uint32_t>(integer("contactStartMs", 0, 65535));
+    profile.contactEndMs = static_cast<uint32_t>(integer("contactEndMs", 0, 65535));
+    profile.reboundMs = static_cast<uint32_t>(integer("reboundMs", 0, 65535));
+    profile.durationSource = string(field(value, "durationSource"));
+    profile.animationPath = string(field(value, "animationPath"));
+    if (profile.durationSource != "table" && profile.durationSource != "animation" && profile.durationSource != "unavailable")
+        throw std::runtime_error("invalid dash duration source");
+    if (profile.enabled && (profile.weaponId == 0 || profile.weaponCategory < 0 || profile.durationSource == "unavailable"
+        || profile.durationMs == 0 || profile.reboundMs == 0 || profile.moveMs > profile.durationMs
+        || profile.contactStartMs > profile.contactEndMs || profile.contactEndMs > profile.durationMs))
+        throw std::runtime_error("invalid dash timeline");
+    return profile;
+}
+MovementAnimationProfile readMovementAnimation(PyObject* value) {
+    MovementAnimationProfile profile;
+    auto enabled = field(value, "enabled");
+    if (!PyBool_Check(enabled)) throw std::runtime_error("invalid movement animation enabled flag");
+    profile.enabled = enabled == Py_True;
+    auto weapon = field(value, "weaponId");
+    if (!PyLong_CheckExact(weapon)) throw std::runtime_error("invalid movement animation weapon");
+    const auto weaponId = PyLong_AsLong(weapon);
+    if (PyErr_Occurred()) throw std::runtime_error(error());
+    if (weaponId <= 0 || weaponId > INT32_MAX) throw std::runtime_error("invalid movement animation weapon");
+    profile.weaponId = static_cast<int32_t>(weaponId);
+    auto speed = [&](const char* key) {
+        auto item = field(value, key);
+        if (!PyFloat_CheckExact(item)) throw std::runtime_error("invalid movement animation coordinate");
+        const auto number = PyFloat_AsDouble(item);
+        if (!std::isfinite(number) || number < 0 || number > std::numeric_limits<float>::max()
+            || (profile.enabled && number <= 0)) throw std::runtime_error("invalid movement animation coordinate");
+        return static_cast<float>(number);
+    };
+    profile.forwardSlow = speed("forwardSlow"); profile.lateralSlow = speed("lateralSlow");
+    profile.backwardSlow = speed("backwardSlow"); profile.forwardSprint = speed("forwardSprint");
+    if (profile.enabled && (profile.forwardSprint <= profile.forwardSlow || profile.forwardSprint <= profile.lateralSlow))
+        throw std::runtime_error("invalid movement animation gait order");
+    return profile;
 }
 PyObject* tupleField(PyObject* tuple, Py_ssize_t index) {
     auto value = PyTuple_GetItem(tuple, index);
@@ -198,7 +270,12 @@ std::string PythonHost::context(const Config& config, uint64_t now, const std::v
     put(dict.get(), "instancePort", PyLong_FromLong(config.ports[2]));
     put(dict.get(), "playerName", PyUnicode_FromString(config.playerName.c_str()));
     put(dict.get(), "runtimeMovement", PyBool_FromLong(config.runtimeMovement ? 1 : 0));
+    if (config.roomGateway) {
+        auto gateway = checked(Py_BuildValue("{s:s}", "accountId", config.roomGateway->accountId.c_str()));
+        put(dict.get(), "roomGateway", gateway.release());
+    }
     put(dict.get(), "clientDirectory", PyUnicode_FromWideChar(config.clientDirectory.c_str(), -1));
+    put(dict.get(), "dashAttack", dashValue(config.dashAttack).release());
     auto snapshot = checked(PyDict_New());
     put(snapshot.get(), "ready", PyBool_FromLong(world.ready ? 1 : 0));
     put(snapshot.get(), "sampledAt", PyLong_FromUnsignedLongLong(world.sampledAt));
@@ -219,6 +296,8 @@ std::string PythonHost::context(const Config& config, uint64_t now, const std::v
         put(entry.get(), "heading", PyFloat_FromDouble(actor.heading));
         put(entry.get(), "targetId", PyLong_FromUnsignedLong(actor.targetId));
         put(entry.get(), "entity", PyLong_FromUnsignedLong(actor.entity));
+        put(entry.get(), "airborne", PyBool_FromLong(actor.airborne));
+        put(entry.get(), "jumping", PyBool_FromLong(actor.jumping));
         put(entry.get(), "state", PyLong_FromUnsignedLong(actor.state));
         put(entry.get(), "seq", PyLong_FromUnsignedLong(actor.sequence));
         put(entry.get(), "phaseAt", PyLong_FromUnsignedLongLong(actor.phaseAt));
@@ -246,9 +325,19 @@ std::string PythonHost::context(const Config& config, uint64_t now, const std::v
 std::string PythonHost::create(const std::string& context) {
     auto value = checked(PyObject_CallMethod(runtime_, "create", "s", context.c_str())); return string(value.get());
 }
-void PythonHost::checkResources(const fs::path& directory, const std::string& playerName) {
+ResourceCheck PythonHost::checkResources(const fs::path& directory, const std::string& playerName) {
     auto path = checked(PyUnicode_FromWideChar(directory.c_str(), -1));
     auto result = checked(PyObject_CallMethod(runtime_, "checkResources", "Os", path.get(), playerName.c_str()));
+    ResourceCheck resources;
+    resources.dashAttack = readDash(field(result.get(), "dashAttack"));
+    resources.movementAnimation = readMovementAnimation(field(result.get(), "movementAnimation"));
+    auto diagnostics = field(result.get(), "diagnostics");
+    if (!PyList_Check(diagnostics)) throw std::runtime_error("invalid resource diagnostics list");
+    for (Py_ssize_t i = 0; i < PyList_Size(diagnostics); ++i) {
+        auto item = PyList_GetItem(diagnostics, i);
+        resources.diagnostics.push_back({parseDiagnosticLevel(string(field(item, "level"))), string(field(item, "message"))});
+    }
+    return resources;
 }
 std::vector<std::string> PythonHost::closeRevision() {
     auto result = checked(PyObject_CallMethod(runtime_, "close", nullptr));
@@ -269,6 +358,12 @@ std::vector<std::string> PythonHost::diagnostics() {
 std::string PythonHost::phase(const std::string& state) {
     auto value = checked(PyObject_CallMethod(runtime_, "phase", "s", state.c_str())); return string(value.get());
 }
+uint32_t PythonHost::playerId(const std::string& state) {
+    auto value = checked(PyObject_CallMethod(runtime_, "playerId", "s", state.c_str()));
+    auto result = PyLong_AsUnsignedLong(value.get());
+    if (PyErr_Occurred()) throw std::runtime_error(error());
+    return static_cast<uint32_t>(result);
+}
 std::string PythonHost::prepare() {
     auto value = checked(PyObject_CallMethod(runtime_, "prepare", nullptr)); return string(value.get());
 }
@@ -286,12 +381,13 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
         put(dict.get(), "connection", PyLong_FromUnsignedLongLong(event.connection));
         put(dict.get(), "sequence", PyLong_FromUnsignedLongLong(event.sequence));
         put(dict.get(), "serverTimeMs", PyLong_FromUnsignedLongLong(event.serverTime));
+        put(dict.get(), "receivedAtMs", PyLong_FromUnsignedLongLong(event.receivedAt));
         put(dict.get(), "command", PyLong_FromLong(event.command));
         put(dict.get(), "body", PyBytes_FromStringAndSize(reinterpret_cast<const char*>(event.body.data()), static_cast<Py_ssize_t>(event.body.size())));
         serialized = encode(dict.get());
     }
     auto value = checked(PyObject_CallMethod(runtime_, "dispatch", "sss", serialized.c_str(), state.c_str(), context.c_str()));
-    if (!PyTuple_Check(value.get()) || PyTuple_Size(value.get()) != 4) throw std::runtime_error("invalid bridge transition");
+    if (!PyTuple_Check(value.get()) || (PyTuple_Size(value.get()) < 4 || PyTuple_Size(value.get()) > 6)) throw std::runtime_error("invalid bridge transition");
     Transition result; result.state = string(tupleField(value.get(), 0));
     auto sends = tupleField(value.get(), 1);
     if (!PyList_Check(sends)) throw std::runtime_error("invalid transition send list");
@@ -331,6 +427,48 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
         auto item = PyList_GetItem(logs, i);
         if (!item || !PyDict_Check(item)) throw std::runtime_error("invalid transition log item");
         result.logs.push_back({parseDiagnosticLevel(string(field(item, "level"))), string(field(item, "message"))});
+    }
+    if (PyTuple_Size(value.get()) >= 5) {
+        auto effects = tupleField(value.get(), 4);
+        if (!PyList_Check(effects) || PyList_Size(effects) > 8) throw std::runtime_error("invalid room gateway effects");
+        for (Py_ssize_t i = 0; i < PyList_Size(effects); ++i) {
+            auto item = PyList_GetItem(effects, i);
+            GatewayEffect effect;
+            effect.connection = PyLong_AsUnsignedLongLong(field(item, "connection"));
+            effect.op = string(field(item, "op"));
+            effect.requestId = string(field(item, "requestId"));
+            effect.request = string(field(item, "request"));
+            result.gateway.push_back(std::move(effect));
+        }
+    }
+    if (PyTuple_Size(value.get()) == 6) {
+        auto effects = tupleField(value.get(), 5);
+        if (!PyList_Check(effects) || PyList_Size(effects) > 19) throw std::runtime_error("invalid remote motion effects");
+        for (Py_ssize_t i = 0; i < PyList_Size(effects); ++i) {
+            auto item = PyList_GetItem(effects, i);
+            RemoteMotion motion;
+            motion.rid = static_cast<uint32_t>(PyLong_AsUnsignedLong(field(item, "rid")));
+            motion.instanceStartedAt = PyLong_AsUnsignedLongLong(field(item, "instanceStartedAt"));
+            motion.airborne = field(item, "airborne") == Py_True;
+            motion.jumping = field(item, "jumping") == Py_True;
+            if (motion.rid < 2 || motion.rid > MAX_WORLD_ACTORS || !motion.instanceStartedAt
+                    || (motion.jumping && !motion.airborne)) throw std::runtime_error("invalid remote motion actor");
+            if (auto position = PyDict_GetItemString(item, "position")) {
+                motion.ownsPosition = true;
+                auto velocity = field(item, "velocity");
+                if (!PyList_Check(position) || PyList_Size(position) != 3
+                        || !PyList_Check(velocity) || PyList_Size(velocity) != 3)
+                    throw std::runtime_error("invalid remote motion vectors");
+                for (Py_ssize_t axis = 0; axis < 3; ++axis) {
+                    motion.position[axis] = static_cast<float>(PyFloat_AsDouble(PyList_GetItem(position, axis)));
+                    motion.velocity[axis] = static_cast<float>(PyFloat_AsDouble(PyList_GetItem(velocity, axis)));
+                    if (!std::isfinite(motion.position[axis]) || std::abs(motion.position[axis]) >= 100000
+                            || !std::isfinite(motion.velocity[axis]) || std::abs(motion.velocity[axis]) > 40)
+                        throw std::runtime_error("invalid remote motion coordinate");
+                }
+            }
+            result.remoteMotion.push_back(motion);
+        }
     }
     if (PyErr_Occurred()) throw std::runtime_error(error());
     return result;

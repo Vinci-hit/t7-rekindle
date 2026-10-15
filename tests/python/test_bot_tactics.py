@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from Business.scripts import actors, app, battle, body_collision, bot, bot_life, bot_roaming, bot_tactics
+from Business.scripts import actors, app, battle, body_collision, bot, bot_footwork, bot_life, bot_roaming, bot_tactics
 from Business.scripts.codec import move_flow
 from Business.scripts.navigation import NavMesh
 from test_bot_roster import multi, sample
@@ -32,8 +32,9 @@ def test_attack_formation_closes_inside_the_old_edge_of_reach(multi, cached):
         value['tactic'] = dict(targetId=1, until=multi.now + 1000, goal=[-1.65, 0., 0.],
                                targetPosition=[0., 0., .2], mode='approach')
     bot.think(multi, 2)
-    assert value['status'] == 'approach'
-    assert math.dist(value['tactic']['goal'][:2], (0, 0)) == pytest.approx(1.2)
+    assert value['status'] == 'press'
+    assert 'tactic' not in value
+    assert math.dist(value['stepPlan']['goal'][:2], (0, 0)) == pytest.approx(bot_footwork.GAPS[value['profile']])
     assert value['path'] and value.get('action', {}).get('index', -1) == -1
     assert bot_tactics.ARRIVAL_RADIUS <= .25
 
@@ -57,14 +58,16 @@ def test_crowded_bots_reposition_even_inside_melee_range(multi):
     fight(multi, {1: ((0, 0, .2), 180), 2: ((-1.7, 0, .2), 0), 3: ((-1.7, .1, .2), 0)})
     bot.think(multi, 3)
     value = actors.data(multi, 3)
-    assert value['status'] in ('spread', 'flank', 'rear')
+    assert value['status'] == 'press'
     assert value['path'] and value.get('action', {}).get('index', -1) == -1
     assert actors.timerName(bot.MOVE_TIMER, 3) in multi.session['pending']
+    for start, end in zip([value['position'], *value['path']], value['path']):
+        assert math.dist(body_collision.clip(start, end, [[-1.7, 0, .2]], slide=False), end) < .01
 
 
 @pytest.mark.parametrize('reason', ['deadline', 'changed-route'])
 def test_repath_keeps_the_flanking_arc_instead_of_chasing_through_target(multi, reason):
-    placements = {1: ((0, 0, .2), 180), 2: ((-1.7, 0, .2), 0), 5: ((-5, 0, .2), 0)}
+    placements = {1: ((0, 0, .2), 180), 2: ((-1.2, 0, .2), 0), 5: ((-3, 0, .2), 0)}
     fight(multi, placements)
     actors.data(multi, 5)['profile'] = 'aggressive'
     bot.think(multi, 5)
@@ -80,7 +83,7 @@ def test_repath_keeps_the_flanking_arc_instead_of_chasing_through_target(multi, 
     points = [value['position'], *value['path']]
     assert len(points) > 2
     for start, end in zip(points, points[1:]):
-        assert math.dist(body_collision.clip(start, end, [[0, 0, .2]], slide=False), end) < .01
+        assert math.dist(body_collision.clip(start, end, [[0, 0, .2], [-1.2, 0, .2]], slide=False), end) < .01
 
 
 def test_sideways_flanking_faces_target_and_does_not_accumulate_run_speed(multi):
