@@ -57,7 +57,7 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     client,_=running()
     m=monster();value={**snapshot([m]),'phase':'active','wave':1,'nextWaveAtMs':None}
     result=client.reply(None,'pveChanged',update=update(value))
-    assert result['send'][0]['reason']=='online-pve-monster-add'
+    assert [v['reason'] for v in result['send']]==['online-pve-monster-add','online-pve-monster-health']
     rid=m['actorId']
     assert online_pve.instance_id(rid)==1024
     assert online_scene.actor_rid(client.state['onlineScene'],rid)==rid
@@ -67,7 +67,9 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     assert battle_flow.decode_battle_state_sync_simple(result['send'][0]['body']).instance_id==1024
     pose=dict(position=[2.8,0.,.2],heading=180,forwardBack=-1,leftRight=0,running=False)
     result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,inputSeq=1,serverTimeMs=3500,pose=pose))
-    assert move_flow.decode_move_direct_bc(result['send'][0]['body']).target_instance_id==1024
+    assert [v['reason'] for v in result['send']]==['online-pve-monster-movement','online-pve-monster-pose']
+    assert move_flow.decode_move_bc_with_system_and_active(result['send'][0]['body']).target_instance_id==1024
+    assert move_flow.decode_move_direct_bc(result['send'][1]['body']).target_instance_id==1024
     removed={**snapshot(),'phase':'intermission','wave':1,'nextWaveAtMs':5000}
     result=client.reply(None,'pveChanged',update=update(removed,2))
     assert result['send'][0]['reason']=='online-pve-monster-remove'

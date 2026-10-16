@@ -3,7 +3,7 @@ import math
 from functools import lru_cache
 import struct
 from . import actors, contracts as wire
-from .codec import battle_flow, move_flow, vision_flow
+from .codec import attr_flow, battle_flow, move_flow, vision_flow
 
 FIRST_MONSTER_ID = 0x40000001
 MAX_MONSTERS = 64
@@ -134,6 +134,10 @@ def receive(flow, value):
                     instance_id=instance_id(int(key)), resource_id=kind['resourceId'], hero_id=kind['heroId'],
                     weapon_id=kind['weaponId'], position=tuple(monster['position']), direction=(math.cos(yaw),-math.sin(yaw),0.),
                     camp=2,server_time_ms=flow.now,display_name=b'Zombie'), 'online-pve-monster-add')
+                # The monster add carries no hit points: without an explicit
+                # update the fresh native unit keeps the zero default.
+                flow.send(15, attr_flow.encode_health_update(entity_rid=int(key),
+                    health=monster['health'], server_time_ms=flow.now), 'online-pve-monster-health')
                 state['monsters'][key] = dict(actionSeq=1,poseSeq=0,**monster)
                 flow.log('INFO', f'online-pve spawned actor={key} inst={instance_id(int(key))}')
             else:
@@ -145,43 +149,100 @@ def receive(flow, value):
 
 def action(flow, value, connection, session):
     from .custom_lobby import integer
-    from .online_actions import ledger as actions
+    from .online_actions import REACTION_STATES, ledger as actions
     state = actions(session)
     sequence = integer(value['eventSeq'],1,0xffffffffffffffff)
     if sequence != state['eventSeq']+1:
         raise ValueError('PVE action gap or replay')
     state['eventSeq'] = sequence
-    source = ledger(session)['monsters'].get(str(value['actorId']))
+    actor = value['actorId']
+    if ledger(session)['monsters'].get(str(actor)) is None:
+        return
+    buffer = session.get('onlineMotion', {}).get('buffers', {}).get(str(actor), {})
+    # Ordinary monster actions share the pose playback clock so the animation
+    # cannot run ahead of the interpolated body; reactions still play at once.
+    if buffer.get('samples') and value['state'] not in REACTION_STATES:
+        queued = buffer.setdefault('actions', [])
+        if len(queued) >= 64:
+            raise ValueError('monster action playback queue overflow')
+        queued.append(value)
+        from . import online_motion
+        online_motion.schedule_render(flow, connection, session)
+        return
+    buffer.pop('actions', None)
+    present_action(flow, connection, session, actor, value)
+
+
+def present_action(flow, connection, session, actor, value):
+    from .custom_lobby import integer
+    source = ledger(session)['monsters'].get(str(actor))
     if source is None:
         return
     seq = integer(value['actionSeq'],1,65535)
     if seq != source['actionSeq']%65535+1 or value['weaponId'] != source['kind']['weaponId']:
         raise ValueError('PVE action changed monster sequence or weapon')
     source['actionSeq'] = seq
-    body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
+    body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(actor),seq_no=seq,
         state=value['state'],state_change_ms=flow.now-session['instanceStartedAt'],state_time_ms=value['durationMs'])
     flow.result['send'].append(dict(connection=connection,command=4,body=body,reason='online-pve-monster-action'))
 
 
-def pose(flow, value, connection, session):
-    from .custom_lobby import integer
-    from .online_motion import ledger as motion
-    state = motion(session)
-    sequence = integer(value['eventSeq'],1,0xffffffffffffffff)
-    if sequence != state['eventSeq']+1:
-        raise ValueError('PVE pose gap or replay')
-    state['eventSeq'] = sequence
-    source = ledger(session)['monsters'].get(str(value['actorId']))
-    if source is None:
+def pose(flow, actor, pose, connection, session, server_time, sequence):
+    """Buffer one authoritative monster pose on the shared playback clock."""
+    from . import online_playback
+    from .online_motion import MAX_SAMPLES, STALE_MS, ledger as motion, schedule_render
+    source = ledger(session)['monsters'].get(str(actor))
+    if source is None or sequence <= source['poseSeq']:
         return
-    seq=integer(value['inputSeq'],1,0xffffffff)
-    if seq <= source['poseSeq']:
-        raise ValueError('PVE pose input replay')
-    source['poseSeq'] = seq
-    source.update(value['pose'])
-    body=move_flow.encode_move_direct_bc(server_tick=flow.now-session['instanceStartedAt'],
-        target_instance_id=instance_id(value['actorId']),direction_yaw=value['pose']['heading'],position=tuple(value['pose']['position']))
-    flow.result['send'].append(dict(connection=connection,command=2,body=body,reason='online-pve-monster-pose'))
+    source['poseSeq'] = sequence
+    source.update(pose)
+    buffer = motion(session).setdefault('buffers', {}).setdefault(str(actor), {})
+    samples = buffer.setdefault('samples', [])
+    if samples and server_time < samples[-1]['at']:
+        return
+    buffer['clockOffset'] = min(buffer.get('clockOffset', flow.now - server_time), flow.now - server_time)
+    online_playback.observe(buffer, server_time, flow.now)
+    sample = dict(at=server_time, pose=pose)
+    if not samples or server_time - samples[-1]['at'] > STALE_MS or math.dist(
+            pose['position'], samples[-1]['pose']['position']) > 8:
+        samples[:] = [sample]
+        buffer.pop('peerMovement', None)
+        buffer.pop('renderAt', None)
+        buffer.pop('playbackAt', None)
+        emit(flow, connection, session, actor, pose, buffer, 'online-pve-monster-pose')
+    else:
+        samples.append(sample)
+        del samples[:-MAX_SAMPLES]
+    schedule_render(flow, connection, session)
+
+
+def emit(flow, connection, session, actor, pose, state, reason):
+    """Drive one native monster model from a pose on the playback clock."""
+    from . import controls
+    tick = flow.now - session['instanceStartedAt']
+    if not 0 <= tick <= controls.MAX_MOVE_TICK:
+        raise ValueError('online pose time outside instance')
+    target = instance_id(actor)
+    forward, lateral, running = pose['forwardBack'], pose['leftRight'], pose['running']
+    heading = pose['heading']
+    movement = (forward, lateral, running, heading)
+    if state.get('peerMovement') != list(movement):
+        state['peerMovement'] = list(movement)
+        moving = forward != 0 or lateral != 0
+        walk = (controls.GROUND_RUN_STATES if running else controls.GROUND_WALK_STATES).get((forward, lateral), 1)
+        body = move_flow.encode_move_bc_with_system_and_active(server_tick=tick, target_instance_id=target,
+            position=tuple(pose['position']), direction_yaw=heading, state=walk,
+            forward_back=forward * 1000, left_right=lateral * 1000,
+            current_velocity=(5000 if running else 3000) if moving else 0,
+            max_velocity=25000 if moving else 0, system_group=2, active=1, acceleration=0)
+        flow.result['send'].append(dict(connection=connection, command=2, body=body,
+            reason='online-pve-monster-movement'))
+    if state.get('renderedPose') == pose:
+        return
+    state['renderedPose'] = pose
+    body = move_flow.encode_move_direct_bc(server_tick=tick, target_instance_id=target,
+        direction_yaw=heading, position=tuple(pose['position']))
+    flow.result['send'].append(dict(connection=connection, command=2, body=body, reason=reason))
 
 
 STAGE_RESOURCE_PATH = 'data/table/s_res_pve_stage_cli.bin'
