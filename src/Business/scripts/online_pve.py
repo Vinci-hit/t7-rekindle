@@ -1,14 +1,16 @@
 """Native rendering and entry for server-owned cooperative monsters."""
-import math
 from functools import lru_cache
 import struct
-from . import actors, contracts as wire
-from .codec import battle_flow, move_flow, vision_flow
+from . import actors, contracts as wire, controls
+from .codec import attr_flow, battle_flow, casual_flow, move_flow, vision_flow, objective_flow
 
 FIRST_MONSTER_ID = 0x40000001
+FIRST_OBJECT_ID = 0x50000001
 MAX_MONSTERS = 64
-MAX_WAVES = 32
+MAX_WAVES = 128
 FIRST_MONSTER_INSTANCE = 1024
+BIRTH_STATES = {'emerge1': (200, 3167), 'emerge2': (201, 3167), 'emerge3': (202, 3167),
+                'vault1': (203, 1800), 'vault2': (204, 3433)}
 
 
 def monster_id(value):
@@ -21,6 +23,41 @@ def instance_id(actor):
     return FIRST_MONSTER_INSTANCE + actor - FIRST_MONSTER_ID
 
 
+def object_id(actor):
+    return type(actor) is int and FIRST_OBJECT_ID <= actor < FIRST_OBJECT_ID + MAX_WAVES * 64
+
+
+def object_instance_id(actor):
+    if not object_id(actor):
+        raise ValueError('invalid PVE scene object identity')
+    return 20000 + actor - FIRST_OBJECT_ID
+
+
+def valid_birth(birth):
+    if type(birth) is not dict or set(birth) != {'animation', 'startedAtMs', 'endsAtMs'}:
+        return False
+    animation = birth['animation']
+    return (type(animation) is str and animation in BIRTH_STATES
+        and type(birth['startedAtMs']) is int and 0 <= birth['startedAtMs'] < 2**64
+        and type(birth['endsAtMs']) is int and birth['endsAtMs'] < 2**64
+        and birth['endsAtMs'] - birth['startedAtMs'] == BIRTH_STATES[animation][1])
+
+
+def finish_birth(flow, source, connection, session=None):
+    if source.get('birth') is None:
+        return
+    flow.result['send'].append(dict(connection=connection, command=4,
+        body=casual_flow.encode_no_fight(actor_id=source['actorId'], enabled=False, server_time_ms=flow.now),
+        reason='online-pve-birth-end'))
+    source['birth'] = None
+    flow.result['send'].append(dict(connection=connection, command=2,
+        body=move_flow.encode_move_direct_bc(
+            server_tick=flow.now-(flow.session if session is None else session)['instanceStartedAt'],
+            target_instance_id=instance_id(source['actorId']),
+            direction_yaw=source['heading'], position=tuple(source['position'])),
+        reason='online-pve-birth-position'))
+
+
 def valid_snapshot(value):
     if type(value) is not dict:
         return False
@@ -30,6 +67,54 @@ def valid_snapshot(value):
             integer(value[key], 1)
         integer(value['totalWaves'], 1, MAX_WAVES)
         integer(value['wave'], 0, value['totalWaves'])
+        objects = value.get('objects', [])
+        if type(objects) is not list or len(objects) > 64:
+            return False
+        object_ids = set()
+        for entry in objects:
+            if (type(entry) is not dict or set(entry) != {'actorId', 'resourceId', 'position', 'health'}
+                    or not object_id(entry['actorId']) or entry['actorId'] in object_ids
+                    or not actors.validPosition(entry['position'])):
+                return False
+            object_ids.add(entry['actorId'])
+            integer(entry['resourceId'], 1, 0x7fffffff)
+            integer(entry['health'], 0, 65535)
+        goal = value.get('goal')
+        if goal is not None:
+            if (type(goal) is not dict
+                    or set(goal) not in ({'kind', 'current', 'total', 'targetPosition', 'complete'},
+                        {'kind', 'current', 'total', 'targetPosition', 'complete', 'health', 'maximumHealth'})
+                    or goal['kind'] not in ('reach', 'collect', 'escort', 'defend')
+                    or not actors.validPosition(goal['targetPosition'])
+                    or type(goal['complete']) is not bool
+                    or value['phase'] not in ('active', 'defeat')):
+                return False
+            integer(goal['total'], 1, 600000 if goal['kind'] == 'defend' else 16384)
+            integer(goal['current'], 0, goal['total'])
+            if goal['complete'] != (goal['current'] == goal['total']):
+                return False
+            if goal['kind'] == 'defend':
+                integer(goal['maximumHealth'], 1, 65535)
+                integer(goal['health'], 0, goal['maximumHealth'])
+            elif 'health' in goal:
+                return False
+        objective = value.get('objective')
+        if objective is not None:
+            if (type(objective) is not dict
+                    or set(objective) not in ({'encounter', 'text', 'targetPosition', 'active'},
+                        {'encounter', 'text', 'targetPosition', 'active', 'taskId'})
+                    or type(objective['text']) is not str
+                    or not objective['text'].strip() or len(objective['text']) > 128
+                    or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in objective['text'])
+                    or not actors.validPosition(objective['targetPosition'])
+                    or type(objective['active']) is not bool):
+                return False
+            integer(objective['encounter'], 1, value['totalWaves'])
+            if 'taskId' in objective:
+                integer(objective['taskId'], 1, 0x7fffffff)
+            if (value['phase'] not in ('intermission', 'active')
+                    or objective['active'] != (value['phase'] == 'active')):
+                return False
         if value['phase'] not in ('intermission', 'active', 'victory', 'defeat'):
             return False
         if (type(value['playerSpawns']) is not list or not 1 <= len(value['playerSpawns']) <= MAX_MONSTERS
@@ -43,6 +128,8 @@ def valid_snapshot(value):
             if not monster_id(actor) or actor in seen or type(kind) is not dict:
                 return False
             seen.add(actor)
+            if monster.get('birth') is not None and (not monster['alive'] or not valid_birth(monster['birth'])):
+                return False
             for key in ('resourceId', 'heroId', 'weaponId'):
                 integer(kind[key], 1)
             integer(kind['health'], 1, 65535)
@@ -71,6 +158,53 @@ def valid(session):
 
 def ledger(session):
     return session.setdefault('onlinePve', {'eventSeq': 0, 'monsters': {}})
+
+
+def present_objective(flow, state, snapshot):
+    objective = snapshot.get('objective')
+    task = objective.get('taskId', 0) if objective else 0
+    goal = snapshot.get('goal')
+    current = total = 0
+    if task and goal:
+        current, total = goal['current'], goal['total']
+        if goal['kind'] == 'defend':
+            current, total = current // 1000, (total + 999) // 1000
+            if goal['complete']:
+                current = total
+    presentation = [task, current, total]
+    previous = state.get('taskPresentation')
+    if presentation == previous or (not task and previous is None):
+        return
+    flow.send(objective_flow.COMMAND, objective_flow.encode_task(task_id=task,
+        current=current, total=total, server_time_ms=flow.now), 'online-pve-objective')
+    state['taskPresentation'] = presentation
+
+
+def present_objects(flow, state, snapshot):
+    previous = state.setdefault('objects', {})
+    current = {str(entry['actorId']): entry for entry in snapshot.get('objects', [])}
+    for key in tuple(previous):
+        if key not in current:
+            flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
+                object_type=vision_flow.VISION_OBJECT_DYNAMIC), 'online-pve-object-remove')
+            del previous[key]
+    for key, entry in current.items():
+        actor = int(key)
+        if key not in previous:
+            flow.send(14, vision_flow.encode_dynamic_object_add_event(rid=actor,
+                instance_id=object_instance_id(actor), resource_id=entry['resourceId'],
+                position=tuple(entry['position']), health=entry['health'], server_time_ms=flow.now),
+                'online-pve-object-add')
+        elif previous[key]['resourceId'] != entry['resourceId']:
+            raise ValueError('PVE scene object changed its resource')
+        elif previous[key]['position'] != entry['position']:
+            flow.send(14, vision_flow.encode_object_location(instance_id=object_instance_id(actor),
+                position=tuple(entry['position']), server_tick=(flow.now-flow.session['instanceStartedAt']) & 0xffffffff),
+                'online-pve-object-move')
+        if key in previous and previous[key]['health'] != entry['health']:
+            flow.send(attr_flow.ATTR_COMMAND, attr_flow.encode_health_update(entity_rid=actor,
+                health=entry['health'], server_time_ms=flow.now), 'online-pve-object-health')
+        previous[key] = entry
 
 
 def request(flow, body):
@@ -124,20 +258,50 @@ def receive(flow, value):
         current = {str(m['actorId']):m for m in snapshot['monsters']}
         for key in tuple(state['monsters']):
             if key not in current:
-                flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
+                if not state['monsters'][key].get('removed', False):
+                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
                 del state['monsters'][key]
         for key, monster in current.items():
             if key not in state['monsters']:
                 kind = monster['kind']
-                yaw = math.radians(monster['heading'])
-                flow.send(14, vision_flow.encode_simple_monster_add_event(rid=int(key),
+                flow.send(14, vision_flow.encode_monster_vision_add_event(rid=int(key),
                     instance_id=instance_id(int(key)), resource_id=kind['resourceId'], hero_id=kind['heroId'],
-                    weapon_id=kind['weaponId'], position=tuple(monster['position']), direction=(math.cos(yaw),-math.sin(yaw),0.),
+                    weapon_id=kind['weaponId'], position=tuple(monster['position']), heading=monster['heading'],
+                    current_hp=monster['health'], maximum_hp=kind['health'],
                     camp=2,server_time_ms=flow.now,display_name=b'Zombie'), 'online-pve-monster-add')
                 state['monsters'][key] = dict(actionSeq=1,poseSeq=0,**monster)
+                if monster.get('birth') is not None:
+                    flow.send(4, casual_flow.encode_no_fight(actor_id=int(key), enabled=True,
+                        server_time_ms=flow.now), 'online-pve-birth-mode')
+                    flow.send(4, casual_flow.encode_state(actor_id=int(key),
+                        state=BIRTH_STATES[monster['birth']['animation']][0], server_time_ms=flow.now),
+                        'online-pve-birth-start')
                 flow.log('INFO', f'online-pve spawned actor={key} inst={instance_id(int(key))}')
+                if not monster['alive']:
+                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
+                        object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
+                    state['monsters'][key]['removed'] = True
             else:
-                state['monsters'][key].update(monster)
+                source = state['monsters'][key]
+                died = source['alive'] and not monster['alive']
+                if source.get('birth') is not None and monster.get('birth') is None:
+                    source.update(position=monster['position'], heading=monster['heading'])
+                    finish_birth(flow, source, flow.connection)
+                source.update(monster)
+                source['birth'] = monster.get('birth')
+                if died:
+                    # Vision removal also removes the native collision proxy. An idle
+                    # locomotion packet can otherwise interrupt the death graph.
+                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
+                        object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
+                    source['removed'] = True
+        if match['pve'].get('objective') != snapshot.get('objective'):
+            objective = snapshot.get('objective')
+            flow.log('INFO', 'online-pve-objective ' + (
+                f"encounter={objective['encounter']} active={objective['active']} text={objective['text']}"
+                if objective is not None else 'cleared'))
+        present_objects(flow, state, snapshot)
+        present_objective(flow, state, snapshot)
         match['pve'] = snapshot
     finally:
         flow.connection, flow.session = connection, session
@@ -158,9 +322,30 @@ def action(flow, value, connection, session):
     if seq != source['actionSeq']%65535+1 or value['weaponId'] != source['kind']['weaponId']:
         raise ValueError('PVE action changed monster sequence or weapon')
     source['actionSeq'] = seq
+    source['battleState'] = value['state']
+    # An action can change the native locomotion graph independently of poses.
+    source.pop('nativeMovement', None)
+    source.pop('nativeTransform', None)
+    if source.get('removed', False):
+        return
+    if value['state'] in (35, 42):
+        finish_birth(flow, source, connection, session)
     body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
         state=value['state'],state_change_ms=flow.now-session['instanceStartedAt'],state_time_ms=value['durationMs'])
     flow.result['send'].append(dict(connection=connection,command=4,body=body,reason='online-pve-monster-action'))
+
+
+def movement_body(source, pose, tick):
+    """Select the native gait without starting a second position integrator."""
+    axes = (pose['forwardBack'], pose['leftRight'])
+    moving = source['alive'] and axes != (0, 0)
+    gait = (controls.GROUND_RUN_STATES if pose['running'] else controls.GROUND_WALK_STATES).get(axes, 1) if moving else 1
+    return move_flow.encode_move_bc_with_system_and_active(
+        server_tick=tick, target_instance_id=instance_id(source['actorId']),
+        direction_yaw=pose['heading'], position=tuple(pose['position']), state=gait,
+        # Rust owns translation; axes and velocity would move the native proxy
+        # away from the same position used by blade-contact sampling.
+        forward_back=0, left_right=0, current_velocity=0, max_velocity=0, system_group=move_flow.MOVE_MESSAGE_GROUP_SERVER_INTERNAL, active=1)
 
 
 def pose(flow, value, connection, session):
@@ -179,8 +364,27 @@ def pose(flow, value, connection, session):
         raise ValueError('PVE pose input replay')
     source['poseSeq'] = seq
     source.update(value['pose'])
-    body=move_flow.encode_move_direct_bc(server_tick=flow.now-session['instanceStartedAt'],
-        target_instance_id=instance_id(value['actorId']),direction_yaw=value['pose']['heading'],position=tuple(value['pose']['position']))
+    if source.get('removed', False):
+        return
+    if source.get('birth') is not None:
+        return  # The native birth graph owns the pose until the server ends it.
+    # Only transitions select a gait. Reissuing a composite on every AI sample
+    # restarts native movement commands even when intent has not changed.
+    pose = value['pose']
+    movement = [pose['forwardBack'], pose['leftRight'], pose['running']]
+    transform = [list(pose['position']), pose['heading']]
+    idle = source.get('battleState', 2) == 2
+    if idle and source.get('nativeMovement') != movement:
+        body = movement_body(source, pose, flow.now-session['instanceStartedAt'])
+        source['nativeMovement'] = movement
+    elif source.get('nativeTransform') != transform:
+        body = move_flow.encode_move_direct_bc(
+            server_tick=flow.now-session['instanceStartedAt'],
+            target_instance_id=instance_id(source['actorId']),
+            direction_yaw=pose['heading'], position=tuple(pose['position']))
+    else:
+        return
+    source['nativeTransform'] = transform
     flow.result['send'].append(dict(connection=connection,command=2,body=body,reason='online-pve-monster-pose'))
 
 

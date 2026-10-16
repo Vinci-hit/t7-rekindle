@@ -17,6 +17,7 @@ VISION_LIST_RESPONSE = 0x0006
 VISION_GET_OBJECTS_REQUEST = 0x0007
 VISION_OBJECT_ACTOR = 0x00000001
 VISION_OBJECT_MONSTER = 0x00000003
+VISION_OBJECT_DYNAMIC = 0x00000004
 VISION_SIMPLE_ADD_EVENT = 0x0009
 
 INSTANCE_START_PATTERN_PRACTICE = 0x0000000E
@@ -241,7 +242,7 @@ def encode_vision_del_event(
     + svr_time:u64.
     """
 
-    if object_type not in (VISION_OBJECT_ACTOR, VISION_OBJECT_MONSTER):
+    if object_type not in (VISION_OBJECT_ACTOR, VISION_OBJECT_MONSTER, VISION_OBJECT_DYNAMIC):
         raise ValueError(f"object_type must be ACTOR(1) or MONSTER(3), got {object_type}")
     try:
         return struct.pack(
@@ -294,3 +295,64 @@ def encode_simple_monster_add_event(
         ))
     except struct.error as error:
         raise ValueError("monster vision field is outside its TDR wire range") from error
+
+
+def encode_monster_vision_add_event(
+    *, rid, resource_id, hero_id, weapon_id, position, heading, camp,
+    server_time_ms, instance_id, current_hp, maximum_hp, display_name=b"Zombie",
+):
+    """Create a monster with explicit equipment, movement, action and attributes."""
+    if not 0 <= current_hp <= maximum_hp or maximum_hp <= 0:
+        raise ValueError('invalid monster health')
+    if not -180 <= heading <= 180:
+        raise ValueError('invalid monster heading')
+    try:
+        monster = b"".join((
+            struct.pack('>Q', rid),
+            _encode_tdr_string(display_name, maximum_size=32, field_name='monster name'),
+            struct.pack('>Hi', instance_id, resource_id),
+            struct.pack('>ibi' + 'i' * 8, hero_id, 0, 0, *([0] * 8)),
+            struct.pack('>hiBBB', 1, weapon_id, 1, 0, 1) + bytes(22),
+            _encode_move_data(active=1, position=position, heading=heading),
+            struct.pack('>HQhiiQ', 1, 0, 1, 2, 0, 0),
+            struct.pack('>iii', current_hp, maximum_hp, 100),
+            struct.pack('>iii', camp, 0, 0),
+            # The protocol carries six fixed quest slots, with no count field.
+            struct.pack('>' + 'ib' * 6, *([0, 0] * 6)),
+            struct.pack('>i', 0),
+        ))
+        return struct.pack('>Hii', VISION_ADD_EVENT, 1, VISION_OBJECT_MONSTER) + monster + struct.pack('>Q', server_time_ms)
+    except struct.error as error:
+        raise ValueError('monster vision field is outside its TDR wire range') from error
+
+
+def encode_dynamic_object_add_event(*, rid, instance_id, resource_id, position, health, server_time_ms):
+    """Create a native scene object with empty buffs, animation parameters and script variables."""
+    if (type(health) is not int or not 0 <= health <= 65535
+            or type(resource_id) is not int or not 1 <= resource_id <= 0x7fffffff):
+        raise ValueError('invalid scene object resource or health')
+    try:
+        data = b''.join((
+            struct.pack('>Q', rid),
+            _encode_tdr_string(b'', maximum_size=32, field_name='object name'),
+            struct.pack('>Hi6fii', instance_id, resource_id, *position, 0., 0., 0., 1, health),
+            _encode_move_data(active=1, position=position),
+            struct.pack('>i', 0),  # buff count
+            struct.pack('>6fiQi', *position, *position, 0, server_time_ms, 0),
+            struct.pack('>bb', 0, 0),  # animation event and parameter counts
+            struct.pack('>iii', 0, 0, 0),  # script item count, filter and subsystem groups
+            struct.pack('>bhQQffHH', 0, 100, 0, 0, 0., 0., 0, 0),
+        ))
+        return struct.pack('>Hii', VISION_ADD_EVENT, 1, VISION_OBJECT_DYNAMIC) + data + struct.pack('>Q', server_time_ms)
+    except struct.error as error:
+        raise ValueError('scene object is outside native wire ranges') from error
+
+
+def encode_object_location(*, instance_id, position, server_tick):
+    if (not isinstance(position, tuple) or len(position) != 3
+            or not all(type(v) in (int, float) and math.isfinite(v) for v in position)):
+        raise ValueError('invalid scene object position')
+    try:
+        return struct.pack('>HiH3fhI', 11, 1, instance_id, *position, 0, server_tick)
+    except struct.error as error:
+        raise ValueError('scene object location is outside native wire ranges') from error

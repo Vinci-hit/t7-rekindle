@@ -58,6 +58,7 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     m=monster();value={**snapshot([m]),'phase':'active','wave':1,'nextWaveAtMs':None}
     result=client.reply(None,'pveChanged',update=update(value))
     assert result['send'][0]['reason']=='online-pve-monster-add'
+    assert struct.unpack_from('>Hii', result['send'][0]['body']) == (1, 1, 3)
     rid=m['actorId']
     assert online_pve.instance_id(rid)==1024
     assert online_scene.actor_rid(client.state['onlineScene'],rid)==rid
@@ -67,10 +68,29 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     assert battle_flow.decode_battle_state_sync_simple(result['send'][0]['body']).instance_id==1024
     pose=dict(position=[2.8,0.,.2],heading=180,forwardBack=-1,leftRight=0,running=False)
     result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,inputSeq=1,serverTimeMs=3500,pose=pose))
-    assert move_flow.decode_move_direct_bc(result['send'][0]['body']).target_instance_id==1024
+    direct = move_flow.decode_move_direct_bc(result['send'][0]['body'])
+    assert direct.target_instance_id == 1024
+    assert direct.position == pytest.approx(pose['position'])
+    # Idle selects a native gait while Rust retains position authority.
+    client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 2})
+    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=2,inputSeq=2,serverTimeMs=3550,pose=pose))
+    movement = move_flow.decode_move_bc_with_system_and_active(result['send'][0]['body'])
+    assert movement.target_instance_id == 1024
+    assert movement.state == 2 and movement.forward_back == 0
+    assert movement.left_right == 0
+    assert movement.current_velocity == movement.max_velocity == 0
+    assert movement.position == pytest.approx(pose['position'])
+    pose.update(forwardBack=0)
+    stopped = client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=3,inputSeq=3,serverTimeMs=3600,pose=pose))
+    movement = move_flow.decode_move_bc_with_system_and_active(stopped['send'][0]['body'])
+    assert movement.state == 1 and movement.current_velocity == 0 and movement.forward_back == 0
+    dead = {**m, 'alive': False, 'health': 0}
+    result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+    assert [p['reason'] for p in result['send']] == ['online-pve-monster-remove']
+    assert struct.unpack_from('>HiiQ', result['send'][0]['body'])[-1] == rid
     removed={**snapshot(),'phase':'intermission','wave':1,'nextWaveAtMs':5000}
-    result=client.reply(None,'pveChanged',update=update(removed,2))
-    assert result['send'][0]['reason']=='online-pve-monster-remove'
+    result=client.reply(None,'pveChanged',update=update(removed,3))
+    assert not result['send']
     assert not client.state['sessions']['2']['onlinePve']['monsters']
 
 
@@ -166,3 +186,244 @@ def test_native_monster_payload_starts_rid_immediately_after_object_type():
     assert len(body)==offset+40
     removed=vision_flow.encode_vision_del_event(object_mid=actor,object_type=vision_flow.VISION_OBJECT_MONSTER)
     assert struct.unpack_from('>HiiQ',removed)==(2,1,3,actor)
+
+
+def test_full_monster_creation_initializes_model_weapon_pose_state_and_health():
+    from Business.scripts.codec import vision_flow
+    body = vision_flow.encode_monster_vision_add_event(
+        rid=0x40000001, resource_id=1100311, hero_id=1100311, weapon_id=9010411,
+        position=(3., 4., 5.), heading=90, camp=2, server_time_ms=2**32 + 1,
+        instance_id=1024, current_hp=40, maximum_hp=60,
+    )
+    offset = 0
+
+    def read(fmt):
+        nonlocal offset
+        value = struct.unpack_from('>' + fmt, body, offset)
+        offset += struct.calcsize('>' + fmt)
+        return value
+
+    assert read('HiiQ') == (1, 1, 3, 0x40000001)
+    name_size, = read('I')
+    assert body[offset:offset + name_size] == b'Zombie\0'
+    offset += name_size
+    assert read('Hi') == (1024, 1100311)
+    assert read('ibi8i') == (1100311, 0, 0, *([0] * 8))
+    assert read('h') == (1,)
+    assert read('iBBB') == (9010411, 1, 0, 1)
+    offset += 22  # Bullet info and weapon mode data.
+    move = read('bbB10hfffIfffih5b')
+    assert move[1] == 1 and move[12] == 90
+    assert move[13:16] == (3., 4., 5.)
+    assert read('HQhiiQ') == (1, 0, 1, 2, 0, 0)
+    assert read('iii') == (40, 60, 100)
+    assert read('iii') == (2, 0, 0)
+    assert read('ib' * 6) == (0,) * 12
+    assert read('iQ') == (0, 2**32 + 1)
+    assert offset == len(body)
+    with pytest.raises(ValueError, match='health'):
+        vision_flow.encode_monster_vision_add_event(
+            rid=1, resource_id=1, hero_id=1, weapon_id=1, position=(0., 0., 0.),
+            heading=0, camp=2, server_time_ms=0, instance_id=1, current_hp=61, maximum_hp=60,
+        )
+
+
+def birth(animation='emerge1', start=3500):
+    return dict(animation=animation, startedAtMs=start, endsAtMs=start+online_pve.BIRTH_STATES[animation][1])
+
+
+def test_birth_uses_native_non_combat_channel_and_stops_movement_until_finished():
+    client,_=running();m={**monster(),'birth':birth()}
+    value={**snapshot([m]),'phase':'active','wave':1,'nextWaveAtMs':None}
+    result=client.reply(None,'pveChanged',update=update(value))
+    assert [s['reason'] for s in result['send']]==[
+        'online-pve-monster-add','online-pve-birth-mode','online-pve-birth-start']
+    assert struct.unpack('>HQBQ',result['send'][1]['body'])[:3]==(30,m['actorId'],1)
+    assert struct.unpack('>HQiQ',result['send'][2]['body'])[:3]==(29,m['actorId'],200)
+    pose=dict(position=m['position'],heading=0,forwardBack=0,leftRight=0,running=False)
+    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],
+        eventSeq=1,inputSeq=1,serverTimeMs=3600,pose=pose))
+    assert not result['send']
+    finished={k:v for k,v in m.items() if k!='birth'}
+    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[finished]},2))
+    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position']
+    assert struct.unpack('>HQBQ',result['send'][0]['body'])[:3]==(30,m['actorId'],0)
+    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[finished]},3))
+    assert not result['send']
+    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],
+        eventSeq=2,inputSeq=2,serverTimeMs=6800,pose=pose))
+    assert result['send'][0]['reason']=='online-pve-monster-pose'
+
+
+def test_death_exits_birth_before_stopping_corpse_and_does_not_repeat_birth():
+    client,_=running();m={**monster(),'birth':birth('vault1')}
+    value={**snapshot([m]),'phase':'active','wave':1}
+    client.reply(None,'pveChanged',update=update(value))
+    dead={k:v for k,v in m.items() if k!='birth'};dead.update(health=0,alive=False)
+    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[dead]},2))
+    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-remove']
+
+
+@pytest.mark.parametrize('bad', [dict(animation='unknown',startedAtMs=0,endsAtMs=100),
+    dict(animation='emerge1',startedAtMs=0,endsAtMs=1),
+    dict(animation='emerge1',startedAtMs=True,endsAtMs=3168)])
+def test_invalid_birth_snapshot_is_rejected(bad):
+    assert not online_pve.valid_snapshot(snapshot([{**monster(),'birth':bad}]))
+
+
+def test_hurt_interrupts_birth_once_before_native_reaction():
+    client,_=running();m={**monster(),'birth':birth()}
+    value={**snapshot([m]),'phase':'active','wave':1}
+    client.reply(None,'pveChanged',update=update(value))
+    action=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],eventSeq=1,actionSeq=2,
+        actionId=None,state=35,weaponId=m['kind']['weaponId'],durationMs=550,serverTimeMs=3600)
+    result=client.reply(None,'actionChanged',action=action)
+    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-action']
+    assert battle_flow.decode_battle_state_sync_simple(result['send'][2]['body']).state==35
+    dead={k:v for k,v in m.items() if k!='birth'};dead.update(health=0,alive=False)
+    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[dead]},2))
+    assert [s['reason'] for s in result['send']]==['online-pve-monster-remove']
+
+
+def test_objective_snapshot_validation_and_transition_logging():
+    client, _ = running()
+    objective = dict(encounter=1, text='Reach the gate', targetPosition=[10., 0., .2], active=False)
+    waiting = {**snapshot(), 'objective': objective}
+    assert online_pve.valid_snapshot(waiting)
+    client.reply(None, 'pveChanged', update=update(waiting))
+    assert client.state['onlineScene']['pve']['objective'] == objective
+    active = {**waiting, 'phase': 'active', 'wave': 1,
+              'objective': {**objective, 'active': True, 'text': 'Clear the gate'}}
+    client.reply(None, 'pveChanged', update=update(active, 2))
+    assert client.state['onlineScene']['pve']['objective']['active'] is True
+    for invalid in [
+        {**objective, 'encounter': 0}, {**objective, 'encounter': 4},
+        {**objective, 'active': True}, {**objective, 'text': ''},
+        {**objective, 'text': 'x' * 129}, {**objective, 'text': 'line\nbreak'},
+        {**objective, 'targetPosition': [float('nan'), 0., 0.]},
+    ]:
+        assert not online_pve.valid_snapshot({**waiting, 'objective': invalid})
+    assert not online_pve.valid_snapshot({**waiting, 'phase': 'victory'})
+
+
+def test_story_goal_snapshot_validation():
+    value = {**snapshot(), 'phase': 'active', 'wave': 1, 'goal': dict(
+        kind='collect', current=2, total=6, targetPosition=[1., 2., 0.], complete=False)}
+    assert online_pve.valid_snapshot(value)
+    for invalid in (
+            {'current': 7}, {'complete': True}, {'kind': 'unknown'},
+            {'targetPosition': [float('nan'), 0., 0.]}, {'current': True},
+            {'health': 10, 'maximumHealth': 20}):
+        assert not online_pve.valid_snapshot({**value, 'goal': {**value['goal'], **invalid}})
+    defend = {**value['goal'], 'kind': 'defend', 'current': 100, 'total': 1000,
+              'health': 80, 'maximumHealth': 100}
+    assert online_pve.valid_snapshot({**value, 'goal': defend})
+    assert not online_pve.valid_snapshot({**value, 'goal': {**defend, 'health': 101}})
+    assert not online_pve.valid_snapshot({**value, 'phase': 'victory'})
+
+
+def test_native_objective_is_displayed_once_and_progress_is_not_client_authority():
+    client, _ = running()
+    value = {**snapshot(), 'phase': 'active', 'wave': 1,
+             'objective': dict(encounter=1, text='Collect supplies', targetPosition=[0.,0.,0.], active=True, taskId=123),
+             'goal': dict(kind='collect', current=1, total=6, targetPosition=[0.,0.,0.], complete=False)}
+    result = client.reply(None, 'pveChanged', update=update(value))
+    packet = next(s for s in result['send'] if s['reason'] == 'online-pve-objective')
+    assert packet['command'] == 11
+    selector, clock, task, tip, current, total = struct.unpack('>HQiiii', packet['body'])
+    assert (selector, task, tip, current, total) == (3, 123, 0, 1, 6)
+    assert clock >= 0
+    result = client.reply(None, 'pveChanged', update=update(value, 2))
+    assert not any(s['reason'] == 'online-pve-objective' for s in result['send'])
+    value = {**value, 'goal': {**value['goal'], 'current': 2}}
+    result = client.reply(None, 'pveChanged', update=update(value, 3))
+    assert sum(s['reason'] == 'online-pve-objective' for s in result['send']) == 1
+    value = {**snapshot(), 'phase': 'victory', 'wave': 3}
+    result = client.reply(None, 'pveChanged', update=update(value, 4))
+    packet = next(s for s in result['send'] if s['reason'] == 'online-pve-objective')
+    assert struct.unpack('>HQiiii', packet['body'])[2:] == (0, 0, 0, 0)
+
+
+def test_scene_objects_have_separate_identity_and_idempotent_lifecycle():
+    client, _ = running()
+    object_actor = online_pve.FIRST_OBJECT_ID
+    entry = dict(actorId=object_actor, resourceId=123, position=[1.,0.,0.], health=100)
+    value = {**snapshot(), 'phase': 'active', 'wave': 1, 'objects': [entry]}
+    result = client.reply(None, 'pveChanged', update=update(value))
+    packet = next(s for s in result['send'] if s['reason'] == 'online-pve-object-add')
+    assert struct.unpack_from('>HiiQ', packet['body']) == (1, 1, 4, object_actor)
+    assert online_pve.object_instance_id(object_actor) == 20000
+    assert not online_pve.monster_id(object_actor)
+    result = client.reply(None, 'pveChanged', update=update(value, 2))
+    assert not result['send']
+    moved = {**value, 'objects': [{**entry, 'position': [2.,0.,0.]}]}
+    result = client.reply(None, 'pveChanged', update=update(moved, 3))
+    assert [p['reason'] for p in result['send']] == ['online-pve-object-move']
+    assert struct.unpack_from('>HiH', result['send'][0]['body']) == (11, 1, 20000)
+    result = client.reply(None, 'pveChanged', update=update({**value, 'objects': []}, 4))
+    assert [p['reason'] for p in result['send']] == ['online-pve-object-remove']
+    assert not online_pve.valid_snapshot({**value, 'objects': [entry, entry]})
+    assert not online_pve.valid_snapshot({**value, 'objects': [{**entry, 'actorId': online_pve.FIRST_MONSTER_ID}]})
+
+
+def test_dead_monster_cannot_be_reanimated_by_late_pose_or_action():
+    client, _ = running()
+    m = monster()
+    value = {**snapshot([m]), 'phase': 'active', 'wave': 1}
+    client.reply(None, 'pveChanged', update=update(value))
+    dead = {**m, 'alive': False, 'health': 0}
+    client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+    action = dict(roomId='room-test', matchId=MATCH, actorId=m['actorId'], eventSeq=1,
+        actionSeq=2, actionId=None, state=2, weaponId=m['kind']['weaponId'], durationMs=0, serverTimeMs=3600)
+    assert not client.reply(None, 'actionChanged', action=action)['send']
+    pose = dict(position=m['position'], heading=180, forwardBack=-1, leftRight=0, running=False)
+    assert not client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH,
+        actorId=m['actorId'], eventSeq=1, inputSeq=1, serverTimeMs=3600, pose=pose))['send']
+
+
+def test_reconnect_snapshot_does_not_leave_a_dead_collision_proxy():
+    client, _ = running()
+    m = {**monster(), 'alive': False, 'health': 0}
+    result = client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    assert [p['reason'] for p in result['send']] == ['online-pve-monster-add', 'online-pve-monster-remove']
+
+
+@pytest.mark.parametrize('running', [False, True])
+@pytest.mark.parametrize('axes', [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)])
+def test_monster_gait_never_integrates_a_second_trajectory(running, axes):
+    m = monster()
+    pose = dict(position=[8., -3., 1.5], heading=-90,
+                forwardBack=axes[0], leftRight=axes[1], running=running)
+    packet = move_flow.decode_move_bc_with_system_and_active(
+        online_pve.movement_body(m, pose, 1234))
+    assert packet.position == pytest.approx(pose['position'])
+    assert packet.forward_back == packet.left_right == 0
+    assert packet.current_velocity == packet.max_velocity == 0
+    table = online_pve.controls.GROUND_RUN_STATES if running else online_pve.controls.GROUND_WALK_STATES
+    assert packet.state == table.get(axes, 1)
+
+
+def test_monster_motion_updates_do_not_restart_an_unchanged_gait():
+    client, _ = running()
+    m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    pose = dict(position=[2.8, 0., .2], heading=180, forwardBack=-1, leftRight=0, running=False)
+
+    def move(seq, position):
+        return client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH,
+            actorId=m['actorId'], eventSeq=seq, inputSeq=seq, serverTimeMs=3500+seq*100,
+            pose={**pose, 'position': position}))
+
+    first = move(1, pose['position'])
+    assert move_flow.decode_move_bc_with_system_and_active(first['send'][0]['body']).state == 2
+    moved = move(2, [2.6, 0., .2])
+    assert move_flow.decode_move_direct_bc(moved['send'][0]['body']).position == pytest.approx([2.6, 0., .2])
+    for seq in range(3, 23):
+        assert not move(seq, [2.6, 0., .2])['send']
+    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
+    assert source['poseSeq'] == 22
+    client.reply(None, 'actionChanged', action=dict(roomId='room-test', matchId=MATCH,
+        actorId=m['actorId'], eventSeq=1, actionSeq=2, actionId=None, state=2,
+        weaponId=m['kind']['weaponId'], durationMs=0, serverTimeMs=5900))
+    restored = move(23, [2.6, 0., .2])
+    assert move_flow.decode_move_bc_with_system_and_active(restored['send'][0]['body']).state == 2
