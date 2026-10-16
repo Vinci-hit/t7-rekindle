@@ -5,10 +5,11 @@
 #include "ClientPath.h"
 #include "MovementOverlay.h"
 #include "AudioDiagnostics.h"
+#include "AudioResourcePaths.h"
 #include <sstream>
 #include <utility>
 
-namespace t7 {
+namespace t7r {
 namespace {
 const char* CLIENT_HASH = "3c205c7efaf1956bc2c458b1073e5273a9fef29e3e5ee18418f93f418eeaa5c8";
 const char* PROTOCOL_HASH = "432ea9dd64d7b90af5fed323e52ce33d0a035a3b13cf4ac75a050f0611776d18";
@@ -207,9 +208,9 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
         return;
     }
     if (process_ || debugClient_) stop();
-    audioLog_ = log;
     if (cancelled && cancelled()) throw std::runtime_error("client launch cancelled");
     check(directory, config, log);
+    const auto audioPaths = prepareAudioResourcePaths(directory, log);
     if (log) logAudioEnvironment([&](std::string message) { log(DiagnosticLogLevel::Debug, std::move(message)); });
     outputDevice_ = resolveOutputDevice(config.outputDevice);
     outputDeviceVerified_ = !outputDevice_.selected;
@@ -232,14 +233,14 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
             const auto module = findMappedImageBase(process, executable);
             if (module.base != base) throw std::runtime_error("client mapped image identity mismatch before preparation");
             installClientImage(process, thread, image, cancelled);
+            if (audioPaths) installAudioResourcePaths(process, static_cast<uint32_t>(base), *audioPaths, log);
             lobbyNews_.install(process, static_cast<uint32_t>(base));
             installOutputDevice(process, static_cast<uint32_t>(base), outputDevice_);
             startupGate_.install(process, static_cast<uint32_t>(base));
             movementOverlay_.install(process, base, log, config.skipStartupAnimation);
-            const auto audioDirectory = directory.parent_path() / L"Data" / L"Audio" / L"Wwise" / L"Windows";
-            const auto audioRoot = fs::is_directory(audioDirectory) ? fs::absolute(audioDirectory) : fs::path{};
             graphicsSettings_.install(process, static_cast<uint32_t>(base), GetThreadId(thread),
-                                      config.dashAttack, config.movementAnimation, config.roomGateway != nullptr, audioRoot);
+                                      config.dashAttack, config.movementAnimation, config.combatProfiles,
+                                      config.roomGateway != nullptr, audioRoot);
             if (log && !audioRoot.empty()) log(DiagnosticLogLevel::Debug, "Audio directory initialized from the selected game directory");
             if (log) log(DiagnosticLogLevel::Debug, "Client code, imports, TP paths and movement adapted before first ResumeThread; disk binaries unchanged");
         }, log, cancelled, {{fs::absolute(directory / "TieJiWebHelper.exe"), WEB_HELPER_HASH,
@@ -304,7 +305,6 @@ void Bootstrap::stop() {
     }
     if (!cleanupError.empty()) throw std::runtime_error(cleanupError);
     debugClient_.reset(); process_ = nullptr; pid_ = 0;
-    audioLog_ = {};
     windowMonitor_ = {};
 }
 bool Bootstrap::pollGraphics(GraphicsValues& values, uint32_t& result, bool& applied) {
@@ -338,19 +338,7 @@ void Bootstrap::publishRemoteMotion(const std::array<RemoteMotion, MAX_WORLD_ACT
 }
 bool Bootstrap::pollWorld(WorldSnapshot& value) {
     if (testAdapter_.launch) return testAdapter_.pollWorld && testAdapter_.pollWorld(value);
-    if (!graphicsSettings_.world().poll(value)) return false;
-    std::array<uint32_t, 6> results{};
-    if (value.ready && graphicsSettings_.audio().pollCombat(value.instanceStartedAt, results) && audioLog_) {
-        bool loaded = true;
-        std::ostringstream text;
-        text << "Combat audio banks";
-        for (size_t i = 0; i < results.size(); ++i) {
-            loaded = loaded && (results[i] == 1 || results[i] == 69);
-            text << "; " << COMBAT_AUDIO_BANKS[i] << '=' << results[i];
-        }
-        audioLog_(loaded ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warn, text.str());
-    }
-    return true;
+    return graphicsSettings_.world().poll(value);
 }
 void Bootstrap::applyAudio(const AudioValues& values) {
     if (testAdapter_.launch) {

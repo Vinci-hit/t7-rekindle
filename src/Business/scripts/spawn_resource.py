@@ -1,9 +1,9 @@
-"""Infantry spawn and respawn placements from the selected client's map resource."""
+"""Static infantry placements and the original XML parser for offline export."""
 from functools import lru_cache
 import math
 import xml.etree.ElementTree as ET
 
-from .vfs_resource import readResource
+from . import map_data
 
 SPAWN_PATH = 'data/scene/map/lysd/dactorspawngroup.dat'
 
@@ -37,11 +37,22 @@ def parsePoints(data, flagName, counts):
                 raise ValueError("invalid spawn direction")
             heading = round(math.degrees(math.atan2(-direction[1], direction[0])))
             camps[1 if blue else 2].append((position, heading))
-    if any(len(camps[camp]) != count for camp, count in counts.items()):
-        raise ValueError("unsupported infantry spawn counts: " + flagName)
-    if len({position for points in camps.values() for position, _ in points}) != sum(counts.values()):
+    return validatePoints(camps, counts)
+
+
+def validatePoints(camps, counts):
+    if set(camps) != set(counts) or any(len(camps[camp]) != count for camp, count in counts.items()):
+        raise ValueError('unsupported infantry spawn counts')
+    for points in camps.values():
+        for position, heading in points:
+            if len(position) != 3 or any(type(v) not in (float, int) or not math.isfinite(v)
+                                         or abs(v) >= 100000 for v in position):
+                raise ValueError('invalid spawn position')
+            if type(heading) is not int or not -180 <= heading <= 180:
+                raise ValueError('invalid spawn heading')
+    if len({tuple(position) for points in camps.values() for position, _ in points}) != sum(counts.values()):
         raise ValueError("overlapping infantry spawns")
-    return {camp: tuple(points) for camp, points in camps.items()}
+    return {camp: tuple((tuple(position), heading) for position, heading in points) for camp, points in camps.items()}
 
 
 def parseSpawns(data):
@@ -53,10 +64,10 @@ def parseRespawns(data):
 
 
 @lru_cache(maxsize=1)
-def loadSpawns(clientDirectory):
-    return readResource(clientDirectory, 'map.vfs', SPAWN_PATH, parseSpawns)
+def loadSpawns(clientDirectory=''):
+    return validatePoints(map_data.SPAWNS, {1: 10, 2: 10})
 
 
 @lru_cache(maxsize=1)
-def loadRespawns(clientDirectory):
-    return readResource(clientDirectory, 'map.vfs', SPAWN_PATH, parseRespawns)
+def loadRespawns(clientDirectory=''):
+    return validatePoints(map_data.RESPAWNS, {1: 14, 2: 12})

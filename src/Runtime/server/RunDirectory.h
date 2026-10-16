@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 
-namespace t7 {
+namespace t7r {
 class RunDirectory final {
 public:
     explicit RunDirectory(const fs::path& dataRoot);

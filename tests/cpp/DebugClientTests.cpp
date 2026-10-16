@@ -6,13 +6,13 @@
 
 namespace {
 void require(bool result, const char* message) { if (!result) throw std::runtime_error(message); }
-t7::fs::path executable() {
+t7r::fs::path executable() {
     std::wstring path(32768, L'\0');
     const auto length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
     require(length && length < path.size(), "synthetic executable identity"); path.resize(length);
     return path;
 }
-DWORD launchFixture(const t7::fs::path& path) {
+DWORD launchFixture(const t7r::fs::path& path) {
     std::wstring command = L"\"" + path.wstring() + L"\"";
     STARTUPINFOW startup{}; startup.cb = sizeof(startup); PROCESS_INFORMATION process{};
     require(CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
@@ -24,8 +24,8 @@ DWORD launchFixture(const t7::fs::path& path) {
     require(state == WAIT_OBJECT_0 && observed, "fixture child exit");
     return code;
 }
-void copyGuiFixture(const t7::fs::path& source, const t7::fs::path& destination) {
-    auto bytes = t7::readFile(source);
+void copyGuiFixture(const t7r::fs::path& source, const t7r::fs::path& destination) {
+    auto bytes = t7r::readFile(source);
     IMAGE_DOS_HEADER dos{}; std::memcpy(&dos, bytes.data(), sizeof(dos));
     const auto offset = static_cast<size_t>(dos.e_lfanew) + offsetof(IMAGE_NT_HEADERS64, OptionalHeader)
         + offsetof(IMAGE_OPTIONAL_HEADER64, Subsystem);
@@ -37,36 +37,36 @@ void copyGuiFixture(const t7::fs::path& source, const t7::fs::path& destination)
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     require(output.good(), "debug GUI fixture write");
 }
-void verifyChildren(const t7::fs::path& original) {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-debug-tree-" + std::to_wstring(GetCurrentProcessId())
+void verifyChildren(const t7r::fs::path& original) {
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-debug-tree-" + std::to_wstring(GetCurrentProcessId())
                                                     + L"-" + std::to_wstring(GetTickCount64()));
-    require(t7::fs::create_directory(root), "fresh debug tree directory");
+    require(t7r::fs::create_directory(root), "fresh debug tree directory");
     const auto cleanup = [&] {
-        require(t7::fs::canonical(root).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()),
+        require(t7r::fs::canonical(root).parent_path() == t7r::fs::canonical(t7r::fs::temp_directory_path()),
                 "debug fixture cleanup escaped temporary directory");
-        t7::fs::remove_all(root);
+        t7r::fs::remove_all(root);
     };
     try {
         for (const auto* mode : {"allow", "unknown", "hash", "path", "stop"}) {
             const auto directory = root / mode;
-            require(t7::fs::create_directory(directory), "fresh debug tree case");
-            for (const auto* name : {"T7.DebugParent.exe", "T7.DebugChild.exe", "T7.DebugLeaf.exe"})
+            require(t7r::fs::create_directory(directory), "fresh debug tree case");
+            for (const auto* name : {"T7R.DebugParent.exe", "T7R.DebugChild.exe", "T7R.DebugLeaf.exe"})
                 copyGuiFixture(original, directory / name);
-            const auto hash = t7::fileHash(directory / "T7.DebugParent.exe");
-            std::vector<t7::ChildImageRule> children{{directory / "T7.DebugChild.exe", hash},
-                                                    {directory / "T7.DebugLeaf.exe", hash}};
+            const auto hash = t7r::fileHash(directory / "T7R.DebugParent.exe");
+            std::vector<t7r::ChildImageRule> children{{directory / "T7R.DebugChild.exe", hash},
+                                                    {directory / "T7R.DebugLeaf.exe", hash}};
             const std::string scenario = mode;
             if (scenario == "unknown") children.clear();
             if (scenario == "hash") children[0].sha256.assign(64, '0');
-            if (scenario == "path") children[0].executable = root / "T7.DebugChild.exe";
+            if (scenario == "path") children[0].executable = root / "T7R.DebugChild.exe";
             if (scenario == "stop") std::ofstream(directory / "hold-leaf.txt").put('1');
-            t7::DebugClient client;
+            t7r::DebugClient client;
             std::vector<HANDLE> observedChildren;
             std::mutex observations;
             std::string error;
             try {
-                client.start(directory / "T7.DebugParent.exe", hash, {}, [](HANDLE, HANDLE) {},
-                    [&](t7::DiagnosticLogLevel, const std::string& line) {
+                client.start(directory / "T7R.DebugParent.exe", hash, {}, [](HANDLE, HANDLE) {},
+                    [&](t7r::DiagnosticLogLevel, const std::string& line) {
                         const auto marker = line.find("Verified client child process; PID=");
                         if (marker != std::string::npos) {
                             const auto pid = static_cast<DWORD>(std::stoul(line.substr(marker + 35)));
@@ -77,10 +77,10 @@ void verifyChildren(const t7::fs::path& original) {
                     }, {}, children);
                 if (scenario == "stop") {
                     const auto deadline = GetTickCount64() + 10000;
-                    while (!t7::fs::exists(directory / "leaf-started.txt") && GetTickCount64() < deadline) {
+                    while (!t7r::fs::exists(directory / "leaf-started.txt") && GetTickCount64() < deadline) {
                         client.check(); Sleep(10);
                     }
-                    require(t7::fs::exists(directory / "leaf-started.txt"), "leaf readiness");
+                    require(t7r::fs::exists(directory / "leaf-started.txt"), "leaf readiness");
                 } else require(WaitForSingleObject(client.process(), 15000) == WAIT_OBJECT_0, "debug tree completion");
                 client.stop(); client.check();
             } catch (const std::exception& failure) { error = failure.what(); client.stop(); }
@@ -93,9 +93,9 @@ void verifyChildren(const t7::fs::path& original) {
             if (!childrenStopped) throw std::runtime_error("owned child left running in " + scenario);
             if (error.empty() != allowed) throw std::runtime_error("unexpected child identity decision for " + scenario + ": " + error);
             if (!allowed) require(error.find("unverified client child process") != std::string::npos
-                                  && error.find("t7.debugchild.exe") != std::string::npos, "wrong child rejection reason");
-            require(t7::fs::exists(directory / "child-started.txt") == allowed, "unverified child executed user code");
-            require(t7::fs::exists(directory / "leaf-started.txt") == allowed, "descendant execution coverage");
+                                  && error.find("t7r.debugchild.exe") != std::string::npos, "wrong child rejection reason");
+            require(t7r::fs::exists(directory / "child-started.txt") == allowed, "unverified child executed user code");
+            require(t7r::fs::exists(directory / "leaf-started.txt") == allowed, "descendant execution coverage");
             DWORD exitCode = 0;
             require(GetExitCodeProcess(client.process(), &exitCode) && exitCode == (scenario == "allow" ? 41u : 1u),
                     "owned parent exit code");
@@ -104,22 +104,22 @@ void verifyChildren(const t7::fs::path& original) {
         cleanup();
     } catch (...) { cleanup(); throw; }
 }
-void verifyUnhandledException(const t7::fs::path& original) {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-debug-fault-" + std::to_wstring(GetCurrentProcessId())
+void verifyUnhandledException(const t7r::fs::path& original) {
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-debug-fault-" + std::to_wstring(GetCurrentProcessId())
                                                     + L"-" + std::to_wstring(GetTickCount64()));
-    require(t7::fs::create_directory(root), "fresh debug fault directory");
-    const auto path = root / "T7.DebugFault.exe";
+    require(t7r::fs::create_directory(root), "fresh debug fault directory");
+    const auto path = root / "T7R.DebugFault.exe";
     const auto cleanup = [&] {
-        require(t7::fs::canonical(root).parent_path() == t7::fs::canonical(t7::fs::temp_directory_path()),
+        require(t7r::fs::canonical(root).parent_path() == t7r::fs::canonical(t7r::fs::temp_directory_path()),
                 "debug fault cleanup escaped temporary directory");
-        t7::fs::remove_all(root);
+        t7r::fs::remove_all(root);
     };
     try {
         copyGuiFixture(original, path);
-        t7::DebugClient client;
+        t7r::DebugClient client;
         std::vector<std::string> lines;
-        client.start(path, t7::fileHash(path), {}, [](HANDLE, HANDLE) {},
-                     [&](t7::DiagnosticLogLevel, const std::string& line) { lines.push_back(line); });
+        client.start(path, t7r::fileHash(path), {}, [](HANDLE, HANDLE) {},
+                     [&](t7r::DiagnosticLogLevel, const std::string& line) { lines.push_back(line); });
         require(WaitForSingleObject(client.process(), 10000) == WAIT_OBJECT_0, "faulting fixture did not exit");
         client.stop();
         std::string error;
@@ -139,15 +139,15 @@ void verifyUnhandledException(const t7::fs::path& original) {
 }
 int runDebugClientFixture() {
     const auto path = executable(); const auto name = path.filename().wstring();
-    if (name == L"T7.DebugFault.exe") { RaiseException(0xE0007107, EXCEPTION_NONCONTINUABLE, 0, nullptr); return 1; }
-    if (name == L"T7.DebugParent.exe") return launchFixture(path.parent_path() / "T7.DebugChild.exe") == 42 ? 41 : 1;
-    if (name == L"T7.DebugChild.exe") {
+    if (name == L"T7R.DebugFault.exe") { RaiseException(0xE0007107, EXCEPTION_NONCONTINUABLE, 0, nullptr); return 1; }
+    if (name == L"T7R.DebugParent.exe") return launchFixture(path.parent_path() / "T7R.DebugChild.exe") == 42 ? 41 : 1;
+    if (name == L"T7R.DebugChild.exe") {
         std::ofstream(path.parent_path() / "child-started.txt").put('1');
-        return launchFixture(path.parent_path() / "T7.DebugLeaf.exe") == 43 ? 42 : 1;
+        return launchFixture(path.parent_path() / "T7R.DebugLeaf.exe") == 43 ? 42 : 1;
     }
-    if (name == L"T7.DebugLeaf.exe") {
+    if (name == L"T7R.DebugLeaf.exe") {
         std::ofstream(path.parent_path() / "leaf-started.txt").put('1');
-        if (t7::fs::exists(path.parent_path() / "hold-leaf.txt")) Sleep(10000);
+        if (t7r::fs::exists(path.parent_path() / "hold-leaf.txt")) Sleep(10000);
         return 43;
     }
     return -1;
@@ -155,9 +155,9 @@ int runDebugClientFixture() {
 bool verifyDebugClient() {
     try {
         const auto path = executable();
-        const auto hash = t7::fileHash(path);
+        const auto hash = t7r::fileHash(path);
         for (bool cancel : {true, false}) {
-            t7::DebugClient client; bool prepared = false; std::string primaryError;
+            t7r::DebugClient client; bool prepared = false; std::string primaryError;
             try {
                 client.start(path, hash, {}, [&](HANDLE, HANDLE) {
                     prepared = true;

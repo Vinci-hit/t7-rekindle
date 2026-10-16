@@ -1,7 +1,7 @@
 #include "LobbyNews.h"
 #include "RemoteImage.h"
 
-namespace t7 {
+namespace t7r {
 LobbyNews::~LobbyNews() { stop(); }
 void LobbyNews::start(const fs::path& page) {
     stop();

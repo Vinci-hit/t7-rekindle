@@ -7,7 +7,7 @@
 [![Platform: Windows x64](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)](#使用启动器)
 [![Status: 开发中](https://img.shields.io/badge/Status-%E5%BC%80%E5%8F%91%E4%B8%AD-orange)](#当前状态)
 
-铁骑·重燃是一个独立开源项目，目标是重新实现《刀锋铁骑》的服务端，让玩家通过原版客户端重回熟悉的战场。我们希望先完成本地人机对战，再逐步支持局域网联机。
+铁骑·重燃（T7-Rekindle，简称 **T7R**）是一个独立开源项目，目标是重新实现《刀锋铁骑》的服务端，让玩家通过原版客户端重回熟悉的战场。我们希望先完成本地人机对战，再逐步支持局域网联机。`T7` 指原游戏，项目技术命名使用 `T7R`／`t7r`，见[项目命名规范](docs/development.md#项目命名规范)。
 
 项目不以营利为目的，欢迎开发者和玩家一起参与。
 
@@ -80,7 +80,7 @@ Rust 中心房间原型的构建、开发协议和测试见 [游戏服务说明]
 python -m pip install pytest==9.1.1
 python scripts/build.py --project all
 python -m pytest -q
-& .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe
+& .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe
 python scripts/integration_test.py --report artifacts/test-results/integration.json
 ```
 
@@ -88,7 +88,7 @@ python scripts/integration_test.py --report artifacts/test-results/integration.j
 
 ### 本地构建后运行
 
-`build.py` 只生成编译产物，`T7.ManagedHarness.exe` 是测试程序，不是启动器。运行前需打包，将启动器、NativeBridge、嵌入式 Python 和 Business 业务脚本组装到同一产品目录。不要直接运行 `artifacts/bin/` 中的启动器，也不要单独复制 EXE，否则可能因缺少依赖而出现“加载 NativeBridge 失败”。
+`build.py` 只生成编译产物，`T7R.ManagedHarness.exe` 是测试程序，不是启动器。运行前需打包，将启动器、NativeBridge、嵌入式 Python 和 Business 业务脚本组装到同一产品目录。不要直接运行 `artifacts/bin/` 中的启动器，也不要单独复制 EXE，否则可能因缺少依赖而出现“加载 NativeBridge 失败”。
 
 完成上述构建与测试后，下载官方 [CPython 3.14.4 AMD64 embeddable ZIP](https://www.python.org/ftp/python/3.14.4/python-3.14.4-embed-amd64.zip)，保持 ZIP 格式；它与构建时使用的 Python 开发安装不同。
 

@@ -5,7 +5,7 @@
 #include <cstring>
 
 namespace {
-uint32_t get32(const t7::Bytes& bytes, size_t offset) {
+uint32_t get32(const t7r::Bytes& bytes, size_t offset) {
     uint32_t result = 0;
     for (unsigned i = 0; i < 4; ++i) result |= static_cast<uint32_t>(bytes.at(offset + i)) << (8 * i);
     return result;
@@ -13,11 +13,11 @@ uint32_t get32(const t7::Bytes& bytes, size_t offset) {
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
-void reject(uint32_t table, uint32_t capacity, const std::vector<t7::ClientImportModule>& modules) {
-    t7::Bytes image(4096, 0xA5);
+void reject(uint32_t table, uint32_t capacity, const std::vector<t7r::ClientImportModule>& modules) {
+    t7r::Bytes image(4096, 0xA5);
     const auto original = image;
     bool rejected = false;
-    try { t7::writeClientImports(image, table, capacity, modules); }
+    try { t7r::writeClientImports(image, table, capacity, modules); }
     catch (const std::runtime_error&) { rejected = true; }
     require(rejected && image == original, "invalid imports accepted or partially published");
 }
@@ -25,10 +25,10 @@ void reject(uint32_t table, uint32_t capacity, const std::vector<t7::ClientImpor
 
 bool verifyClientImports() {
     try {
-        const std::vector<t7::ClientImportModule> modules{{"First.dll", 0x100, {"One", "Two"}},
+        const std::vector<t7r::ClientImportModule> modules{{"First.dll", 0x100, {"One", "Two"}},
                                                         {"Second.dll", 0x200, {"Three"}}};
-        t7::Bytes image(4096, 0xA5);
-        const auto directory = t7::writeClientImports(image, 0x400, 0x800, modules);
+        t7r::Bytes image(4096, 0xA5);
+        const auto directory = t7r::writeClientImports(image, 0x400, 0x800, modules);
         require(directory.rva == 0x400 && directory.size == 60 && directory.symbolCount == 3, "import directory metadata");
         require(directory.iatRva == 0x100 && directory.iatSize == 0x108, "IAT metadata");
         for (size_t i = 0; i < modules.size(); ++i) {
@@ -61,14 +61,14 @@ bool verifyClientImports() {
         bad = modules; bad[1].symbols = {std::string(4096, 'A')}; reject(0x400, 0x800, bad);
         bad = modules; bad[1].dll = "../Second.dll"; reject(0x400, 0x800, bad);
         bad = modules; bad[1].dll = "Second dll"; reject(0x400, 0x800, bad);
-        const auto& fixed = t7::clientImportModules();
+        const auto& fixed = t7r::clientImportModules();
         size_t count = 0;
         for (const auto& module : fixed) count += module.symbols.size();
         require(fixed.size() == 19 && count == 794, "client import binding coverage");
         const auto& kernel = fixed.at(5);
         require(kernel.symbols.at((0x016F6274 - kernel.iatRva) / 4) == "WriteFile", "write binding reversed");
         require(kernel.symbols.at((0x016F6278 - kernel.iatRva) / 4) == "ReadFile", "read binding reversed");
-        const auto d3dx = std::find_if(fixed.begin(), fixed.end(), [](const t7::ClientImportModule& module) {
+        const auto d3dx = std::find_if(fixed.begin(), fixed.end(), [](const t7r::ClientImportModule& module) {
             return module.dll == "d3dx9_43.dll";
         });
         require(d3dx != fixed.end(), "D3DX module missing");

@@ -4,16 +4,17 @@ from pathlib import Path
 import pytest
 
 from Business.runtime.host_runtime import Runtime
-from Business.scripts import bot_names, client_resources, dash_resources, movement_animation, navmesh_resource, spawn_resource, vfs_resource
-from dash_fixture import parameters, profile, states, weapons
-from movement_animation_fixture import character, profile as animationProfile
+from Business.scripts import bot_names, client_resources, combat_resources, dash_resources, movement_animation, navmesh_resource, spawn_resource, vfs_resource
+from dash_fixture import parameters, states, weapons
+from movement_animation_fixture import character
 from vfs_fixture import NAME_PATH, NAV_PATH, SPAWN_PATH, archiveBytes, nameTable, writeClient
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    directory, digest = writeClient(tmp_path / 'client')
-    monkeypatch.setattr(navmesh_resource, 'NAV_HASH', digest)
+    directory, _ = writeClient(tmp_path / 'client')
+    # Native profile enumeration is covered by test_combat_resources.py.
+    monkeypatch.setattr(combat_resources, 'nativeProfiles', lambda _: [])
     yield directory
     for loader in (bot_names.loadNames, navmesh_resource.loadNavigation,
                    spawn_resource.loadSpawns, spawn_resource.loadRespawns, dash_resources.loadDashAttack):
@@ -32,16 +33,16 @@ def test_preflight_repacked_resources_are_read_only(client):
     assert len(bot_names.loadNames(str(client))) == 30
 
 
-def test_missing_dash_tables_report_errors_without_failing_other_resources(client):
+def test_missing_client_combat_tables_use_server_owned_static_configuration(client):
     result = client_resources.checkResources(str(client))
-    assert not result['dashAttack']['enabled']
-    assert any('[T7_RESOURCE:entry_missing]' in item['message'] for item in result['diagnostics'])
-    assert any('dash-disabled' in item['message'] for item in result['diagnostics'])
+    assert result['dashAttack']['enabled']
+    assert result['dashAttack']['durationMs'] == 1333
+    assert result['movementAnimation']['enabled']
+    assert result['diagnostics'] == []
 
 
-def test_recheck_replaces_disabled_profile_after_resources_are_repaired(client):
+def test_recheck_client_combat_table_changes_do_not_replace_static_profiles(client):
     before = client_resources.checkResources(str(client))
-    assert not before['dashAttack']['enabled'] and not before['movementAnimation']['enabled']
     names = nameTable([('npc', f'测试名字{i}') for i in range(30)])
     (client.parent / 'vfs/data1.vfs').write_bytes(archiveBytes([
         (NAME_PATH, names, 3), ('../' + dash_resources.WEAPON_PATH, weapons(), 3),
@@ -49,7 +50,7 @@ def test_recheck_replaces_disabled_profile_after_resources_are_repaired(client):
     (client.parent / 'vfs/actor.vfs').write_bytes(archiveBytes([
         ('../' + movement_animation.CHARACTERS[(110001, 1030411)], character(), 3)]))
     result = client_resources.checkResources(str(client))
-    assert result == {'dashAttack': profile(), 'movementAnimation': animationProfile(), 'diagnostics': []}
+    assert result == before
 
 
 @pytest.mark.parametrize('overlay', ['vfs/MapPatch.vfs', 'vfs/extra.vfs', 'vfs/MapPatch2Remove.txt',
@@ -66,21 +67,35 @@ def test_manifest_references_and_version_are_not_compatibility_decisions(client)
     client_resources.checkResources(str(client))  # No update.lst is required.
     (client.parent / 'update.lst').write_text('v1.2.3.4Beta\nvfs/MapPatch.vfs\nvfs/MapPatch2Remove.txt\n', encoding='utf-8')
     client_resources.checkResources(str(client))
-    (client.parent / 'vfs/map.vfs').write_bytes(b'bad archive, same client version')
+    (client.parent / 'vfs/data1.vfs').write_bytes(b'bad archive, same client version')
     with pytest.raises(vfs_resource.ResourceError, match='directory_invalid'):
         client_resources.checkResources(str(client))
 
 
-@pytest.mark.parametrize('entry,archive', [(NAV_PATH, 'map.vfs'), (SPAWN_PATH, 'map.vfs'), (NAME_PATH, 'data1.vfs')])
-def test_content_validation_retained(client, entry, archive):
-    (client.parent / 'vfs' / archive).write_bytes(archiveBytes([(entry, b'unsupported content', 3)]))
-    loader = {NAV_PATH: navmesh_resource.loadNavigation, SPAWN_PATH: spawn_resource.loadSpawns,
-              NAME_PATH: bot_names.loadNames}[entry]
-    loader.cache_clear()
+def test_client_name_content_validation_retained(client):
+    (client.parent / 'vfs/data1.vfs').write_bytes(archiveBytes([(NAME_PATH, b'unsupported content', 3)]))
+    bot_names.loadNames.cache_clear()
     with pytest.raises(vfs_resource.ResourceError, match='content_mismatch') as error:
-        loader(str(client))
+        bot_names.loadNames(str(client))
     assert error.value.__cause__ is not None
-    assert entry[3:] in str(error.value)
+    assert NAME_PATH[3:] in str(error.value)
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_preflight_uses_static_map_even_when_client_map_archive_changes(client, monkeypatch, missing):
+    archive = client.parent / 'vfs/map.vfs'
+    if missing:
+        archive.unlink()
+    else:
+        archive.write_bytes(b'not a map archive')
+    readEntry = vfs_resource.readEntry
+    def onlyNames(path, entry):
+        assert path.name == 'data1.vfs' and entry == bot_names.NAME_PATH
+        return readEntry(path, entry)
+    monkeypatch.setattr(vfs_resource, 'readEntry', onlyNames)
+    client_resources.checkResources(str(client))
+    assert spawn_resource.loadSpawns(str(client))[1][0] == ((272.451, 157.634, 0.217519), -116)
+    assert len(navmesh_resource.loadNavigation(str(client)).polygons) == 1803
 
 
 def test_recheck_drops_cached_success_and_can_retry(client):
@@ -97,17 +112,22 @@ def test_recheck_drops_cached_success_and_can_retry(client):
     client_resources.checkResources(str(client))
 
 
-def test_revision_preflight_uses_same_resource_loaders_and_retires_cache(client, tmp_path):
+def test_revision_preflight_uses_same_resource_loaders_and_retires_cache(client, tmp_path, monkeypatch):
     business = Path(__file__).resolve().parents[2] / 'src/Business'
     runtime = Runtime(business / 'scripts', tmp_path / 'revisions')
     revision = runtime.active.path
     try:
         nav = importlib.import_module(runtime.active.name + '.navmesh_resource')
-        nav.NAV_HASH = navmesh_resource.NAV_HASH
+        for name in ('map_data.py', 'map_navigation_data.py'):
+            assert (revision / name).read_bytes() == (business / 'scripts' / name).read_bytes()
+        combat = importlib.import_module(runtime.active.name + '.combat_resources')
+        monkeypatch.setattr(combat, 'nativeProfiles', lambda _: [])
         result = runtime.checkResources(str(client))
-        assert not result['dashAttack']['enabled'] and result['diagnostics']
+        assert result['dashAttack']['durationMs'] == 1333 and not result['diagnostics']
         assert nav.loadNavigation.cache_info().currsize == 1
         (client.parent / 'vfs/map.vfs').unlink()
+        assert runtime.checkResources(str(client)) == result
+        (client.parent / 'vfs/data1.vfs').unlink()
         with pytest.raises(ValueError, match='archive_read'):
             runtime.checkResources(str(client))
     finally:

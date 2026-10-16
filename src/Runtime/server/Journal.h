@@ -7,7 +7,7 @@
 #include <deque>
 #include <fstream>
 
-namespace t7 {
+namespace t7r {
 class Journal {
 public:
     explicit Journal(const fs::path& root, size_t segmentLimit = 64 * 1024 * 1024,

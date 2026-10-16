@@ -57,6 +57,22 @@ def stageTable():
     struct.pack_into('<4sIII', header, 0, b'MSES', 7, 4, 3)
     struct.pack_into('<I', header, 132, 140)
     return bytes(header) + struct.pack('<III', 1, 2, 3)
+def staticMapData():
+    from Business.scripts import map_data, navmesh_resource, spawn_resource
+    data = ET.tostring(spawnXml())
+    metadata = {name: getattr(map_data, name) for name in ('RESOURCE_ID', 'MAP_NAME', 'POSITION', 'ENEMY_POSITION')}
+    metadata.update(SPAWNS=spawn_resource.parseSpawns(data), RESPAWNS=spawn_resource.parseRespawns(data))
+    resource = navmesh_resource.TagReader(syntheticTagfile()).document()
+    navigation = dict(VERTICES=tuple(tuple(v[:3]) for v in resource['vertices']),
+        EDGES=tuple(tuple(e[key] for key in navmesh_resource.EDGE_FIELDS) for e in resource['edges']),
+        FACES=tuple(tuple(f[key] for key in navmesh_resource.FACE_FIELDS) for f in resource['faces']))
+    return {'map_data.py': metadata, 'map_navigation_data.py': navigation}
+
+
+def writeStaticMapData(directory):
+    for filename, values in staticMapData().items():
+        text = '\n'.join(f'{name} = {value!r}' for name, value in values.items()) + '\n'
+        (directory / filename).write_text(text, encoding='utf-8')
 
 
 def vint(value):

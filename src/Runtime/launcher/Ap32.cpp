@@ -2,7 +2,7 @@
 #include <array>
 #include <utility>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr std::array<uint32_t, 256> makeCrcTable() {
     std::array<uint32_t, 256> table{};

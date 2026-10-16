@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public enum SessionState : uint
     {

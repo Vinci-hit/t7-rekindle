@@ -12,12 +12,12 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class ReleaseHistoryTests
     {

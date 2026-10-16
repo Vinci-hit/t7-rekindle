@@ -3,7 +3,7 @@
 #include "WorldHookCode.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t WORLD_RAY_RVA = 0x10FA3B0, CLOSEST_HIT_RVA = 0x108BFA0, MATERIAL_RVA = 0x29D4B0;
 constexpr uint32_t SCENE_MANAGER_RVA = 0x2E24AF8, PHYSICS_MANAGER_RVA = 0x2D379A8;

@@ -3,16 +3,16 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
-using T7.Rekindle.Desktop.Views;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Views;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class QqLoginUiTests
     {
         internal static void Run(string output)
         {
-            Assert(T7.Rekindle.Desktop.Services.WindowLayoutController.CalculateSize(1920, 1032, 1, 636, 378, 1)
+            Assert(T7R.Desktop.Services.WindowLayoutController.CalculateSize(1920, 1032, 1, 636, 378, 1)
                 == new Size(636, 378), "login viewport was rounded away from the approved logical size");
             int detections = 0, creations = 0;
             bool available = false;

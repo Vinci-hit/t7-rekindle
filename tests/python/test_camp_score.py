@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 import struct
 
 import pytest
@@ -63,7 +64,7 @@ def test_lethal_hit_updates_only_the_killers_camp_once(multi, camp, attacker, ta
     pair = actors.pair(world, attacker, target)
     combat.applyHit(multi, attacker, target, pair)
     assert not updates(multi)
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(multi, attacker, target, pair)
     packet, = updates(multi)
     assert struct.unpack_from('>Q', packet['body'], 2)[0] == multi.now
@@ -82,7 +83,7 @@ def test_lethal_hit_updates_only_the_killers_camp_once(multi, camp, attacker, ta
 
 def test_players_and_bots_contribute_to_the_same_camp_total(multi):
     for attacker, target in ((1, 2), (12, 3), (4, 13), (4, 12)):
-        actors.data(multi, target)['health'] = combat.DAMAGE
+        actors.data(multi, target)['health'] = NORMAL_DAMAGE
         combat.applyHit(multi, attacker, target, actors.pair(sample(multi), attacker, target))
     assert [totals(packet) for packet in updates(multi)] == [(0, 1), (0, 2), (1, 2), (2, 2)]
 
@@ -90,7 +91,7 @@ def test_players_and_bots_contribute_to_the_same_camp_total(multi):
 def test_multi_kill_publishes_cumulative_camp_totals_per_victim(multi):
     _, targets, _ = cluster(multi)
     for rid in targets:
-        actors.data(multi, rid)['health'] = combat.DAMAGE
+        actors.data(multi, rid)['health'] = NORMAL_DAMAGE
     attack(multi)
     advance(multi, combat.hitTimer(1))
     assert [totals(packet) for packet in updates(multi)] == [(0, 1), (0, 2), (0, 3)]

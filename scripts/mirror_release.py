@@ -198,7 +198,7 @@ def main() -> None:
         base_url = normalize_base_url(os.environ["R2_PUBLIC_BASE_URL"])
         store = AwsR2Store(os.environ["R2_ACCOUNT_ID"], os.environ["R2_BUCKET"])
         if arguments.backfill_notes:
-            with tempfile.TemporaryDirectory(prefix="t7-r2-notes-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="t7r-r2-notes-") as temporary:
                 backfill_notes(list_releases(repository), store, base_url, Path(temporary), verify_public_text)
             return
         release = json.loads(run_command(["gh", "api",
@@ -210,7 +210,7 @@ def main() -> None:
             return
         parse_version(arguments.tag)
         names = asset_names(arguments.tag)
-        with tempfile.TemporaryDirectory(prefix="t7-r2-release-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="t7r-r2-release-") as temporary:
             directory = Path(temporary)
             command = ["gh", "release", "download", "--repo", repository, "--dir", str(directory)]
             for name in names.values():

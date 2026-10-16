@@ -11,20 +11,22 @@
 #include <thread>
 #include <utility>
 
-bool verifyJournalContracts(const t7::fs::path& fixtureRoot);
-bool verifyServerEventOrder(const t7::fs::path& fixtureRoot);
+bool verifyJournalContracts(const t7r::fs::path& fixtureRoot);
+bool verifyServerEventOrder(const t7r::fs::path& fixtureRoot);
+bool verifyServerContext(const t7r::fs::path& fixtureRoot);
+bool verifyTitleRuntime(const t7r::fs::path& fixtureRoot);
 bool verifyServerAudioDiagnostics();
-bool verifyDiagnosticLogs(const t7::fs::path& fixtureRoot);
-bool verifyFailureCleanup(const t7::fs::path& packageRoot, bool cancel);
-bool verifyNamedSessionExit(const t7::fs::path& packageRoot, DWORD exitCode, bool normalExit);
-bool verifyWindowCloseCleanup(const t7::fs::path& packageRoot, bool failCleanup);
-bool verifyOperationPublication(const t7::fs::path& packageRoot, uint32_t expectedStatus);
+bool verifyDiagnosticLogs(const t7r::fs::path& fixtureRoot);
+bool verifyFailureCleanup(const t7r::fs::path& packageRoot, bool cancel);
+bool verifyNamedSessionExit(const t7r::fs::path& packageRoot, DWORD exitCode, bool normalExit);
+bool verifyWindowCloseCleanup(const t7r::fs::path& packageRoot, bool failCleanup);
+bool verifyOperationPublication(const t7r::fs::path& packageRoot, uint32_t expectedStatus);
 bool verifyMovementOverlay();
 bool verifyMovementHookExecution();
-bool verifyGraphicsHookExecution();
-bool verifyGraphicsSession(const t7::fs::path& packageRoot);
-bool verifyResourcePreflight(const t7::fs::path& packageRoot);
-bool verifyAudioSession(const t7::fs::path& packageRoot);
+bool verifyGraphicsHookExecution(bool combatOnly = false, bool titlesOnly = false);
+bool verifyGraphicsSession(const t7r::fs::path& packageRoot);
+bool verifyResourcePreflight(const t7r::fs::path& packageRoot);
+bool verifyAudioSession(const t7r::fs::path& packageRoot);
 
 bool verifyLobbyNews();
 
@@ -60,19 +62,19 @@ bool verifyJobAssignmentOrder() {
 
 bool verifyFakeBootstrapAdapter() {
     bool checked = false, launched = false, stopped = false, adapted = false;
-    t7::Bootstrap::TestAdapter adapter;
-    adapter.check = [&checked](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&) {
+    t7r::Bootstrap::TestAdapter adapter;
+    adapter.check = [&checked](const t7r::fs::path&, const t7r::Config&, const t7r::DiagnosticLogCallback&) {
         checked = true;
     };
-    adapter.launch = [&launched](const t7::fs::path&, const t7::Config&, const t7::DiagnosticLogCallback&,
+    adapter.launch = [&launched](const t7r::fs::path&, const t7r::Config&, const t7r::DiagnosticLogCallback&,
                                  const std::function<bool()>&, const std::function<void()>& adapting) {
         launched = true;
         if (adapting) adapting();
     };
     adapter.running = [&launched, &stopped] { return launched && !stopped; };
     adapter.stop = [&stopped] { stopped = true; };
-    t7::Bootstrap bootstrap(std::move(adapter));
-    t7::Config config;
+    t7r::Bootstrap bootstrap(std::move(adapter));
+    t7r::Config config;
     bootstrap.check(L"synthetic-client", config);
     bool cancelled = false;
     try {
@@ -87,11 +89,11 @@ bool verifyFakeBootstrapAdapter() {
     return stopped && !bootstrap.running();
 }
 
-std::string journalIndex(const t7::fs::path& root) {
+std::string journalIndex(const t7r::fs::path& root) {
     std::string result;
     std::error_code error;
-    if (!t7::fs::exists(root, error)) return result;
-    for (const auto& entry : t7::fs::recursive_directory_iterator(root, error)) {
+    if (!t7r::fs::exists(root, error)) return result;
+    for (const auto& entry : t7r::fs::recursive_directory_iterator(root, error)) {
         if (error) break;
         if (entry.is_regular_file(error) && entry.path().extension() == L".jsonl") {
             std::ifstream input(entry.path());
@@ -102,20 +104,20 @@ std::string journalIndex(const t7::fs::path& root) {
     return result;
 }
 
-bool verifyWireCapture(const t7::fs::path& packageRoot, bool capture) {
-    auto writableRoot = t7::fs::temp_directory_path() /
+bool verifyWireCapture(const t7r::fs::path& packageRoot, bool capture) {
+    auto writableRoot = t7r::fs::temp_directory_path() /
         (L"T7-Rekindle-wire-capture-" + std::to_wstring(GetCurrentProcessId()) +
          (capture ? L"-on" : L"-off"));
     std::error_code cleanup;
-    t7::fs::remove_all(writableRoot, cleanup);
-    t7::Config config;
+    t7r::fs::remove_all(writableRoot, cleanup);
+    t7r::Config config;
     config.captureWire = capture;
-    t7::Server server;
+    t7r::Server server;
     server.start(config, packageRoot, writableRoot);
     SOCKET client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (client == INVALID_SOCKET) {
         server.stop();
-        t7::fs::remove_all(writableRoot, cleanup);
+        t7r::fs::remove_all(writableRoot, cleanup);
         return false;
     }
     sockaddr_in address{}; address.sin_family = AF_INET;
@@ -130,9 +132,9 @@ bool verifyWireCapture(const t7::fs::path& packageRoot, bool capture) {
     server.stop();
     auto index = journalIndex(writableRoot);
     uintmax_t stored = 0;
-    for (const auto& entry : t7::fs::recursive_directory_iterator(writableRoot))
+    for (const auto& entry : t7r::fs::recursive_directory_iterator(writableRoot))
         if (entry.is_regular_file() && entry.path().extension() == L".bin") stored += entry.file_size();
-    t7::fs::remove_all(writableRoot, cleanup);
+    t7r::fs::remove_all(writableRoot, cleanup);
     if (!connected || !sent || index.find("\"direction\":\"C2S\"") == std::string::npos) return false;
     auto record = index.substr(index.find("\"direction\":\"C2S\""));
     record = record.substr(0, record.find('\n'));
@@ -149,14 +151,14 @@ bool verifyWireCapture(const t7::fs::path& packageRoot, bool capture) {
                     : stored == 0 && record.find("\"wireSha256\":null") != std::string::npos);
 }
 
-bool verifySyntheticAuth(const t7::fs::path& packageRoot) {
-    auto writableRoot = t7::fs::temp_directory_path() /
+bool verifySyntheticAuth(const t7r::fs::path& packageRoot) {
+    auto writableRoot = t7r::fs::temp_directory_path() /
         (L"T7-Rekindle-auth-test-" + std::to_wstring(GetCurrentProcessId()));
     std::error_code cleanup;
-    t7::fs::remove_all(writableRoot, cleanup);
-    t7::Config config;
+    t7r::fs::remove_all(writableRoot, cleanup);
+    t7r::Config config;
     config.runtimeMovement = false; // Transport/world delivery does not require client VFS assets.
-    t7::Server server;
+    t7r::Server server;
     server.start(config, packageRoot, writableRoot);
     std::vector<SOCKET> clients;
     const unsigned char auth[29] = {
@@ -196,7 +198,7 @@ bool verifySyntheticAuth(const t7::fs::path& packageRoot) {
     for (const auto& client : snapshot.clients) if (client.authenticated) ++authenticated;
     valid = valid && authenticated == clients.size() && clients.size() == 3;
     for (unsigned frame = 0; frame < 3; ++frame) {
-        t7::WorldSnapshot world;
+        t7r::WorldSnapshot world;
         world.ready = true; world.instanceStartedAt = 100; world.sampledAt = GetTickCount64();
         if (!server.needsWorld()) { valid = false; break; }
         server.updateWorld(world);
@@ -222,19 +224,19 @@ bool verifySyntheticAuth(const t7::fs::path& packageRoot) {
             && record.find("\"wireSha256\":null") != std::string::npos
             && length != std::string::npos && std::stoull(record.substr(length + 13)) > 0;
     }
-    t7::fs::remove_all(writableRoot, cleanup);
+    t7r::fs::remove_all(writableRoot, cleanup);
     return valid;
 }
 
-bool waitForOperation(const std::shared_ptr<t7::bridge::Session>& session,
+bool waitForOperation(const std::shared_ptr<t7r::bridge::Session>& session,
                       uint64_t operationId, uint32_t expectedStatus) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < deadline) {
-        t7::bridge::Operation operation;
-        if (session->operation(operationId, operation) != T7NB_OK) return false;
-        if (operation.status == T7NB_OPERATION_SUCCEEDED
-            || operation.status == T7NB_OPERATION_CANCELLED
-            || operation.status == T7NB_OPERATION_FAILED) {
+        t7r::bridge::Operation operation;
+        if (session->operation(operationId, operation) != T7RNB_OK) return false;
+        if (operation.status == T7RNB_OPERATION_SUCCEEDED
+            || operation.status == T7RNB_OPERATION_CANCELLED
+            || operation.status == T7RNB_OPERATION_FAILED) {
             return operation.status == expectedStatus;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -242,17 +244,17 @@ bool waitForOperation(const std::shared_ptr<t7::bridge::Session>& session,
     return false;
 }
 
-bool verifySessionAssembly(const t7::fs::path& packageRoot) {
+bool verifySessionAssembly(const t7r::fs::path& packageRoot) {
     struct FakeState {
         bool launched = false;
         bool stopped = false;
         bool clientRunning = false;
     };
     auto state = std::make_shared<FakeState>();
-    t7::Bootstrap::TestAdapter adapter;
+    t7r::Bootstrap::TestAdapter adapter;
     adapter.launch = [state](
-        const t7::fs::path&, const t7::Config& config,
-        const t7::DiagnosticLogCallback& log,
+        const t7r::fs::path&, const t7r::Config& config,
+        const t7r::DiagnosticLogCallback& log,
         const std::function<bool()>& cancelled,
         const std::function<void()>& adapting) {
         if (!config.ports[0] || !config.ports[1] || !config.ports[2])
@@ -261,7 +263,7 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
         state->launched = true;
         state->clientRunning = true;
         if (adapting) adapting();
-        if (log) log(t7::DiagnosticLogLevel::Info, "synthetic client adapter launched");
+        if (log) log(t7r::DiagnosticLogLevel::Info, "synthetic client adapter launched");
     };
     adapter.running = [state] { return state->clientRunning; };
     adapter.stop = [state] {
@@ -269,22 +271,22 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
         state->clientRunning = false;
     };
 
-    auto session = t7::bridge::Session::createForTest(
-        t7::utf8(packageRoot.wstring()), std::move(adapter));
-    const auto clientDirectory = t7::utf8(
+    auto session = t7r::bridge::Session::createForTest(
+        t7r::utf8(packageRoot.wstring()), std::move(adapter));
+    const auto clientDirectory = t7r::utf8(
         (packageRoot / "synthetic-client" / "Bin").wstring());
     uint64_t startId = 0;
-    if (session->submit(T7NB_OPERATION_START, clientDirectory, startId) != T7NB_OK
-        || !waitForOperation(session, startId, T7NB_OPERATION_SUCCEEDED)
+    if (session->submit(T7RNB_OPERATION_START, clientDirectory, startId) != T7RNB_OK
+        || !waitForOperation(session, startId, T7RNB_OPERATION_SUCCEEDED)
         || !state->launched) {
         session->requestClose();
         session->waitForWorkerForTest(std::chrono::seconds(5));
         return false;
     }
 
-    t7::bridge::Snapshot running;
-    if (session->cancel(startId) != T7NB_NOT_READY || session->snapshot(running) != T7NB_OK
-        || running.state != T7NB_STATE_RUNNING
+    t7r::bridge::Snapshot running;
+    if (session->cancel(startId) != T7RNB_NOT_READY || session->snapshot(running) != T7RNB_OK
+        || running.state != T7RNB_STATE_RUNNING
         || (running.flags & 1u) != 0
         || !running.ports[0] || !running.ports[1] || !running.ports[2]
         || running.ports[0] == running.ports[1]
@@ -295,16 +297,16 @@ bool verifySessionAssembly(const t7::fs::path& packageRoot) {
     }
 
     uint64_t stopId = 0;
-    if (session->submit(T7NB_OPERATION_STOP, {}, stopId) != T7NB_OK
-        || !waitForOperation(session, stopId, T7NB_OPERATION_SUCCEEDED)
+    if (session->submit(T7RNB_OPERATION_STOP, {}, stopId) != T7RNB_OK
+        || !waitForOperation(session, stopId, T7RNB_OPERATION_SUCCEEDED)
         || !state->stopped) {
         session->requestClose();
         session->waitForWorkerForTest(std::chrono::seconds(5));
         return false;
     }
-    t7::bridge::Snapshot idle;
-    const bool valid = session->snapshot(idle) == T7NB_OK
-        && idle.state == T7NB_STATE_IDLE
+    t7r::bridge::Snapshot idle;
+    const bool valid = session->snapshot(idle) == T7RNB_OK
+        && idle.state == T7RNB_STATE_IDLE
         && (idle.flags & 1u) != 0
         && idle.ports[0] == 0 && idle.ports[1] == 0 && idle.ports[2] == 0;
     session->requestClose();
@@ -319,9 +321,9 @@ int wmain(int argc, wchar_t** argv) {
         int result = 0;
         try {
             const bool scene = std::wstring(argv[1]) == L"--room-scene";
-            t7::Config config; config.runtimeMovement = scene; config.playerName = "Player";
-            if (scene) config.clientDirectory = t7::fs::path(argv[2]) / "synthetic-client" / "Bin";
-            t7::Server server; server.start(config, argv[2], argv[3]);
+            t7r::Config config; config.runtimeMovement = scene; config.playerName = "Player";
+            if (scene) config.clientDirectory = t7r::fs::path(argv[2]) / "synthetic-client" / "Bin";
+            t7r::Server server; server.start(config, argv[2], argv[3]);
             std::cout << "READY " << server.boundConfig().ports[1];
             if (scene) std::cout << ' ' << server.boundConfig().ports[2];
             std::cout << std::endl;
@@ -330,7 +332,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (!scene) throw std::runtime_error("world sampling requires the scene fixture");
                 std::istringstream input(command);
                 std::string kind;
-                t7::WorldSnapshot world;
+                t7r::WorldSnapshot world;
                 auto& actor = world.actors[0];
                 if (!(input >> kind >> world.instanceStartedAt >> actor.position[0]
                         >> actor.position[1] >> actor.position[2] >> actor.heading)
@@ -340,7 +342,7 @@ int wmain(int argc, wchar_t** argv) {
                 while (!server.needsWorld() && GetTickCount64() < deadline) Sleep(1);
                 world.ready = actor.ready = true; world.sampledAt = GetTickCount64();
                 if (kind != "world") {
-                    t7::BladeContactEvent event;
+                    t7r::BladeContactEvent event;
                     event.weaponContact = kind == "weapon-contact";
                     if (!(input >> event.sequence >> event.state >> event.hit.targetId))
                         throw std::runtime_error("invalid synthetic blade contact");
@@ -368,18 +370,24 @@ int wmain(int argc, wchar_t** argv) {
         }
         WSACleanup(); return result;
     }
-    const auto dispatched = t7::detail::TimePoint{};
+    const auto dispatched = t7r::detail::TimePoint{};
+    if (argc == 3 && std::wstring(argv[1]) == L"--title-runtime")
+        return verifyTitleRuntime(argv[2]) ? 0 : 1;
+    if (argc == 3 && std::wstring(argv[1]) == L"--server-context")
+        return verifyServerContext(argv[2]) && verifyServerEventOrder(argv[2]) ? 0 : 1;
+    if (argc == 2 && std::wstring(argv[1]) == L"--audio-notifications") return verifyServerAudioDiagnostics() ? 0 : 1;
+    const auto dispatched = t7r::detail::TimePoint{};
     const auto committed = dispatched + std::chrono::milliseconds(231);
     for (const auto* id : {"1:battle-action-phase", "1:bot-action-phase-20", "1:bot-release", "1:combat-hurt-2"}) {
-        if (!t7::detail::animationTimer(id)
-            || t7::detail::timerDeadline(id, dispatched, committed, 640) != committed + std::chrono::milliseconds(640)) {
+        if (!t7r::detail::animationTimer(id)
+            || t7r::detail::timerDeadline(id, dispatched, committed, 640) != committed + std::chrono::milliseconds(640)) {
             std::cerr << "AI callback time shortened a native animation deadline\n";
             return 1;
         }
     }
     for (const auto* id : {"", "1:actors-pulse", "1:actors-decision", "1:bot-think-20", "1:bot-move"}) {
-        if (t7::detail::animationTimer(id)
-            || t7::detail::timerDeadline(id, dispatched, committed, 50) != dispatched + std::chrono::milliseconds(50)) {
+        if (t7r::detail::animationTimer(id)
+            || t7r::detail::timerDeadline(id, dispatched, committed, 50) != dispatched + std::chrono::milliseconds(50)) {
             std::cerr << "decision/movement timer was promoted to an animation deadline\n";
             return 1;
         }
@@ -394,20 +402,28 @@ int wmain(int argc, wchar_t** argv) {
         return result;
     }
     if (argc == 3 && std::wstring(argv[1]) == L"--audio-session")
-        return verifyAudioSession(t7::fs::path(argv[2])) ? 0 : 1;
+        return verifyAudioSession(t7r::fs::path(argv[2])) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--frame-hooks")
         return verifyGraphicsHookExecution() ? 0 : 1;
+    if (argc == 2 && std::wstring(argv[1]) == L"--title-tests")
+        return verifyGraphicsHookExecution(false, true) ? 0 : 1;
+    if (argc == 2 && std::wstring(argv[1]) == L"--combat-profiles")
+        return verifyGraphicsHookExecution(true) ? 0 : 1;
+    if (argc == 3 && std::wstring(argv[1]) == L"--resource-preflight")
+        return verifyResourcePreflight(argv[2]) ? 0 : 1;
     if (argc == 2 && std::wstring(argv[1]) == L"--movement")
         return verifyMovementOverlay() && verifyMovementHookExecution() ? 0 : 1;
     if (argc != 2) {
-        std::wcerr << L"usage: T7.RuntimeTests.exe PACKAGE_ROOT\n";
+        std::wcerr << L"usage: T7R.RuntimeTests.exe PACKAGE_ROOT\n";
         return 2;
     }
     WSADATA winsock{};
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return 3;
     int result = 0;
     try {
-        if (!verifyServerEventOrder(t7::fs::path(argv[1]))) result = 42;
+        if (!verifyServerEventOrder(t7r::fs::path(argv[1]))) result = 42;
+        if (!verifyServerContext(t7r::fs::path(argv[1]))) result = 45;
+        if (!verifyTitleRuntime(t7r::fs::path(argv[1]))) result = 46;
         if (!verifyServerAudioDiagnostics()) result = 44;
         if (!verifyFakeBootstrapAdapter()) result = 21;
         if (!result && !verifyLobbyNews()) result = 33;
@@ -415,33 +431,35 @@ int wmain(int argc, wchar_t** argv) {
         // The embedded interpreter has one process-wide owner.  A second
         // owner is rejected while the first is alive, then a fresh owner can
         // be created after deterministic close/finalize.
-        auto ownerRoot = t7::fs::temp_directory_path() /
+        auto ownerRoot = t7r::fs::temp_directory_path() /
             (L"T7-Rekindle-python-owner-" + std::to_wstring(GetCurrentProcessId()));
-        t7::fs::remove_all(ownerRoot);
-        auto invalidOwnerRoot = t7::fs::temp_directory_path() /
+        t7r::fs::remove_all(ownerRoot);
+        auto invalidOwnerRoot = t7r::fs::temp_directory_path() /
             (L"T7-Rekindle-python-owner-invalid-" + std::to_wstring(GetCurrentProcessId()));
-        t7::fs::remove_all(invalidOwnerRoot);
+        t7r::fs::remove_all(invalidOwnerRoot);
         {
             std::ofstream invalidCache(invalidOwnerRoot);
             invalidCache << "not a directory";
         }
         bool initializationFailed = false;
-        try { t7::PythonHost invalid(argv[1], invalidOwnerRoot); }
+        try { t7r::PythonHost invalid(argv[1], invalidOwnerRoot); }
         catch (const std::exception&) { initializationFailed = true; }
         if (!initializationFailed) result = 22;
         {
-            t7::PythonHost first(argv[1], ownerRoot);
-            t7::Config worldConfig;
-            worldConfig.clientDirectory = t7::fs::path(argv[1]) / "synthetic-client" / "Bin";
+            t7r::PythonHost first(argv[1], ownerRoot);
+            t7r::Config worldConfig;
+            worldConfig.clientDirectory = t7r::fs::path(argv[1]) / "synthetic-client" / "Bin";
             const auto resources = first.checkResources(worldConfig.clientDirectory);
-            if (resources.dashAttack.enabled || resources.dashAttack.weaponId != 1030411 || resources.diagnostics.empty())
-                throw std::runtime_error("missing dash resources did not produce a disabled profile with diagnostics");
+            if (resources.dashAttack.enabled || resources.dashAttack.weaponId != 1030411)
+                throw std::runtime_error("static combat fixture did not preserve its disabled dash profile");
+            if (!resources.diagnostics.empty())
+                throw std::runtime_error("static combat profiles unexpectedly reported missing client action tables");
             auto& dash = worldConfig.dashAttack;
             dash.enabled = true; dash.weaponId = 1030411; dash.weaponCategory = 32;
             dash.durationMs = 1709; dash.moveMs = 1117; dash.speedMilli = 3210;
             dash.contactStartMs = 100; dash.contactEndMs = 1300; dash.reboundMs = 777;
             dash.durationSource = "table";
-            t7::WorldSnapshot world;
+            t7r::WorldSnapshot world;
             world.ready = true; world.sampledAt = 1200; world.instanceStartedAt = 1000;
             world.player = {1.25f, 2.5f, 3.75f}; world.bot = {4.25f, 5.5f, 6.75f};
               world.playerHeading = 90.f; world.botHeading = -90.f;
@@ -460,7 +478,7 @@ int wmain(int argc, wchar_t** argv) {
             blade.contacts[2].contact = targetTerrain[1];
             blade.contacts[2].targetId = 2; blade.contacts[2].time = .25f; blade.contacts[2].along = .75f;
             world.contactsReady = true; world.contactBatchId = 7; world.contactFrames = 17;
-            t7::BladeContactEvent contactEvent;
+            t7r::BladeContactEvent contactEvent;
             contactEvent.actorId = 20; contactEvent.entity = 123; contactEvent.sequence = 31;
             contactEvent.state = 238; contactEvent.hit = blade.contacts[2]; contactEvent.phaseAt = 900;
             contactEvent.occurredAt = 1187.5; contactEvent.targetState = 223; contactEvent.targetEntity = 456;
@@ -498,17 +516,17 @@ int wmain(int argc, wchar_t** argv) {
                 || context.find("\"targetTerrain\":[\"dict\",{}]") == std::string::npos)
                 throw std::runtime_error("world context lost per-target terrain results");
             bool rejected = false;
-            try { t7::PythonHost second(argv[1], ownerRoot); }
+            try { t7r::PythonHost second(argv[1], ownerRoot); }
             catch (const std::exception&) { rejected = true; }
             if (!rejected) result = 16;
         }
-        t7::fs::remove_all(ownerRoot);
-        t7::fs::remove_all(invalidOwnerRoot);
-        t7::Config config;
+        t7r::fs::remove_all(ownerRoot);
+        t7r::fs::remove_all(invalidOwnerRoot);
+        t7r::Config config;
         config.bindAddress = "127.0.0.1";
         config.advertisedAddress = "127.0.0.1";
         config.ports[0] = config.ports[1] = config.ports[2] = 0;
-        t7::Server server;
+        t7r::Server server;
         server.start(config, argv[1]);
         const auto actual = server.boundConfig();
         if (!server.running() || !actual.ports[0] || !actual.ports[1] || !actual.ports[2]
@@ -562,7 +580,7 @@ int wmain(int argc, wchar_t** argv) {
             if (getsockname(reservations[i], reinterpret_cast<sockaddr*>(&addresses[i]), &size) != 0)
                 throw std::runtime_error("test reservation getsockname failed");
         }
-        t7::Config fixed = config;
+        t7r::Config fixed = config;
         fixed.ports[0] = ntohs(addresses[0].sin_port);
         fixed.ports[1] = ntohs(addresses[1].sin_port);
         fixed.ports[2] = ntohs(addresses[2].sin_port);
@@ -584,56 +602,56 @@ int wmain(int argc, wchar_t** argv) {
         if (!verifySyntheticAuth(argv[1])) result = 20;
         // Exercise the same Session assembly used by the C ABI while keeping
         // the fake client adapter confined to this native test host.
-        if (!verifySessionAssembly(t7::fs::path(argv[1]))) result = 23;
-        if (!verifyGraphicsSession(t7::fs::path(argv[1]))) result = 38;
-        if (!verifyResourcePreflight(t7::fs::path(argv[1]))) result = 43;
-        if (!verifyAudioSession(t7::fs::path(argv[1]))) result = 39;
-        if (!verifyJournalContracts(t7::fs::path(argv[1]))) result = 25;
-        if (!verifyDiagnosticLogs(t7::fs::path(argv[1]))) result = 37;
-        if (!verifyNamedSessionExit(t7::fs::path(argv[1]), 0, true)) result = 28;
-        if (!verifyNamedSessionExit(t7::fs::path(argv[1]), 7, false)) result = 29;
-        if (!verifyNamedSessionExit(t7::fs::path(argv[1]), 4660, true)) result = 30;
-        if (!verifyNamedSessionExit(t7::fs::path(argv[1]), 0xC0000005, false)) result = 31;
-        if (!verifyWindowCloseCleanup(t7::fs::path(argv[1]), false)) result = 40;
-        if (!verifyWindowCloseCleanup(t7::fs::path(argv[1]), true)) result = 41;
-        if (!verifyFailureCleanup(t7::fs::path(argv[1]), true)) result = 26;
-        if (!verifyFailureCleanup(t7::fs::path(argv[1]), false)) result = 27;
-        if (!verifyOperationPublication(t7::fs::path(argv[1]), T7NB_OPERATION_SUCCEEDED)) result = 32;
-        if (!verifyOperationPublication(t7::fs::path(argv[1]), T7NB_OPERATION_FAILED)) result = 33;
-        if (!verifyOperationPublication(t7::fs::path(argv[1]), T7NB_OPERATION_CANCELLED)) result = 34;
+        if (!verifySessionAssembly(t7r::fs::path(argv[1]))) result = 23;
+        if (!verifyGraphicsSession(t7r::fs::path(argv[1]))) result = 38;
+        if (!verifyResourcePreflight(t7r::fs::path(argv[1]))) result = 43;
+        if (!verifyAudioSession(t7r::fs::path(argv[1]))) result = 39;
+        if (!verifyJournalContracts(t7r::fs::path(argv[1]))) result = 25;
+        if (!verifyDiagnosticLogs(t7r::fs::path(argv[1]))) result = 37;
+        if (!verifyNamedSessionExit(t7r::fs::path(argv[1]), 0, true)) result = 28;
+        if (!verifyNamedSessionExit(t7r::fs::path(argv[1]), 7, false)) result = 29;
+        if (!verifyNamedSessionExit(t7r::fs::path(argv[1]), 4660, true)) result = 30;
+        if (!verifyNamedSessionExit(t7r::fs::path(argv[1]), 0xC0000005, false)) result = 31;
+        if (!verifyWindowCloseCleanup(t7r::fs::path(argv[1]), false)) result = 40;
+        if (!verifyWindowCloseCleanup(t7r::fs::path(argv[1]), true)) result = 41;
+        if (!verifyFailureCleanup(t7r::fs::path(argv[1]), true)) result = 26;
+        if (!verifyFailureCleanup(t7r::fs::path(argv[1]), false)) result = 27;
+        if (!verifyOperationPublication(t7r::fs::path(argv[1]), T7RNB_OPERATION_SUCCEEDED)) result = 32;
+        if (!verifyOperationPublication(t7r::fs::path(argv[1]), T7RNB_OPERATION_FAILED)) result = 33;
+        if (!verifyOperationPublication(t7r::fs::path(argv[1]), T7RNB_OPERATION_CANCELLED)) result = 34;
         if (!verifyMovementOverlay()) result = 35;
         if (!verifyGraphicsHookExecution() || !verifyMovementHookExecution()) result = 36;
 
         // Journal writes are bounded and flushed on destruction without
         // exposing a second product process.  This is the disk-side contract
         // behind the bridge's in-memory cursor.
-        auto journalRoot = t7::fs::temp_directory_path() /
+        auto journalRoot = t7r::fs::temp_directory_path() /
             (L"T7-Rekindle-journal-test-" + std::to_wstring(GetCurrentProcessId()));
         std::error_code journalCleanup;
-        t7::fs::remove_all(journalRoot, journalCleanup);
+        t7r::fs::remove_all(journalRoot, journalCleanup);
         {
-            t7::Journal journal(journalRoot);
+            t7r::Journal journal(journalRoot);
             for (int i = 0; i != 1100; ++i)
-                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
+                journal.add(t7r::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "record", {1, 2, 3});
             if (journal.lines().size() > 1000) result = 13;
         }
         std::ifstream index(journalRoot / "frames-1.jsonl");
         std::string indexText((std::istreambuf_iterator<char>(index)), std::istreambuf_iterator<char>());
         if (!index || indexText.find("\"wireLength\":3") == std::string::npos) result = 14;
-        t7::fs::remove_all(journalRoot, journalCleanup);
+        t7r::fs::remove_all(journalRoot, journalCleanup);
 
-        auto rotationRoot = t7::fs::temp_directory_path() /
+        auto rotationRoot = t7r::fs::temp_directory_path() /
             (L"T7-Rekindle-journal-rotation-" + std::to_wstring(GetCurrentProcessId()));
-        t7::fs::remove_all(rotationRoot, journalCleanup);
+        t7r::fs::remove_all(rotationRoot, journalCleanup);
         {
-            t7::Journal journal(rotationRoot, 1024, 2);
+            t7r::Journal journal(rotationRoot, 1024, 2);
             for (int i = 0; i != 5; ++i)
-                journal.add(t7::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7::Bytes(700, 7));
+                journal.add(t7r::DiagnosticLogLevel::Info, "TEST", static_cast<uint64_t>(i), "synthetic", "rotation", t7r::Bytes(700, 7));
         }
-        if (t7::fs::exists(rotationRoot / "frames-1.bin")
-            || !t7::fs::exists(rotationRoot / "frames-4.bin")
-            || !t7::fs::exists(rotationRoot / "frames-5.jsonl")) result = 17;
-        t7::fs::remove_all(rotationRoot, journalCleanup);
+        if (t7r::fs::exists(rotationRoot / "frames-1.bin")
+            || !t7r::fs::exists(rotationRoot / "frames-4.bin")
+            || !t7r::fs::exists(rotationRoot / "frames-5.jsonl")) result = 17;
+        t7r::fs::remove_all(rotationRoot, journalCleanup);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         result = 5;

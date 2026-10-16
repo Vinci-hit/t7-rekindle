@@ -6,7 +6,7 @@
 #include <map>
 #include <set>
 
-namespace t7 {
+namespace t7r {
 namespace {
 using namespace resourceXml;
 struct Edit { size_t begin, end; std::string text; };
@@ -173,7 +173,7 @@ std::vector<Edit> birth(std::string_view source, const std::vector<Element>& nod
 std::string movementResourcePath(MovementResource resource) {
     switch (resource) {
     case MovementResource::Infantry: return encoded(L"../data/entsheet/步兵.esf");
-    case MovementResource::Router: return "../data/btree/t7_runtime_movement.btree";
+    case MovementResource::Router: return "../data/btree/t7r_runtime_movement.btree";
     case MovementResource::Birth: return encoded(L"../data/btree/武将_出生.btree");
     default: return {};
     }

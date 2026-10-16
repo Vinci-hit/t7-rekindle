@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 
-namespace t7 {
+namespace t7r {
 struct ClientImportModule {
     std::string dll;
     uint32_t iatRva = 0;

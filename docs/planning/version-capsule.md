@@ -55,6 +55,6 @@ WPF 按钮预留固定 52 高承托区和左右各 8 的空间，主体底部对
 - `tests/managed/UpdateReminderTests.cs`：提醒生命周期、四状态、渠道独立、未知目标、最长合法版本、100%～200% DPI 布局、角标稳定、窄内容区滚动；真实 HWND 的角标命中、焦点移动及 Enter/Space 路由键盘事件。
 - `tests/managed/UiInteractionTests.cs`：胶囊导航及无额外更新操作；`tests/python/test_ui_contract.py`：结构约束。
 
-运行 `python scripts/build.py --project managed`，再执行 `T7.ManagedHarness.exe --render-ui artifacts/ui-version-capsule`；托管程序位于 `artifacts/bin/T7.ManagedHarness/x64/Release/net48/`。四状态截图以 `capsule-stable-`、`capsule-preview-` 开头，深色、高对比度在对应子目录。
+运行 `python scripts/build.py --project managed`，再执行 `T7R.ManagedHarness.exe --render-ui artifacts/ui-version-capsule`；托管程序位于 `artifacts/bin/T7R.ManagedHarness/x64/Release/net48/`。四状态截图以 `capsule-stable-`、`capsule-preview-` 开头，深色、高对比度在对应子目录。
 
 人工验收：Tab 只聚焦整个胶囊一次，焦点轮廓完整；Enter、Space 及主体/图标/版本/外伸角标的点击各导航一次。悬停或通过辅助名称可获取完整说明。在项目支持的 Windows 10/11 上检查系统缩放、长版本和小工作区，角标、阴影及焦点不与窗口边缘或导航重叠。

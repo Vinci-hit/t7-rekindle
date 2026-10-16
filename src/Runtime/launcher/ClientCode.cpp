@@ -2,7 +2,7 @@
 #include "Ap32.h"
 #include <algorithm>
 
-namespace t7 {
+namespace t7r {
 namespace {
 struct CodeLayout {
     uint32_t rva;

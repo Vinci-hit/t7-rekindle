@@ -97,7 +97,8 @@ def groundEnabled(flow) -> bool:
 
 
 def playerEnabled(flow) -> bool:
-    return groundEnabled(flow) and actors.active(flow, wire.ACTOR_ID)
+    return (groundEnabled(flow) and actors.active(flow, wire.ACTOR_ID)
+            and flow.now >= flow.session.get('movementUntil', 0))
 
 
 def enableGround(flow) -> None:

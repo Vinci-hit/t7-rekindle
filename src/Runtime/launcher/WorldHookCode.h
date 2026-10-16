@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 class WorldHookCode {
 public:
     Bytes bytes;

@@ -8,16 +8,16 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static partial class AccountTests
     {
         private const string Machine = "12345678-1234-1234-1234-123456789abc";
-        internal static void Run() => RunAsync().GetAwaiter().GetResult();
+        internal static void Run() { RunAsync().GetAwaiter().GetResult(); TitleBridgeRoundTrip(); }
         internal static void Render(string output)
         {
             using (var warnings = new StringWriter())
@@ -30,6 +30,7 @@ namespace T7.ManagedHarness
                 try
                 {
                     RenderAccountUi(output);
+                    RenderTitles(output);
                     RenderAccountLoading(output);
                     VerifyAccountLoadingAnimation();
                     QqLoginUiTests.Run(output);
@@ -52,6 +53,7 @@ namespace T7.ManagedHarness
             await RestoreAndHeartbeatAsync();
             await PushReconnectAndCloseAsync();
             await HttpContractsAsync("https://auth.example.invalid/");
+            await RunTitlesAsync();
 #if DEBUG
             await HttpContractsAsync("http://localhost:8080/");
 #endif
@@ -306,7 +308,7 @@ namespace T7.ManagedHarness
 
         private static void ProtectedStore()
         {
-            string directory = Path.Combine(Path.GetTempPath(), "T7-account-tests-" + Guid.NewGuid().ToString("N"));
+            string directory = Path.Combine(Path.GetTempPath(), "T7R-account-tests-" + Guid.NewGuid().ToString("N"));
             try
             {
                 var store = new AccountSessionStore("https://auth.example.invalid", directory);
@@ -372,7 +374,7 @@ namespace T7.ManagedHarness
             public ResponseHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> response) { _response = response; }
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => _response(request);
         }
-        private sealed class FakeApi : IAccountApi
+        private sealed partial class FakeApi : IAccountApi
         {
             public AccountSession Session = AccountTests.Session();
             public AccountConnection Connection = new AccountConnection(Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddSeconds(45), 15);

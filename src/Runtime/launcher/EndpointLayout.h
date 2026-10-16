@@ -3,7 +3,7 @@
 #include <array>
 #include <cstddef>
 
-namespace t7 {
+namespace t7r {
 struct EndpointString { char buffer[16]; uint32_t length, capacity; };
 struct EndpointRecord { EndpointString address; uint32_t port; EndpointString descriptor; };
 struct EndpointCandidate { uint32_t score; EndpointString address; };

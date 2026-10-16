@@ -2,6 +2,7 @@
 import struct
 
 from .codec import login_flow, room_flow, vision_flow
+from .map_data import ENEMY_POSITION, POSITION, RESOURCE_ID
 
 BASELINE_ID = "synthetic-baseline-v1"
 # Standalone Python fixtures retain the server-ground baseline.  The native
@@ -10,7 +11,6 @@ BASELINE_ID = "synthetic-baseline-v1"
 CLIENT_RUNTIME_MOVEMENT = False
 RUNTIME_MOVEMENT_MODE = "client-runtime-offline-v1"
 RUNTIME_HERO_IDS = (110001,)
-RESOURCE_ID = 1028
 START_PATTERN = 2
 USER_ID = 10000
 USER_LEVEL = 100
@@ -20,8 +20,6 @@ HERO_ID = 110001
 HERO_IDS = (110001, 110003, 110004)
 USER_NAME = "新玩家".encode("gbk")
 WEAPON_ID = 1030411
-POSITION = (272.451, 157.634, 0.218)
-ENEMY_POSITION = (271.046, 156.857, 0.218)
 # Keep the synthetic fixture's preparation window deterministic across runs.
 PREPARE_MS = 30000
 # The native HUD truncates seconds, then waits one second before its first tick.
@@ -75,11 +73,12 @@ def instanceInfo(now, startedAt=None, *, resourceId=RESOURCE_ID, startPattern=ST
         resource_id=resourceId, start_pattern=startPattern)
 
 
-def actorInfo(now, camp, playerName=USER_NAME, *, userId=USER_ID, startPattern=START_PATTERN):
+def actorInfo(now, camp, playerName=USER_NAME, *, userId=USER_ID, startPattern=START_PATTERN,
+              heroId=HERO_ID):
     return room_flow.encode_instance_update_actor_basic_info(
         server_time_ms=now, instance_id=1, actor_mid=ACTOR_ID, user_id=userId,
         user_name=playerName, user_image_id=7, level=USER_LEVEL, actor_state=4,
-        hero_resource_id=HERO_ID, camp=camp, start_pattern=startPattern)
+        hero_resource_id=heroId, camp=camp, start_pattern=startPattern)
 
 
 def actorState(now, current, *, userId=USER_ID):
@@ -88,26 +87,16 @@ def actorState(now, current, *, userId=USER_ID):
 
 
 def actorVision(camp, heroId=HERO_ID, actorName=USER_NAME, *, runtimeMovement=False,
-                position=POSITION, actorId=ACTOR_ID, userId=USER_ID, currentHp=100):
-    body = vision_flow.encode_fixed_local_actor_vision_add_event(
+                position=POSITION, actorId=ACTOR_ID, userId=USER_ID, currentHp=100,
+                heading=0, equipment=None, weaponId=WEAPON_ID, offhandId=0):
+    return vision_flow.encode_fixed_local_actor_vision_add_event(
         camp=camp, position=position, hero_resource_id=heroId, actor_name=actorName,
         level=USER_LEVEL if actorId == ACTOR_ID else 1,
-        actor_mid=actorId, instance_id=actorId, user_id=userId, current_hp=currentHp)
-    if runtimeMovement:
-        if heroId != RUNTIME_HERO_IDS[0]:
-            raise ValueError("runtime movement gravity is bound to local hero 110001")
-        # Native body and attached shapes share one actor group, not one roster group.
-        filterOffset = 75
-        if body[filterOffset:filterOffset + 6] != bytes(6):
-            raise ValueError("canonical VISION collision/gravity layout changed")
-        body = body[:filterOffset] + struct.pack(">ih", actorId, -10000) + body[filterOffset + 6:]
-    # CS_VISION_ACTOR's weapon count follows the fixed identity/move/avatar prefix.
-    # Keep the canonical encoder and insert the listener's one 29-byte weapon entry.
-    weaponCountOffset = 150
-    if body[weaponCountOffset:weaponCountOffset + 2] != b"\0\0":
-        raise ValueError("canonical VISION weapon-count layout changed")
-    weapon = struct.pack(">iBBB", WEAPON_ID, 1, 0, 1) + bytes(22)
-    return body[:weaponCountOffset] + b"\0\1" + weapon + body[weaponCountOffset + 2:]
+        actor_mid=actorId, instance_id=actorId, user_id=userId, current_hp=currentHp,
+        heading=heading, collision_group=actorId if runtimeMovement else 0,
+        gravity=-10000 if runtimeMovement else 0,
+        equipment=[dict(slot=1, weaponId=WEAPON_ID)] if equipment is None else equipment,
+        equipped_weapon_id=weaponId, offhand_id=offhandId)
 
 
 def enemyVision():

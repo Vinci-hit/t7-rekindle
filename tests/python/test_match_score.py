@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -80,7 +81,7 @@ def test_every_lethal_hit_credits_killer_and_victim_once(multi, camp, attacker, 
     world = sample(multi)
     combat.applyHit(multi, attacker, target, actors.pair(world, attacker, target))
     assert totals(multi, attacker) == totals(multi, target) == (0, 0, 0) and not updates(multi)
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(multi, attacker, target, actors.pair(world, attacker, target))
     assert totals(multi, attacker) == (1, 0, 100) and totals(multi, target) == (0, 1, 0)
     assert all(totals(multi, rid) == (0, 0, 0) for rid in actors.ids(multi.session) if rid not in (attacker, target))
@@ -103,7 +104,7 @@ def test_every_lethal_hit_credits_killer_and_victim_once(multi, camp, attacker, 
 def test_multi_kill_records_each_victim_with_monotonic_totals(multi):
     _, targets, _ = cluster(multi)
     for rid in targets:
-        actors.data(multi, rid)['health'] = combat.DAMAGE
+        actors.data(multi, rid)['health'] = NORMAL_DAMAGE
     attack(multi)
     advance(multi, combat.hitTimer(1))
     assert totals(multi, 1) == (3, 0, 300)
@@ -152,7 +153,7 @@ def test_reimport_restores_scoreboard_totals_without_awarding_points_again(multi
 
 def test_zero_health_player_awards_one_kill_without_repeat_rewards(multi):
     world = sample(multi)
-    actors.data(multi, 1)['health'] = combat.DAMAGE
+    actors.data(multi, 1)['health'] = NORMAL_DAMAGE
     for _ in range(3):
         combat.applyHit(multi, 2, 1, actors.pair(world, 2, 1))
     assert actors.data(multi, 1)['health'] == 0
@@ -175,13 +176,13 @@ def test_player_repeated_deaths_accumulate_across_respawn(multi):
     assert app.validateState(multi.state)
 
 
-def test_old_state_without_score_fields_starts_counting_from_next_kill(multi):
+def test_saved_state_without_score_fields_starts_counting_from_next_kill(multi):
     for rid in actors.ids(multi.session):
         for field in ('kills', 'deaths', 'battlePoints'):
             actors.data(multi, rid).pop(field, None)
     multi.session['killStreak'] = 7  # A life streak is not the round's cumulative score.
     previous = deepcopy(multi.state)
-    assert app.migrateState(10, previous) == previous
+    assert app.migrateState(app.STATE_VERSION, previous) == previous
     kill(multi)
     assert totals(multi, 1) == (1, 0, 100) and multi.session['killStreak'] == 8
     assert totals(multi, 2) == (0, 1, 0)

@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 """Native CMD_HAND / CMD_W1 packets, equipment synchronization and fist actions."""
 from copy import deepcopy
 import struct
@@ -137,7 +138,7 @@ def test_fist_contact_uses_fist_weapon_in_damage_and_hit_feedback(arena):
     swing(flow)
     assert flow.session['swing']['weaponId'] == FIST_ID
     advance(flow, combat.hitTimer(1))
-    assert flow.session['bot']['health'] == 100 - combat.DAMAGE
+    assert flow.session['bot']['health'] == 100 - NORMAL_DAMAGE
     result = next(p for p in flow.result['send'] if p['reason'] == 'combat-damage')
     hit = next(p for p in flow.result['send'] if p['reason'] == 'combat-hit-point')
     assert battle_flow.decode_battle_result(result['body']).attack_weapon_id == FIST_ID

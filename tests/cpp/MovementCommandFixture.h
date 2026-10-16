@@ -9,17 +9,17 @@ constexpr uint32_t DATA = BASE + 0xC0000, DISPATCH = DATA + 0x100;
 constexpr uint32_t COMMAND = DATA + 0x40, REQUEST = DATA, TARGET = DATA + 4;
 constexpr uint32_t APPLY_RVA = 0x3CFE30, HOOK_RVA = 0x3CFE38;
 inline void prepare(HANDLE process) {
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x9C,0x60,0x83,0x3D}); c.word(REQUEST); c.emit({0}); const auto idle = c.branch(0x84);
     c.emit({0xFF,0x35}); c.word(TARGET); c.emit({0xB9}); c.word(COMMAND); c.call(BASE + APPLY_RVA);
     c.store(REQUEST, 0); c.bind(idle); c.emit({0x61,0x9D,0xC3});
-    t7::writeClientMemory(process, DISPATCH, c.bytes);
+    t7r::writeClientMemory(process, DISPATCH, c.bytes);
     // Native MoveCommand applies state before speed and before the animation update.
     c.bytes = {0x55,0x8B,0xEC,0x53,0x8B,0x5D,8,0x57,0x8B,3,0x8B,0xF9,0x8B,0xCB};
     c.emit({0x8B,0x47,0x30,0x89,0x43,0x2C,0x83,0xE8,10,0x83,0xF8,2,0x0F,0x96,0x83}); c.word(0xCC);
     c.emit({0x8B,0x47,0x0C,0x8B,0x4B,0x38,0x89,0x41,0x24,0xA3}); c.word(movementAnimationFixture::VELOCITY);
     c.emit({0x5F,0x5B,0x5D,0xC2,4,0});
-    t7::writeClientMemory(process, BASE + APPLY_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + APPLY_RVA, c.bytes);
     writeWord(process, COMMAND, BASE + 0x17782D8);
     writeWord(process, TARGET, worldFixture::MOVABLE);
 }
@@ -36,7 +36,7 @@ inline void verify(HANDLE process, uint32_t mailbox) {
     const uint32_t states[]{1,2,6,1,4,3,5,4,8,9,7,8,1,2,6,1};
     auto frame = [&](uint32_t keys, uint32_t tracking, float commandSpeed, uint32_t state, float speed,
                      uint32_t initialState = 0xDEADBEEF, bool noncanonicalAxis = false) {
-        writeWord(process, KEYS, keys); writeWord(process, mailbox + t7::SPRINT_DATA_OFFSET + 16, tracking);
+        writeWord(process, KEYS, keys); writeWord(process, mailbox + t7r::SPRINT_DATA_OFFSET + 16, tracking);
         writeWord(process, COMMAND + 0x30, initialState);
         writeFloat(process, COMMAND + 0x0C, commandSpeed);
         writeFloat(process, COMMAND + 0x28, static_cast<float>(((keys & 8) != 0) - ((keys & 4) != 0)));

@@ -3,10 +3,10 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
 
-namespace T7.Rekindle.Desktop
+namespace T7R.Desktop
 {
     public partial class MainWindow : Window
     {

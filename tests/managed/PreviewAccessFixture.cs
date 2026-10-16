@@ -2,9 +2,9 @@ using System;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal sealed class PreviewAccessFixture : IDisposable
     {

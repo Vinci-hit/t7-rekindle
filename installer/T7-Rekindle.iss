@@ -57,6 +57,7 @@ const
 
 var
   RollbackActive, ResetSettings, RollbackReady, RollbackFailed, BackupComplete: Boolean;
+  LibraryCleanupFailed: Boolean;
   DataDirectory, BackupDirectory, UpdateChannel, StartupValue: String;
   StartupExisted: Boolean;
   SettingsNames: array[0..3] of String;
@@ -64,7 +65,7 @@ var
 
 function AllowLauncherRun(): Boolean;
 begin
-  Result := not RollbackActive or RollbackReady;
+  Result := not LibraryCleanupFailed and (not RollbackActive or RollbackReady);
 end;
 
 function WebView2Missing(): Boolean;
@@ -143,12 +144,12 @@ begin
   end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+procedure CompleteRollbackSettings();
 var
   I: Integer;
   Path, Temporary, ErrorText: String;
 begin
-  if (CurStep <> ssPostInstall) or not RollbackActive then Exit;
+  if not RollbackActive then Exit;
   try
     RequireSuccess(BackupComplete, '设置备份尚未完成');
     if ResetSettings then begin
@@ -176,10 +177,44 @@ begin
   end;
 end;
 
+procedure RemoveLegacyLibrary(Name: String);
+var
+  Path: String;
+begin
+  Path := ExpandConstant('{app}\') + Name;
+  if DirExists(Path) then RaiseException('旧库路径是目录，已保留：' + Path);
+  if FileExists(Path) then begin
+    RequireSuccess(DeleteFile(Path), '清理旧库失败：' + Path);
+    Log('Removed legacy library: ' + Path);
+  end;
+end;
+
+procedure CleanupLegacyLibraries();
+var
+  ErrorText: String;
+begin
+  try
+    RemoveLegacyLibrary('T7.Core.dll');
+    RemoveLegacyLibrary('T7.NativeBridge.dll');
+  except
+    LibraryCleanupFailed := True;
+    ErrorText := GetExceptionMessage() + #13#10 + '已停止自动启动，请解决旧库占用或路径问题后重新安装。';
+    Log(ErrorText);
+    SuppressibleMsgBox(ErrorText, mbError, MB_OK, IDOK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then Exit;
+  CompleteRollbackSettings();
+  if not RollbackFailed then CleanupLegacyLibraries();
+end;
+
 function GetCustomSetupExitCode(): Integer;
 begin
   Result := 0;
-  if RollbackFailed then Result := 20;
+  if RollbackFailed or LibraryCleanupFailed then Result := 20;
 end;
 
 function OpenProcess(DesiredAccess: Cardinal; InheritHandle: BOOL; ProcessId: Cardinal): THandle;

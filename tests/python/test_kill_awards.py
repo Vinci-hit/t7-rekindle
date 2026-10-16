@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -20,7 +21,7 @@ def awards(flow, messageId):
 
 
 def lethalHit(flow, attacker, target):
-    actors.data(flow, target)['health'] = combat.DAMAGE
+    actors.data(flow, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(flow, attacker, target, actors.pair(sample(flow), attacker, target))
 
 
@@ -76,7 +77,7 @@ def test_first_lethal_hit_awards_first_blood_once_for_the_whole_round(multi, cam
 def test_one_swing_with_multiple_kills_awards_only_one_first_blood(multi):
     _, targets, _ = cluster(multi)
     for rid in targets:
-        actors.data(multi, rid)['health'] = combat.DAMAGE
+        actors.data(multi, rid)['health'] = NORMAL_DAMAGE
     attack(multi)
     advance(multi, combat.hitTimer(1))
     packet, = awards(multi, 730000)
@@ -105,11 +106,11 @@ def test_first_blood_survives_reload_respawn_and_reimport_but_resets_for_new_ins
 
 @pytest.mark.parametrize('rid', [1, 2, 12])
 @pytest.mark.parametrize('field', ['kills', 'deaths', 'killStreak'])
-def test_legacy_round_with_kill_evidence_does_not_reaward_first_blood(multi, rid, field):
+def test_saved_round_with_kill_evidence_does_not_reaward_first_blood(multi, rid, field):
     multi.session.pop('firstBloodAwarded', None)
     actors.data(multi, rid)[field] = 1
     before = deepcopy(multi.state)
-    assert app.migrateState(13, before) == before
+    assert app.migrateState(app.STATE_VERSION, before) == before
     kill(multi)
     assert not awards(multi, 730000) and multi.session['firstBloodAwarded']
 

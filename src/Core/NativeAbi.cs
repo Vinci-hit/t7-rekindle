@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
     public struct NativeStartArgs

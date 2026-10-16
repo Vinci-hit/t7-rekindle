@@ -4,10 +4,10 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Threading;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     public partial class TextDialog : Window
     {

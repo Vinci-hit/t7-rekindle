@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public enum AudioSyncState : uint { Unavailable, Ready, Applying, Failed, Conflict }
 

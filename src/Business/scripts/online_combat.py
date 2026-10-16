@@ -77,7 +77,8 @@ def world_updated(flow):
         if action_id is None:
             flow.log('WARN', 'online-contact-missing-action-identity')
             continue
-        key = f"{event['seq']}:{target}:{int(event.get('weaponContact', False))}"
+        weapon_contact = event['defenceWeaponId'] != 0
+        key = f"{event['seq']}:{target}:{int(weapon_contact)}"
         if key in state['seen']:
             continue
         if state['inputSeq'] == 0xffffffff:
@@ -88,7 +89,7 @@ def world_updated(flow):
             position=event['position'], direction=event['direction'], normal=event['normal'], material=event['material'],
             timing=dict(sampleTimeMs=int(event['occurredAt']), phaseStartMs=int(event['phaseAt']),
                         gatewayTimeMs=int(flow.now)))
-        if event.get('weaponContact', False):
+        if weapon_contact:
             report['weaponContact'] = True
         from . import online_motion
         payload = dict(matchId=match['matchId'], inputSeq=sequence, contact=report)
@@ -101,7 +102,7 @@ def world_updated(flow):
         state['inputSeq'] = sequence
         state['seen'] = [*state['seen'], key][-64:]
         age = int(flow.now - event['occurredAt'])
-        flow.log('INFO', f'online-contact-report input={sequence} action={event["seq"]} state={event["state"]} target={target} weapon={event.get("weaponContact", False)} targetState={event["targetState"]} sampleAgeMs={age}')
+        flow.log('INFO', f'online-contact-report input={sequence} action={event["seq"]} state={event["state"]} target={target} weapon={weapon_contact} targetState={event["targetState"]} sampleAgeMs={age}')
     state['cursor'] = identity
 
 

@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import struct
 
@@ -16,7 +17,7 @@ def notifications(flow, reason):
 @pytest.mark.parametrize('attacker,target', [(1, 2), (2, 12)])
 def test_audio_announcement_diagnostic_identifies_local_player_without_claiming_playback(multi, attacker, target):
     actors.data(multi, attacker)['killStreak'] = 3
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(multi, attacker, target, actors.pair(sample(multi), attacker, target))
     lines = [line for line in multi.result['logs'] if line['message'].startswith('Audio announcement;')]
     assert len(lines) == 1 and lines[0]['level'] == 'DEBUG'
@@ -68,7 +69,7 @@ def test_only_lethal_hit_publishes_one_kill_with_actual_actor_ids(multi, camp, a
     world = sample(multi)
     combat.applyHit(multi, attacker, target, actors.pair(world, attacker, target))
     assert not notifications(multi, 'combat-kill')
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(multi, attacker, target, actors.pair(world, attacker, target))
     packets = notifications(multi, 'combat-kill')
     assert len(packets) == 1 and packets[0]['command'] == 10
@@ -100,7 +101,7 @@ def test_streak_uses_original_client_message_from_second_kill(multi, targets, ki
 @pytest.mark.parametrize('previous', [9, 10, 11])
 def test_each_ten_plus_kill_announces_the_highest_tier(multi, attacker, target, previous):
     actors.data(multi, attacker)['killStreak'] = previous
-    actors.data(multi, target)['health'] = combat.DAMAGE
+    actors.data(multi, target)['health'] = NORMAL_DAMAGE
     combat.applyHit(multi, attacker, target, actors.pair(sample(multi), attacker, target))
     packets = notifications(multi, 'combat-kill-streak')
     assert len(packets) == 1 and packets[0]['command'] == 12
@@ -130,9 +131,9 @@ def test_invalid_streak_state_is_rejected(multi, rid, value):
     assert not app.validateState(multi.state)
 
 
-def test_previous_state_without_streak_migrates(multi):
+def test_saved_state_without_streak_defaults_to_zero(multi):
     for rid in actors.ids(multi.session):
         actors.data(multi, rid).pop('killStreak', None)
-    assert app.migrateState(7, multi.state) == multi.state
+    assert app.migrateState(app.STATE_VERSION, multi.state) == multi.state
     kill(multi)
     assert multi.session['killStreak'] == 1

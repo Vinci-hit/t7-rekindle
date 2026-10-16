@@ -1,7 +1,7 @@
-<UserControl x:Class="T7.Rekindle.Desktop.Views.LauncherUpdatePage"
+<UserControl x:Class="T7R.Desktop.Views.LauncherUpdatePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:views="clr-namespace:T7.Rekindle.Desktop.Views">
+             xmlns:views="clr-namespace:T7R.Desktop.Views">
   <Border Style="{StaticResource PagePanel}" DataContext="{Binding About}">
     <Grid>
       <Grid.RowDefinitions><RowDefinition Height="80" /><RowDefinition Height="54" /><RowDefinition Height="*" /></Grid.RowDefinitions>

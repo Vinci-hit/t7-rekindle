@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <array>
 
-namespace t7 {
+namespace t7r {
 struct MovementHookSite { uint32_t rva; std::array<unsigned char, 5> original; };
 inline constexpr std::array<MovementHookSite, 4> MOVEMENT_HOOK_SITES{{
     {0x71590, {0x55, 0x8B, 0xEC, 0x6A, 0xFF}}, // resource open

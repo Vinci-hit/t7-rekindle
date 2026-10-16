@@ -1,6 +1,6 @@
 #pragma once
 #include "Common.h"
-namespace t7 {
+namespace t7r {
 constexpr size_t MAX_FRAME = 1024 * 1024;
 uint32_t be32(const unsigned char* data);
 uint64_t be64(const unsigned char* data);

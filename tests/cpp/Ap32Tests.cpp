@@ -2,7 +2,7 @@
 #include <iostream>
 
 namespace {
-using t7::Bytes;
+using t7r::Bytes;
 uint32_t fixtureCrc(const Bytes& bytes) {
     uint32_t value = UINT32_MAX;
     for (const auto byte : bytes) {
@@ -55,7 +55,7 @@ struct Stream {
     void end() { shortMatch(0, 2); }
 };
 bool rejected(const Bytes& input, size_t maximum = 131072, size_t offset = 0) {
-    try { t7::decodeAp32(input, offset, maximum); }
+    try { t7r::decodeAp32(input, offset, maximum); }
     catch (const std::runtime_error&) { return true; }
     return false;
 }
@@ -65,7 +65,7 @@ void require(bool condition, const char* message) {
 void verify(Stream& stream, const Bytes& expected) {
     stream.end();
     const auto input = wrap(stream.bytes, expected);
-    const auto decoded = t7::decodeAp32(input, 0, expected.size());
+    const auto decoded = t7r::decodeAp32(input, 0, expected.size());
     require(decoded.bytes == expected && decoded.consumed == input.size(), "decoded fixture mismatch");
 }
 }
@@ -130,7 +130,7 @@ bool verifyAp32() {
         Stream distanceOverflow('A'); distanceOverflow.bit(1); distanceOverflow.bit(0); distanceOverflow.gamma(UINT32_MAX);
         require(rejected(wrap(distanceOverflow.bytes, Bytes(10, 'A'))), "distance overflow accepted");
         Bytes framed{5,6,7}; framed.insert(framed.end(), valid.begin(), valid.end()); framed.push_back(8);
-        const auto frame = t7::decodeAp32(framed, 3, 1);
+        const auto frame = t7r::decodeAp32(framed, 3, 1);
         require(frame.bytes == Bytes{'A'} && frame.consumed == valid.size(), "block consumption mismatch");
         std::cout << "AP32 synthetic decoding and rejection cases passed\n";
         return true;

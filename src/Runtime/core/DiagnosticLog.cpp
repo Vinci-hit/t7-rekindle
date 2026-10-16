@@ -4,7 +4,7 @@
 #include <mutex>
 #include <regex>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr size_t MAX_RECORD_BYTES = 8192;
 constexpr unsigned MAX_ARCHIVES = 7;

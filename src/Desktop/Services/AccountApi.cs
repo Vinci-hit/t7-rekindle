@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
-    public sealed class AccountApi : IAccountApi
+    public sealed class AccountApi : IAccountApi, IAccountTitlesApi
     {
         private readonly HttpClient _client;
         private readonly Uri _baseAddress;
@@ -139,6 +139,10 @@ namespace T7.Rekindle.Desktop.Services
         }
 
         private static string ConnectionPath(string id) => "online/" + Uri.EscapeDataString(id);
+        public Task<AccountTitles> TitlesAsync(AccountSession session, string connectionId, CancellationToken cancellation) =>
+            SendAsync<AccountTitles>(HttpMethod.Get, ConnectionPath(connectionId) + "/titles", session, null, cancellation);
+        public Task<AccountTitles> EquipTitleAsync(AccountSession session, string connectionId, int? titleId, CancellationToken cancellation) =>
+            SendAsync<AccountTitles>(HttpMethod.Put, ConnectionPath(connectionId) + "/titles/equipped", session, new { titleId }, cancellation);
         public void Dispose() => _client.Dispose();
     }
 }

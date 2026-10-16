@@ -1,0 +1,11 @@
+<Project>
+  <Import Project="..\..\Managed.Common.props" />
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Platforms>x64</Platforms>
+    <RootNamespace>T7R.Battle</RootNamespace>
+    <AssemblyName>T7R.Battle</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Core\T7R.Core.csproj" /></ItemGroup>
+  <Import Project="..\..\Managed.Common.targets" />
+</Project>

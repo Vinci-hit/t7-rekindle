@@ -6,6 +6,8 @@ import math
 import struct
 from dataclasses import dataclass
 
+from .weapon_flow import encode_equipment
+
 
 VISION_COMMAND = 0x000E
 VISION_ADD_EVENT = 0x0001
@@ -125,6 +127,9 @@ def _encode_move_data(
     *,
     active: int,
     position: tuple[float, float, float],
+    heading: int = 0,
+    collision_group: int = 0,
+    gravity: int = 0,
 ) -> bytes:
     if not isinstance(position, tuple) or len(position) != 3:
         raise TypeError("position must be a tuple of three floats")
@@ -135,14 +140,14 @@ def _encode_move_data(
         0,
         active,
         0,
-        *([0] * 10),
+        *([0] * 9), heading,
         *position,
         0,
         0.0,
         0.0,
         0.0,
-        0,
-        0,
+        collision_group,
+        gravity,
         *([0] * 5),
     )
 
@@ -161,6 +166,12 @@ def encode_fixed_local_actor_vision_add_event(
     current_hp: int = 100,
     maximum_hp: int = 100,
     current_stamina: int = 100,
+    heading: int = 0,
+    collision_group: int = 0,
+    gravity: int = 0,
+    equipment: tuple = (),
+    equipped_weapon_id: int = 0,
+    offhand_id: int = 0,
 ) -> bytes:
     """Encode ADD_EVENT with one schema-valid local ACTOR object.
 
@@ -183,11 +194,12 @@ def encode_fixed_local_actor_vision_add_event(
         actor = b"".join(
             (
                 struct.pack(">IQH", user_id, actor_mid, instance_id),
-                _encode_move_data(active=1, position=position),
+                _encode_move_data(active=1, position=position, heading=heading,
+                                  collision_group=collision_group, gravity=gravity),
                 struct.pack(">ibbiii", camp, 1, 0, level, 0, 0),
                 legion_name,
                 struct.pack(">ibi" + "i" * 8, hero_resource_id, 0, 0, *([0] * 8)),
-                struct.pack(">h", 0),
+                encode_equipment(equipment, equipped_weapon_id, offhand_id),
                 struct.pack(">HQhQ", 0, 0, 0, 0),
                 struct.pack(">iii", current_hp, maximum_hp, current_stamina),
                 struct.pack(">IQH", 0, 0, 0),

@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/Common.h"
 
-namespace t7 {
+namespace t7r {
 struct Ap32Block {
     Bytes bytes;
     size_t consumed = 0;

@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     // Bundled documents use headings, paragraphs, lists and inline formatting.
     internal static class MarkdownDocument

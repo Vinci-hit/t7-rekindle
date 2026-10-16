@@ -3,18 +3,27 @@
 #include <cstdint>
 #include <vector>
 
-namespace t7 {
+namespace t7r {
+inline const char* bodyRegion(uint32_t region) {
+    constexpr const char* names[] = {"unknown", "head", "torso", "legs"};
+    return names[region < 4 ? region : 0];
+}
 struct TerrainContact {
     bool ready = false, hit = false;
     int32_t material = -1;
     std::array<float, 3> position{}, normal{}, direction{};
 };
 constexpr size_t MAX_WORLD_ACTORS = 20;
-constexpr size_t MAX_BLADE_CONTACTS = MAX_WORLD_ACTORS + 2; // Blocking scene, actor RIDs, non-blocking ground.
+constexpr size_t GROUND_CONTACT_SLOT = MAX_WORLD_ACTORS + 1;
+constexpr size_t DEFENCE_CONTACT_OFFSET = MAX_WORLD_ACTORS + 1;
+constexpr size_t MAX_BLADE_CONTACTS = MAX_WORLD_ACTORS * 2 + 2;
 struct BladeContact {
     TerrainContact contact{};
     uint32_t targetId = 0; // Zero is scene geometry; otherwise the actor RID.
     float time = 1, along = 1;
+    int32_t bodyIndex = -1;
+    uint32_t region = 0;
+    uint32_t defenceWeaponId = 0; // Zero denotes scene/body, otherwise the intercepted equipped weapon.
 };
 struct BladeTrace {
     bool ready = false;
@@ -53,6 +62,8 @@ struct BladeContactEvent {
     std::array<float, 3> sourcePosition{}, targetPosition{};
     float sourceHeading = 0, targetHeading = 0;
     bool weaponContact = false;
+    std::array<float, 3> sourceVelocity{}, targetVelocity{}, weaponVelocity{};
+    bool velocityReady = false, airborne = false, targetAirborne = false;
 };
 // Internal Runtime -> Business data, not part of the launcher C ABI.
 struct WorldSnapshot {
@@ -66,5 +77,9 @@ struct WorldSnapshot {
     bool contactsReady = false;
     uint32_t contactFrames = 0, droppedContacts = 0, contactBatchId = 0;
     std::vector<BladeContactEvent> contacts{};
+};
+struct PublishedWorld {
+    uint64_t version = 0;
+    WorldSnapshot snapshot;
 };
 }

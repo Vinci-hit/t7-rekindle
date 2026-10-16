@@ -18,9 +18,9 @@ std::string gbk(const wchar_t* text) {
             result.data(), size, nullptr, nullptr) == size, "fixture encoding");
     result.pop_back(); return result;
 }
-void rejected(t7::MovementResource resource, const std::string& source) {
+void rejected(t7r::MovementResource resource, const std::string& source) {
     bool failed = false;
-    try { t7::transformMovementResource(resource, source); }
+    try { t7r::transformMovementResource(resource, source); }
     catch (const std::runtime_error&) { failed = true; }
     require(failed, "changed resource structure was accepted");
 }
@@ -28,7 +28,7 @@ void rejected(t7::MovementResource resource, const std::string& source) {
 std::vector<std::string> inputActions(const std::string& source, int playerState,
         bool local, bool battle, const std::string& key, bool pressed,
         const std::string& eventOverride = {}, bool jumpAvailable = true) {
-    using namespace t7::resourceXml;
+    using namespace t7r::resourceXml;
     const auto nodes = elements(source);
     std::vector<std::string> actions;
     std::function<bool(size_t)> execute = [&](size_t index) {
@@ -71,7 +71,7 @@ std::vector<std::string> inputActions(const std::string& source, int playerState
 }
 
 bool verifyMovementResources() {
-    using Resource = t7::MovementResource;
+    using Resource = t7r::MovementResource;
     try {
         const auto component = "<GeServerMovable><BTree Value=\"original\"/></GeServerMovable>";
         const auto physics = "<Collision Shape=\"fixture-shape\" Mask=\"7\"/><Camera Value=\"keep\"/>";
@@ -80,12 +80,12 @@ bool verifyMovementResources() {
             + gbk(L"<Entity Name=\"武将\">") + component + physics + "</Entity>"
             + gbk(L"<Entity Name=\"女武将\">") + component + physics + "</Entity>"
             + "<Entity Name=\"npc\">" + component + physics + "</Entity></EntSheet>";
-        const auto changed = t7::transformMovementResource(Resource::Infantry, source);
+        const auto changed = t7r::transformMovementResource(Resource::Infantry, source);
         require(changed.find("<GeOfflineMovable><BTree Value=\"*.*\"/></GeOfflineMovable>") != std::string::npos,
                 "offline schema was not derived from the original movable schema");
         require(changed.find(std::string("<Entity Name=\"npc\">") + component + physics + "</Entity>") != std::string::npos,
                 "non-hero components changed");
-        const auto replacement = "<GeOfflineMovable><BTree Value=\"" + t7::movementResourcePath(Resource::Router)
+        const auto replacement = "<GeOfflineMovable><BTree Value=\"" + t7r::movementResourcePath(Resource::Router)
             + "\"/></GeOfflineMovable>";
         for (auto name : {L"武将", L"女武将"})
             require(changed.find("<Entity Name=\"" + gbk(name) + "\">" + replacement + physics + "</Entity>") != std::string::npos,
@@ -100,7 +100,7 @@ bool verifyMovementResources() {
             L"<Node Type=\"ACTION\" ID=\"21\" Name=\"设置步兵转向\"/>"
             L"<Node Type=\"ACTION\" ID=\"22\" Name=\"fixture-camera\"/>"
             L"</Node></Node><Node Type=\"SEL\" ID=\"3\"/></Node></BTree>");
-        const auto turned = t7::transformMovementResource(Resource::Birth, birth);
+        const auto turned = t7r::transformMovementResource(Resource::Birth, birth);
         require(turned.find(gbk(L"Name=\"设置离线步兵转向\"")) != std::string::npos,
                 "offline turn action missing");
         require(turned.find(gbk(L"Name=\"设置步兵转向\"")) != std::string::npos,
@@ -113,7 +113,7 @@ bool verifyMovementResources() {
         rejected(Resource::Birth, "<BTree><Node ID=\"1\"/><Node ID=\"1\"/></BTree>");
 
         const auto movement = gbk(movementTreeFixture());
-        const auto router = t7::transformMovementResource(Resource::Router, movement);
+        const auto router = t7r::transformMovementResource(Resource::Router, movement);
         auto withSpeed = movement;
         const auto moveNode = std::string("<Node Type=\"ACTION\" ID=\"13\" Name=\"fixture-move\"/>");
         withSpeed.replace(withSpeed.find(moveNode), moveNode.size(), gbk(
@@ -122,8 +122,8 @@ bool verifyMovementResources() {
             L"<Param Name=\"速度\" Type=\"f32\" Value=\"5.0\"/>"
             L"<Param Name=\"最大速度\" Type=\"f32\" Value=\"25.0\"/>"
             L"<Param Name=\"加速度\" Type=\"f32\" Value=\"0.0\"/></Node>"));
-        const auto jog = t7::transformMovementResource(Resource::Router, withSpeed);
-        require(jog.find(gbk(L"Name=\"速度\" Type=\"f32\" Value=\"") + std::to_string(t7::JOG_SPEED) + "\"") != jog.npos,
+        const auto jog = t7r::transformMovementResource(Resource::Router, withSpeed);
+        require(jog.find(gbk(L"Name=\"速度\" Type=\"f32\" Value=\"") + std::to_string(t7r::JOG_SPEED) + "\"") != jog.npos,
                 "movement key-down did not start at the offline jog speed");
         require(jog.find(gbk(L"Name=\"加速度\" Type=\"f32\" Value=\"0.0\"")) != jog.npos,
                 "jog changed the original acceleration command");
@@ -147,7 +147,7 @@ bool verifyMovementResources() {
             const std::string original = "Value=\"W\"", replacementKey = std::string("Value=\"") + key + "\"";
             for (size_t pos = 0; (pos = keyTree.find(original, pos)) != keyTree.npos; pos += replacementKey.size())
                 keyTree.replace(pos, original.size(), replacementKey);
-            const auto routed = t7::transformMovementResource(Resource::Router, keyTree);
+            const auto routed = t7r::transformMovementResource(Resource::Router, keyTree);
             for (bool pressed : {false, true}) {
                 const std::vector<std::string> expected{pressed ? "fixture-move" : "fixture-stop"};
                 require(inputActions(routed, 2, true, true, key, pressed) == expected,
@@ -202,8 +202,8 @@ bool verifyMovementResources() {
         require(router.find("Name=\"fixture-land\"") != std::string::npos, "original landing action was lost");
         require(router.find(gbk(L"切换行为树")) == std::string::npos, "router can switch into an ungated movement tree");
         std::set<std::string> ids;
-        for (const auto& node : t7::resourceXml::elements(router))
-            if (node.name == "Node") require(ids.insert(t7::resourceXml::attribute(node, "ID")).second, "duplicate movement node ID");
+        for (const auto& node : t7r::resourceXml::elements(router))
+            if (node.name == "Node") require(ids.insert(t7r::resourceXml::attribute(node, "ID")).second, "duplicate movement node ID");
         rejected(Resource::Router, router);
         rejected(Resource::Router, "<BTree Version=\"4\"/>");
         for (const auto* action : {L"跳跃", L"请求进入下蹲", L"请求离开下蹲"}) {
@@ -221,12 +221,12 @@ bool verifyMovementResources() {
         auto exhaustedIds = movement;
         exhaustedIds.replace(exhaustedIds.find("ID=\"24\""), std::string("ID=\"24\"").size(), "ID=\"2147483640\"");
         rejected(Resource::Router, exhaustedIds);
-        require(t7::movementResourceForPath("..\\DATA\\BTREE\\T7_RUNTIME_MOVEMENT.BTREE") == Resource::Router,
+        require(t7r::movementResourceForPath("..\\DATA\\BTREE\\T7R_RUNTIME_MOVEMENT.BTREE") == Resource::Router,
                 "resource path normalization failed");
-        require(t7::movementResourceForPath(t7::movementOfflineTreePath()) == Resource::None,
+        require(t7r::movementResourceForPath(t7r::movementOfflineTreePath()) == Resource::None,
                 "original movement tree must remain unchanged");
-        require(t7::transformMovementResource(Resource::None, "not XML") == "not XML", "unrelated data changed");
-        rejected(Resource::Router, std::string(t7::MOVEMENT_XML_LIMIT + 1, 'x'));
+        require(t7r::transformMovementResource(Resource::None, "not XML") == "not XML", "unrelated data changed");
+        rejected(Resource::Router, std::string(t7r::MOVEMENT_XML_LIMIT + 1, 'x'));
         return true;
     } catch (const std::exception& error) {
         std::cerr << "Movement resources: " << error.what() << '\n'; return false;

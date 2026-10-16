@@ -22,6 +22,7 @@ defaults:
 
 env:
   T7R_SERVER_BASE_URL: ${{ vars.T7R_SERVER_BASE_URL }}
+  T7R_PREVIEW_ACCESS_PUBLIC_KEY: ${{ vars.T7R_PREVIEW_ACCESS_PUBLIC_KEY }}
   PYTHONUTF8: "1"
 
 jobs:
@@ -53,7 +54,7 @@ jobs:
       - name: Configure release version and update mirror
         env:
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-          T7_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          T7R_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python scripts/release_metadata.py prepare-build
 
       - name: Set up Inno Setup 7.1.0
@@ -84,14 +85,15 @@ jobs:
         run: python scripts/build.py --project managed
 
       - name: Run managed tests
-        run: .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe
+        timeout-minutes: 5
+        run: .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe
 
       - name: Validate published preview authorization key
         if: >-
           github.ref_type == 'tag' ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
-        run: .\artifacts\bin\T7.ManagedHarness\x64\Release\net48\T7.ManagedHarness.exe --preview-key-check
+        run: .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --preview-key-check
 
       - name: Run synthetic integration tests
         run: python scripts/integration_test.py --report artifacts/test-results/integration.json
@@ -111,6 +113,11 @@ jobs:
       - name: Verify package
         run: python scripts/package.py --output artifacts/package --verify --release
 
+      - name: Verify packaged native bindings
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "t7r-native-contract-state"
+          .\artifacts\bin\T7R.ManagedHarness\x64\Release\net48\T7R.ManagedHarness.exe --native-contract-tests artifacts/package
+
       - name: Create portable release archive
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -120,7 +127,7 @@ jobs:
       - name: Build installer
         run: |
           $arguments = @("--messages-jsonl")
-          $arguments += "--define=MyAppVersion=$env:T7_BUILD_VERSION"
+          $arguments += "--define=MyAppVersion=$env:T7R_BUILD_VERSION"
           $arguments += "installer/T7-Rekindle.iss"
           $messages = "artifacts/test-results/inno.jsonl"
           & "$env:RUNNER_TEMP/InnoSetup/ISCC.exe" @arguments 2> $messages

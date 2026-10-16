@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
+using T7R.Core;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class MainWindowViewModel
     {
@@ -41,6 +41,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             CheckPreviewAccess();
             CheckScheduledUpdate(utcNow);
             Refresh();
+            PollTitles();
             if (Interlocked.CompareExchange(ref _logPollActive, 1, 0) != 0) return;
             try
             {

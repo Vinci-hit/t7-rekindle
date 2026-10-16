@@ -48,6 +48,27 @@ def test_business_self_test_and_context(tmp_path):
         runtime.close()
 
 
+def test_revisions_use_isolated_t7r_package_names(tmp_path):
+    revisions = []
+    try:
+        for _ in range(2):
+            revision = host_runtime.Revision(ROOT / "src/Business/scripts", tmp_path)
+            revisions.append(revision)
+            assert revision.name.startswith("t7r_rev_")
+            assert revision.path == tmp_path / revision.name
+            assert sys.modules[revision.name] is revision.module
+            assert callable(revision.module.createState)
+        assert revisions[0].name != revisions[1].name
+        revisions[0].close()
+        assert revisions[1].name in sys.modules
+    finally:
+        for revision in revisions:
+            revision.close()
+    for revision in revisions:
+        assert not revision.path.exists()
+        assert not any(name == revision.name or name.startswith(revision.name + ".") for name in sys.modules)
+
+
 def test_state_encoding_rejects_unsupported_values():
     try:
         host_runtime.encode({"bad": object()})

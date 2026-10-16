@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE, DASH_DAMAGE
 from copy import deepcopy
 import math
 import struct
@@ -84,7 +85,7 @@ def test_ground_contact_does_not_block_later_body_contact_or_duplicate_damage(mu
             ground(multi, attacker, (0., .8, -.6))]
     for _ in range(2):
         settle(multi, attacker, hits, pipeline)
-        damage = combat.DASH_DAMAGE if intent == battle.DASH_ATTACK else combat.DAMAGE
+        damage = DASH_DAMAGE if intent == battle.DASH_ATTACK else NORMAL_DAMAGE
         assert hp(multi, 3 - attacker) == combat.MAX_HEALTH - damage
         assert battle.actionState(multi, attacker).get('reaction') is None
     assert sum(packet['reason'] == 'combat-hit-point' for packet in multi.result['send']) == 1

@@ -7,7 +7,7 @@ void require(bool result, const char* message) { if (!result) throw std::runtime
 class WindowFixture final {
 public:
     HWND window = nullptr;
-    explicit WindowFixture(const wchar_t* name = L"T7.WindowMonitorFixture", HWND owner = nullptr,
+    explicit WindowFixture(const wchar_t* name = L"T7R.WindowMonitorFixture", HWND owner = nullptr,
                            DWORD style = WS_OVERLAPPEDWINDOW) {
         window = CreateWindowExW(WS_EX_NOACTIVATE, name, L"Window monitor fixture", style,
             -10000, -10000, 100, 100, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -26,17 +26,17 @@ public:
 bool verifyClientWindowMonitor() {
     const auto instance = GetModuleHandleW(nullptr);
     WNDCLASSW type{}; type.lpfnWndProc = DefWindowProcW; type.hInstance = instance;
-    type.lpszClassName = L"T7.WindowMonitorFixture";
+    type.lpszClassName = L"T7R.WindowMonitorFixture";
     if (!RegisterClassW(&type)) { std::cerr << "window fixture class registration failed\n"; return false; }
     bool valid = true;
     try {
-        t7::ClientWindowMonitor monitor;
+        t7r::ClientWindowMonitor monitor;
         const auto pid = GetCurrentProcessId();
         require(!monitor.observed() && !monitor.closed(100000), "startup without a window triggered cleanup");
         require(!monitor.observe(nullptr, pid), "null game window accepted");
         WindowFixture main;
         require(!monitor.observe(main.window, pid + 1) && !monitor.observed(), "unowned window armed cleanup");
-        WindowFixture child(L"T7.WindowMonitorFixture", main.window, WS_CHILD);
+        WindowFixture child(L"T7R.WindowMonitorFixture", main.window, WS_CHILD);
         require(!monitor.observe(child.window, pid), "child window armed cleanup");
         child.destroy();
         require(monitor.observe(main.window, pid) && monitor.observed(), "main game window was not observed");
@@ -48,7 +48,7 @@ bool verifyClientWindowMonitor() {
         require(SetWindowLongPtrW(main.window, GWL_STYLE, WS_POPUP) != 0, "fullscreen fixture style change");
         require(!monitor.closed(30000), "fullscreen style change triggered cleanup");
         WindowFixture auxiliary(L"STATIC");
-        WindowFixture owned(L"T7.WindowMonitorFixture", auxiliary.window);
+        WindowFixture owned(L"T7R.WindowMonitorFixture", auxiliary.window);
         main.destroy();
         require(!monitor.closed(40000) && !monitor.closed(40999), "window recreation grace period was skipped");
         {

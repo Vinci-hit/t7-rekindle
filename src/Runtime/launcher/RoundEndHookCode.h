@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <array>
 
-namespace t7 {
+namespace t7r {
 // Persistent state must stay above the terrain collector/input scratch at 0x600..0x74F.
 constexpr uint32_t ROUND_END_CODE_OFFSET = 0x1F000, ROUND_END_DATA_OFFSET = 0x800;
 constexpr uint32_t FINISH_OBSERVER_OFFSET = 0x1F400, LEAVE_OBSERVER_OFFSET = 0x1F800;

@@ -3,19 +3,21 @@
 #include <chrono>
 #include <algorithm>
 
-namespace t7::detail {
+namespace t7r::detail {
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
+inline std::string timerName(const std::string& id) {
+    const auto colon = id.find(':', id.rfind("match:", 0) == 0 ? 6 : 0);
+    return id.substr(colon == std::string::npos ? 0 : colon + 1);
+}
 inline bool animationTimer(const std::string& id) {
-    const auto colon = id.find(':');
-    const auto name = id.substr(colon == std::string::npos ? 0 : colon + 1);
+    const auto name = timerName(id);
     for (const auto* prefix : {"battle-action-phase", "bot-action-phase", "bot-release", "combat-hurt-"})
         if (name.rfind(prefix, 0) == 0) return true;
     return false;
 }
 inline bool decisionTimer(const std::string& id) {
-    const auto colon = id.find(':');
-    const auto name = id.substr(colon == std::string::npos ? 0 : colon + 1);
+    const auto name = timerName(id);
     return name == "actors-pulse" || name == "actors-decision"
         || name == "bot-think" || name.rfind("bot-think-", 0) == 0;
 }

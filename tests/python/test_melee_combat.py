@@ -1,3 +1,4 @@
+from damage_fixture import NORMAL_DAMAGE
 from copy import deepcopy
 import math
 from pathlib import Path
@@ -14,6 +15,8 @@ from blade_fixture import contact, publish
 
 @pytest.fixture
 def arena(monkeypatch):
+    from damage_fixture import install
+    install(monkeypatch)
     nav = NavMesh.fromPolygons([[(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]])
     monkeypatch.setattr(bot, "navigationFor", lambda flow: nav)
     flow = flowAt()
@@ -53,7 +56,7 @@ def test_swing_hits_once_updates_only_target_and_recovers(arena, attacker, targe
     flow = arena
     swing(flow, attacker)
     advance(flow, combat.hitTimer(attacker))
-    assert hp(flow, target) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(flow, target) == combat.MAX_HEALTH - NORMAL_DAMAGE
     assert hp(flow, attacker) == combat.MAX_HEALTH
     assert (target, combat.HURT_STATE) in states(flow)
     assert combat.hitTimer(attacker) not in flow.session["pending"]
@@ -74,7 +77,7 @@ def test_swing_hits_once_updates_only_target_and_recovers(arena, attacker, targe
     assert len(results) == (1 if attacker == wire.ACTOR_ID else 0)
     if results:
         assert (results[0].attacker_rid, results[0].target_rid, results[0].target_result_data,
-                results[0].target_life_state) == (attacker, target, -combat.DAMAGE, battle_flow.LIFE_STATE_NONE)
+                results[0].target_life_state) == (attacker, target, -NORMAL_DAMAGE, battle_flow.LIFE_STATE_NONE)
     assert not any(p['command'] == 4 and p['body'][:2] == b'\0\x0a' for p in flow.result['send'])
     advance(flow, combat.hurtTimer(target))
     assert "hurtUntil" not in battle.actorData(flow, target)
@@ -85,7 +88,7 @@ def test_swing_hits_once_updates_only_target_and_recovers(arena, attacker, targe
 def test_every_attack_direction_has_a_contact_window(arena, intent):
     swing(arena, intent=intent)
     advance(arena, combat.hitTimer(1))
-    assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, 2) == combat.MAX_HEALTH - NORMAL_DAMAGE
 
 
 @pytest.mark.parametrize("position,heading", [((3., 0., .2), 180), ((1.5, 0., 2.), 180),
@@ -107,23 +110,21 @@ def test_clear_weapon_segment_hits_despite_disconnected_navigation(arena, monkey
     monkeypatch.setattr(bot, "navigationFor", lambda flow: nav)
     swing(arena)
     advance(arena, combat.hitTimer(1))
-    assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, 2) == combat.MAX_HEALTH - NORMAL_DAMAGE
 
 
 @pytest.mark.parametrize("attacker,defender", [(1, 2), (2, 1)])
-@pytest.mark.parametrize("attack,acceptedDefences", [
-    (300560, (300580,)), (300550, (300590, 300610)),
-    (300570, (300600,)), (300540, (300590, 300610)),
-], ids=["up", "right", "down", "left"])
+@pytest.mark.parametrize("attack", battle.ATTACK_CHAINS)
 @pytest.mark.parametrize("defence", [300580, 300590, 300600, 300610])
-def test_held_parry_accepts_both_lateral_guards_but_keeps_vertical_pairing(
-        arena, attacker, defender, attack, acceptedDefences, defence):
+@pytest.mark.parametrize("blocked", [False, True])
+def test_held_guard_requires_weapon_interception_not_a_direction_pair(
+        arena, attacker, defender, attack, defence, blocked):
     battle.startAction(arena, defence, actorId=defender)
     advance(arena, battle.actionTimer(defender))
     swing(arena, attacker, attack)
+    publish(arena, attacker, [contact(defender, defenceWeaponId=wire.WEAPON_ID if blocked else 0)])
     advance(arena, combat.hitTimer(attacker))
-    blocked = defence in acceptedDefences
-    assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else combat.DAMAGE)
+    assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else NORMAL_DAMAGE)
     assert hp(arena, attacker) == combat.MAX_HEALTH
     assert any("combat-parry" in log["message"] for log in arena.result["logs"]) == blocked
     if blocked:
@@ -138,11 +139,11 @@ def test_held_parry_accepts_both_lateral_guards_but_keeps_vertical_pairing(
 @pytest.mark.parametrize("attacker", [1, 2])
 @pytest.mark.parametrize("attack", [300540, 300550])
 @pytest.mark.parametrize("defence", [300590, 300610])
-@pytest.mark.parametrize("bearing,guardOffset,blocked", [
-    (0, 0, True), (90, 59.9, True), (-90, -59.9, True),
-    (175, 60.1, False), (-175, -60.1, False), (45, 180, False),
+@pytest.mark.parametrize("bearing,guardOffset", [
+    (0, 0), (90, 59.9), (-90, -59.9), (175, 60.1), (-175, -60.1), (45, 180),
 ])
-def test_lateral_parry_uses_relative_positions_and_current_facing(
+@pytest.mark.parametrize("blocked", [False, True])
+def test_lateral_guard_does_not_replace_interception_with_a_facing_cone(
         arena, attacker, attack, defence, bearing, guardOffset, blocked):
     origin = [3., 4., .2]
     yaw = math.radians(bearing)
@@ -157,8 +158,9 @@ def test_lateral_parry_uses_relative_positions_and_current_facing(
     battle.startAction(arena, defence, actorId=defender)
     advance(arena, battle.actionTimer(defender))
     swing(arena, attacker, attack)
+    publish(arena, attacker, [contact(defender, defenceWeaponId=wire.WEAPON_ID if blocked else 0)])
     advance(arena, combat.hitTimer(attacker))
-    assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else combat.DAMAGE)
+    assert hp(arena, defender) == combat.MAX_HEALTH - (0 if blocked else NORMAL_DAMAGE)
     assert (battle.actionState(arena, defender).get("reaction") == "parry-success") == blocked
     assert any("combat-parry" in log["message"] for log in arena.result["logs"]) == blocked
 
@@ -189,7 +191,7 @@ def test_back_facing_parry_does_not_block(arena):
     advance(arena, battle.actionTimer(2))
     swing(arena)
     advance(arena, combat.hitTimer(1))
-    assert hp(arena, 2) == combat.MAX_HEALTH - combat.DAMAGE
+    assert hp(arena, 2) == combat.MAX_HEALTH - NORMAL_DAMAGE
 
 
 def test_hurt_interrupts_attack_and_defers_new_inputs_but_preserves_movement(arena):
@@ -268,20 +270,21 @@ def test_vision_refresh_and_migration_keep_current_health(arena):
     scene.message(arena, 0xE, 7, struct.pack(">HiQQb", 7, 2, 1, 2, 0))
     packets = [p["body"] for p in arena.result["send"] if p["command"] == 0xE]
     assert struct.unpack_from(">ii", packets[0], 201) == (100, 100)
-    assert struct.unpack_from(">ii", packets[1], 201) == (100 - combat.DAMAGE, 100)
-    assert arena.session["bot"]["health"] == 100 - combat.DAMAGE
+    assert struct.unpack_from(">ii", packets[1], 201) == (100 - NORMAL_DAMAGE, 100)
+    assert arena.session["bot"]["health"] == 100 - NORMAL_DAMAGE
     assert any(p["body"][:2] == b"\0\4" for p in arena.result["send"] if p["command"] == 4)
     arena.session["bot"]["health"] = -1
     assert not app.validateState(arena.state)
 
 
-def test_new_round_resets_health_but_old_state_migration_is_unchanged(arena, spawnPoints):
+def test_new_round_resets_health_but_old_active_state_requires_restart(arena, spawnPoints):
     arena.session["health"] = 37
     arena.session["bot"]["health"] = 52
     scene.begin(arena)
     assert hp(arena, 1) == hp(arena, 2) == combat.MAX_HEALTH
     old = flowAt().state
-    assert app.migrateState(3, old) == old
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(3, old)
 
 
 def test_attr_health_wire_has_explicit_identity_and_zero_regeneration():
@@ -346,7 +349,7 @@ def test_hot_reload_keeps_damage_and_resumes_existing_hurt_deadline(arena, tmp_p
         event = {"type": "timer", "connection": 1, "name": combat.hurtTimer(2)}
         state, sends, _, _ = runtime.dispatch(host_runtime.encode(event), state, host_runtime.encode(context))
         value = host_runtime.decode(state)["sessions"]["1"]["bot"]
-        assert value["health"] == combat.MAX_HEALTH - combat.DAMAGE
+        assert value["health"] == combat.MAX_HEALTH - NORMAL_DAMAGE
         assert "hurtUntil" not in value
         assert battle_flow.decode_battle_state_sync_simple(sends[0]["body"]).state == 2
     finally:

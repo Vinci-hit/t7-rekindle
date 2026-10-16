@@ -3,7 +3,7 @@
 #include <sstream>
 #include <chrono>
 
-namespace t7 {
+namespace t7r {
 Journal::Journal(const fs::path& root, size_t segmentLimit, unsigned maxSegments, std::shared_ptr<DiagnosticLogFilter> filter)
     : root_(root), segmentLimit_(segmentLimit), maxSegments_(maxSegments),
       filter_(filter ? std::move(filter) : std::make_shared<DiagnosticLogFilter>()) {

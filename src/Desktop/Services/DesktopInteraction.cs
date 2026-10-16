@@ -4,9 +4,9 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
-using T7.Rekindle.Desktop.Views;
+using T7R.Desktop.Views;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public interface IDesktopInteraction
     {

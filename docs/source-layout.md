@@ -48,8 +48,8 @@ PROJECT_ROOT/
 产品包/
   T7-Rekindle.exe
   T7-Rekindle.exe.config
-  T7.Core.dll
-  T7.NativeBridge.dll
+  T7R.Core.dll
+  T7R.NativeBridge.dll
   python314.dll
   python3.dll
   python/                      # Python 标准库及随附文件

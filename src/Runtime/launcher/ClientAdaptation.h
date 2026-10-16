@@ -1,7 +1,7 @@
 #pragma once
 #include "ClientImage.h"
 
-namespace t7 {
+namespace t7r {
 struct MemoryPatch {
     uint32_t rva;
     Bytes expected;

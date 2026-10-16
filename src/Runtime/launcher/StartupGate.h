@@ -3,7 +3,7 @@
 #include <map>
 #include <mutex>
 
-namespace t7 {
+namespace t7r {
 class StartupGate final {
 public:
     static constexpr uint32_t SELECTOR_RVA = 0x000892B0;

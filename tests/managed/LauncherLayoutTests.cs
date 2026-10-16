@@ -5,13 +5,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
+using T7R.Core;
+using T7R.Desktop;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class LauncherLayoutTests
     {
@@ -22,25 +22,25 @@ namespace T7.ManagedHarness
             var bindingErrors = new BindingErrors();
             PresentationTraceSources.DataBindingSource.Listeners.Add(bindingErrors);
             PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Warning;
-            var settingsDirectory = Path.Combine(Path.GetTempPath(), "T7-layout-" + Guid.NewGuid().ToString("N"));
+            var settingsDirectory = Path.Combine(Path.GetTempPath(), "T7R-layout-" + Guid.NewGuid().ToString("N"));
             try
             {
-                AccountTests.Render(outputDirectory);
-                LaunchControlsLayoutTests.Run(settingsDirectory, outputDirectory);
-                GraphicsSettingsTests.Render(settingsDirectory, outputDirectory);
-                OutputDeviceTests.Render(settingsDirectory, outputDirectory);
-                AudioSettingsTests.Render(settingsDirectory, outputDirectory);
-                AboutPageLayoutTests.Run(settingsDirectory, outputDirectory);
-                AnnouncementTests.Run(settingsDirectory, outputDirectory);
-                LauncherUpdatePageTests.Run(settingsDirectory, outputDirectory);
-                ReleaseHistoryTests.Render(outputDirectory);
-                UpdateReminderTests.Run(settingsDirectory, outputDirectory);
-                EnvironmentInformationTests.Run(outputDirectory);
-                LauncherDesignTests.Run(settingsDirectory, outputDirectory);
-                LauncherToastTests.Run(settingsDirectory, outputDirectory);
-                UiInteractionTests.Run(settingsDirectory, outputDirectory);
-                TestTextDialogLayout(outputDirectory);
-                TestMarkdownDialogLayout(outputDirectory);
+                Program.RunGroup(nameof(AccountTests), () => AccountTests.Render(outputDirectory));
+                Program.RunGroup(nameof(LaunchControlsLayoutTests), () => LaunchControlsLayoutTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(GraphicsSettingsTests), () => GraphicsSettingsTests.Render(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(OutputDeviceTests), () => OutputDeviceTests.Render(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(AudioSettingsTests), () => AudioSettingsTests.Render(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(AboutPageLayoutTests), () => AboutPageLayoutTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(AnnouncementTests), () => AnnouncementTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(LauncherUpdatePageTests), () => LauncherUpdatePageTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(ReleaseHistoryTests), () => ReleaseHistoryTests.Render(outputDirectory));
+                Program.RunGroup(nameof(UpdateReminderTests), () => UpdateReminderTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(EnvironmentInformationTests), () => EnvironmentInformationTests.Run(outputDirectory));
+                Program.RunGroup(nameof(LauncherDesignTests), () => LauncherDesignTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(LauncherToastTests), () => LauncherToastTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(UiInteractionTests), () => UiInteractionTests.Run(settingsDirectory, outputDirectory));
+                Program.RunGroup(nameof(TestTextDialogLayout), () => TestTextDialogLayout(outputDirectory));
+                Program.RunGroup(nameof(TestMarkdownDialogLayout), () => TestMarkdownDialogLayout(outputDirectory));
                 LauncherTests.Assert(bindingErrors.Messages.Length == 0, "WPF binding error: " + bindingErrors.Messages);
             }
             finally

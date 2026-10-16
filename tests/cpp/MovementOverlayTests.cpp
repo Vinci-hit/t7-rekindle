@@ -14,8 +14,8 @@ bool expect(bool condition, const char* message) {
     return condition;
 }
 
-t7::Bytes readBytes(HANDLE process, uintptr_t address, size_t length) {
-    t7::Bytes bytes(length);
+t7r::Bytes readBytes(HANDLE process, uintptr_t address, size_t length) {
+    t7r::Bytes bytes(length);
     SIZE_T actual = 0;
     if (!ReadProcessMemory(process, reinterpret_cast<void*>(address), bytes.data(), bytes.size(), &actual)
         || actual != bytes.size()) throw std::runtime_error("overlay fixture read failed");
@@ -35,12 +35,12 @@ uintptr_t jumpTarget(uintptr_t address, const unsigned char* bytes) {
 }
 
 bool verifyOverlayMemory(HANDLE process) {
-    auto image = VirtualAllocEx(process, nullptr, t7::MOVEMENT_HOOK_SITES.back().rva + PAGE_SIZE,
+    auto image = VirtualAllocEx(process, nullptr, t7r::MOVEMENT_HOOK_SITES.back().rva + PAGE_SIZE,
                                 MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!image) throw std::runtime_error(t7::errorText("overlay fixture allocation"));
+    if (!image) throw std::runtime_error(t7r::errorText("overlay fixture allocation"));
     const auto base = reinterpret_cast<uintptr_t>(image);
-    const auto target = base + t7::MovementOverlayInfo::kResourceOpenRva;
-    t7::MovementOverlay overlay;
+    const auto target = base + t7r::MovementOverlayInfo::kResourceOpenRva;
+    t7r::MovementOverlay overlay;
     writeBytes(process, target, UNREADY_ENTRY, sizeof(UNREADY_ENTRY));
     std::string failure;
     try { overlay.install(process, base); }
@@ -53,20 +53,20 @@ bool verifyOverlayMemory(HANDLE process) {
     valid = expect(!overlay.installed() && !overlay.remoteBase(),
                    "rejected movement entry retained an installation") && valid;
     valid = expect(readBytes(process, target, sizeof(UNREADY_ENTRY))
-                   == t7::Bytes(std::begin(UNREADY_ENTRY), std::end(UNREADY_ENTRY)),
+                   == t7r::Bytes(std::begin(UNREADY_ENTRY), std::end(UNREADY_ENTRY)),
                    "rejected movement entry was modified") && valid;
     if (overlay.installed()) overlay.rollback();
 
     writeBytes(process, target, ENTRY, sizeof(ENTRY));
-    for (size_t i = 1; i < t7::MOVEMENT_HOOK_SITES.size(); ++i) {
-        const auto& site = t7::MOVEMENT_HOOK_SITES[i];
+    for (size_t i = 1; i < t7r::MOVEMENT_HOOK_SITES.size(); ++i) {
+        const auto& site = t7r::MOVEMENT_HOOK_SITES[i];
         writeBytes(process, base + site.rva, UNREADY_ENTRY, sizeof(UNREADY_ENTRY));
         failure.clear();
         try { overlay.install(process, base); }
         catch (const std::runtime_error& error) { failure = error.what(); }
         valid = expect(failure.find(i == 3 ? "movement command signature mismatch" : "movement XML loader signature mismatch") != std::string::npos
                        && !overlay.installed(), "movement signature mismatch did not reject the entire install") && valid;
-        valid = expect(readBytes(process, target, sizeof(ENTRY)) == t7::Bytes(std::begin(ENTRY), std::end(ENTRY)),
+        valid = expect(readBytes(process, target, sizeof(ENTRY)) == t7r::Bytes(std::begin(ENTRY), std::end(ENTRY)),
                        "a later mismatch changed the first hook") && valid;
         writeBytes(process, base + site.rva, site.original.data(), site.original.size());
     }
@@ -90,18 +90,18 @@ bool verifyOverlayMemory(HANDLE process) {
                        "movement trampoline returns to the wrong entry offset") && valid;
     }
     overlay.rollback();
-    for (const auto& site : t7::MOVEMENT_HOOK_SITES)
+    for (const auto& site : t7r::MOVEMENT_HOOK_SITES)
         valid = expect(readBytes(process, base + site.rva, site.original.size())
-                       == t7::Bytes(site.original.begin(), site.original.end()), "rollback left an XML hook installed") && valid;
+                       == t7r::Bytes(site.original.begin(), site.original.end()), "rollback left an XML hook installed") && valid;
     valid = expect(!overlay.installed() && !overlay.remoteBase(),
                    "movement rollback retained an installation") && valid;
-    valid = expect(readBytes(process, target, sizeof(ENTRY)) == t7::Bytes(std::begin(ENTRY), std::end(ENTRY)),
+    valid = expect(readBytes(process, target, sizeof(ENTRY)) == t7r::Bytes(std::begin(ENTRY), std::end(ENTRY)),
                    "movement rollback did not restore the entry") && valid;
     MEMORY_BASIC_INFORMATION region{};
     valid = expect(VirtualQueryEx(process, reinterpret_cast<void*>(remoteBase), &region, sizeof(region))
                    && region.State == MEM_FREE, "movement rollback did not release the remote page") && valid;
     if (!VirtualFreeEx(process, image, 0, MEM_RELEASE))
-        throw std::runtime_error(t7::errorText("overlay fixture release"));
+        throw std::runtime_error(t7r::errorText("overlay fixture release"));
     return valid;
 }
 }
@@ -110,13 +110,13 @@ bool verifyMovementOverlay() {
     wchar_t directory[MAX_PATH]{};
     const auto length = GetSystemWow64DirectoryW(directory, static_cast<UINT>(std::size(directory)));
     if (!length || length >= std::size(directory)) return false;
-    const auto image = t7::fs::path(directory) / L"cmd.exe";
+    const auto image = t7r::fs::path(directory) / L"cmd.exe";
     std::wstring command = L"\"" + image.wstring() + L"\" /d /c exit 0";
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
     PROCESS_INFORMATION info{};
     if (!CreateProcessW(image.c_str(), command.data(), nullptr, nullptr, FALSE,
                         CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info)) {
-        std::cerr << t7::errorText("overlay fixture creation") << '\n';
+        std::cerr << t7r::errorText("overlay fixture creation") << '\n';
         return false;
     }
     bool valid = false;

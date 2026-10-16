@@ -10,7 +10,7 @@ void require(bool result, const char* message) {
 }
 void reject(const std::string& source) {
     bool failed = false;
-    try { t7::skipStartupAnimation(source); }
+    try { t7r::skipStartupAnimation(source); }
     catch (const std::runtime_error&) { failed = true; }
     require(failed, "unknown startup animation structure accepted");
 }
@@ -19,20 +19,20 @@ void reject(const std::string& source) {
 bool verifyStartupAnimation() {
     try {
         const auto source = startupAnimationFixture();
-        const auto changed = t7::skipStartupAnimation(source);
+        const auto changed = t7r::skipStartupAnimation(source);
         const auto show = source.find("<Node Type=\"SEQ\" ID=\"43507\"");
         const auto skip = source.find("<Node Type=\"SEQ\" ID=\"43509\"");
         const auto end = source.find("</Node></Node>", skip) + 14;
         const auto expected = source.substr(0, show) + source.substr(skip, end - skip)
             + "\r\n" + source.substr(show, skip - show - 2) + source.substr(end);
         require(changed == expected && changed.size() == source.size(), "only the two title movie branches should move");
-        require(t7::skipStartupAnimation(changed) == changed, "startup animation transform is not idempotent");
-        require(t7::isStartupAnimationResourcePath(t7::startupAnimationResourcePath()), "login resource path not recognized");
-        auto alternatePath = t7::startupAnimationResourcePath();
+        require(t7r::skipStartupAnimation(changed) == changed, "startup animation transform is not idempotent");
+        require(t7r::isStartupAnimationResourcePath(t7r::startupAnimationResourcePath()), "login resource path not recognized");
+        auto alternatePath = t7r::startupAnimationResourcePath();
         alternatePath.replace(0, 14, "..\\DATA\\BTREE\\");
-        require(t7::isStartupAnimationResourcePath(alternatePath), "login resource path normalization failed");
-        require(!t7::isStartupAnimationResourcePath("../data/btree/tutorial.btree")
-            && !t7::isStartupAnimationResourcePath(t7::startupAnimationResourcePath() + ".bak"), "unrelated resource matched");
+        require(t7r::isStartupAnimationResourcePath(alternatePath), "login resource path normalization failed");
+        require(!t7r::isStartupAnimationResourcePath("../data/btree/tutorial.btree")
+            && !t7r::isStartupAnimationResourcePath(t7r::startupAnimationResourcePath() + ".bak"), "unrelated resource matched");
         reject(""); reject("<BTree Version=\"4\"/>"); reject(source.substr(0, source.size() - 12));
         reject(source + '\0'); reject(std::string(4 * 1024 * 1024 + 1, 'x'));
         for (const auto* marker : {"43506", "43507", "43509", "43532", "43510", "TITLEMOVIE", "GeASEventTitleMovieDone"}) {

@@ -1,7 +1,7 @@
 using System.Windows;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     public partial class ConfirmationDialog : Window
     {

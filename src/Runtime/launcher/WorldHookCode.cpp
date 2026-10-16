@@ -7,10 +7,11 @@
 #include "WeaponTrailHookCode.h"
 #include "RoundEndHookCode.h"
 #include "MovementAnimationHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <algorithm>
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t RID_LOOKUP_RVA = 0x647770, COMPONENT_RVA = 0x26A1C0, POSITION_RVA = 0x3D1200;
 constexpr uint32_t RID_MANAGER_RVA = 0x2E3FA8C, ENTITY_MANAGER_RVA = 0x2D27358;
@@ -128,7 +129,8 @@ Bytes buildRemoteMotionHook(uint32_t address, uint32_t imageBase) {
     return c.bytes;
 }
 Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, const DashAttackProfile& dash,
-                     const MovementAnimationProfile& animation, bool customLobby) {
+                     const MovementAnimationProfile& animation, const std::vector<CombatProfile>& profiles,
+                     bool customLobby) {
     if (!address || address > UINT32_MAX - WORLD_PAGE_SIZE || !imageBase
         || imageBase > UINT32_MAX - LOCAL_ACTOR_RVA - 4 || !threadId)
         throw std::runtime_error("world hook outside x86 range");
@@ -198,6 +200,8 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     c.emit({0xD9,0x5F,20}); // FSTP yaw.
     // The original getter returns protocol-space XYZ (including the controller's vertical offset).
     c.emit({0x8B,0xCB,0x8D,0x47,8,0x50}); c.call(imageBase + POSITION_RVA);
+    c.emit({0x0F,0xB6,0x43,0x20,0x89,0x87});
+    c.word(offsetof(ActorMailbox, blade) + offsetof(BladeMailbox, airborne));
 
     for (unsigned char offset : std::array<unsigned char, 4>{8, 12, 16, 20}) {
         c.emit({0x8B,0x47,offset,0x25}); c.word(0x7FFFFFFF);
@@ -291,8 +295,10 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     const auto complete = c.jump();
     for (auto branch : invalid) c.bind(branch);
     // An invalid game frame breaks sweep continuity but does not replay the last response.
-    for (uint32_t i = 0; i < MAX_WORLD_ACTORS; ++i)
+    for (uint32_t i = 0; i < MAX_WORLD_ACTORS; ++i) {
         c.store(live + i * ACTOR_STRIDE + offsetof(ActorMailbox, blade) + offsetof(BladeMailbox, previousWeapon), 0);
+        c.store(live + i * ACTOR_STRIDE + offsetof(ActorMailbox, blade) + offsetof(BladeMailbox, previousMotionEntity), 0);
+    }
     c.emit({0x83,0x3D}); c.word(address); c.emit({0}); const auto invalidUnrequested = c.branch(0x84);
     c.store(address + 4, 0); c.store(response + 4, 0); c.store(response + 8, 0);
     c.bind(complete);
@@ -309,7 +315,7 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
                   "remote motion capacity");
     const auto terrain = buildTerrainHook(address, imageBase);
     std::memcpy(page.data() + TERRAIN_CODE_OFFSET, terrain.data(), terrain.size());
-    const auto sprint = buildSprintHook(address, imageBase, dash);
+    const auto sprint = buildSprintHook(address, imageBase, dash, !profiles.empty());
     std::memcpy(page.data() + SPRINT_CODE_OFFSET, sprint.data(), sprint.size());
     const auto jumpPhysics = buildJumpPhysicsHook(address, imageBase, threadId);
     static_assert(JUMP_PHYSICS_CODE_OFFSET + 0x400 <= CHAT_INPUT_CODE_OFFSET, "jump physics code capacity");
@@ -328,7 +334,9 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     if (movementCommand.size() > MOVEMENT_ANIMATION_CODE_OFFSET - MOVEMENT_COMMAND_CODE_OFFSET)
         throw std::runtime_error("movement command hook overflow");
     std::copy(movementCommand.begin(), movementCommand.end(), page.begin() + MOVEMENT_COMMAND_CODE_OFFSET);
-    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation);
+    const auto airInput = buildAirInputHook(address, imageBase, threadId);
+    std::copy(airInput.begin(), airInput.end(), page.begin() + AIR_INPUT_CODE_OFFSET);
+    const auto movementAnimation = buildMovementAnimationHook(address, imageBase, threadId, animation, !profiles.empty());
     static_assert(MOVEMENT_ANIMATION_CODE_OFFSET + 0x1000 <= ROUND_END_CODE_OFFSET, "movement animation code capacity");
     std::copy(movementAnimation.begin(), movementAnimation.end(), page.begin() + MOVEMENT_ANIMATION_CODE_OFFSET);
     writeSprintDirections(page);
@@ -339,6 +347,14 @@ Bytes buildWorldHook(uint32_t address, uint32_t imageBase, uint32_t threadId, co
     const auto weaponTrail = buildWeaponTrailHook(address, imageBase);
     std::memcpy(page.data() + WEAPON_TRAIL_CODE_OFFSET, weaponTrail.data(), weaponTrail.size());
     writeWeaponTrailPreset(page);
+    writeCombatProfiles(page, profiles);
+    const auto lookup = buildCombatProfileLookup(address, imageBase);
+    static_assert(CONTACTS_DATA_OFFSET + MAX_FRAME_CONTACTS * sizeof(ContactEventMailbox) <= COMBAT_PROFILES_OFFSET,
+                  "contact journal overlaps combat profiles");
+    static_assert(COMBAT_PROFILE_CODE_OFFSET + 0x1000 <= REMOTE_MOTION_CODE_OFFSET,
+                  "combat code overlaps remote motion");
+    if (lookup.size() > 0x1000) throw std::runtime_error("combat profile code capacity");
+    std::copy(lookup.begin(), lookup.end(), page.begin() + COMBAT_PROFILE_CODE_OFFSET);
     return page;
 }
 }

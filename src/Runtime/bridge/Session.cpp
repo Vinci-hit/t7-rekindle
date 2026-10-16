@@ -9,7 +9,7 @@
 #include <fstream>
 #include <winsock2.h>
 
-namespace t7::bridge {
+namespace t7r::bridge {
 namespace {
 constexpr size_t MAX_LOG_RECORDS = 512;
 constexpr size_t MAX_LOG_BYTES = 1024 * 1024;
@@ -26,7 +26,7 @@ fs::path localDataRoot() {
     throw std::runtime_error("writable session root unavailable");
 }
 
-uint32_t errorCodeFor(const std::exception&) { return T7NB_ERROR_OPERATION; }
+uint32_t errorCodeFor(const std::exception&) { return T7RNB_ERROR_OPERATION; }
 }
 
 std::shared_ptr<Session> Session::create(std::string packageRoot) {
@@ -35,7 +35,7 @@ std::shared_ptr<Session> Session::create(std::string packageRoot) {
     return result;
 }
 
-#if defined(T7_NATIVE_BRIDGE_TESTING)
+#if defined(T7R_NATIVE_BRIDGE_TESTING)
 std::shared_ptr<Session> Session::createForTest(
     std::string packageRoot, Bootstrap::TestAdapter adapter, std::function<void()> afterOperation) {
     auto result = std::shared_ptr<Session>(
@@ -55,7 +55,7 @@ Session::Session(std::string packageRoot, Bootstrap::TestAdapter adapter)
     snapshot_.phase = "idle";
 }
 
-#if defined(T7_NATIVE_BRIDGE_TESTING)
+#if defined(T7R_NATIVE_BRIDGE_TESTING)
 bool Session::waitForWorkerForTest(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     return changed_.wait_for(lock, timeout, [this] { return workerExited_; });
@@ -73,13 +73,13 @@ void Session::requestClose() noexcept {
         // A zero operation id is the idle sentinel.  Keep the atomic at zero
         // when there is no active command so a future worker iteration cannot
         // accidentally treat an unrelated command as cancelled.
-        cancelOperation_.store(snapshot_.operation == T7NB_OPERATION_NONE ? 0 : snapshot_.operationId,
+        cancelOperation_.store(snapshot_.operation == T7RNB_OPERATION_NONE ? 0 : snapshot_.operationId,
                                std::memory_order_release);
         for (const auto& command : commands_) {
             auto found = operations_.find(command.id);
-            if (found != operations_.end() && found->second.status == T7NB_OPERATION_QUEUED) {
-                found->second.status = T7NB_OPERATION_CANCELLED;
-                found->second.errorCode = T7NB_ERROR_CANCELLED;
+            if (found != operations_.end() && found->second.status == T7RNB_OPERATION_QUEUED) {
+                found->second.status = T7RNB_OPERATION_CANCELLED;
+                found->second.errorCode = T7RNB_ERROR_CANCELLED;
                 found->second.error = "session released";
             }
         }
@@ -96,142 +96,142 @@ void Session::startWorker() {
 }
 
 int32_t Session::setLogLevel(uint32_t level) {
-    if (level > static_cast<uint32_t>(DiagnosticLogLevel::Error)) return T7NB_INVALID_ARGUMENT;
+    if (level > static_cast<uint32_t>(DiagnosticLogLevel::Error)) return T7RNB_INVALID_ARGUMENT;
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closing_) return T7NB_INVALID_HANDLE;
+    if (closing_) return T7RNB_INVALID_HANDLE;
     logFilter_->minimum.store(static_cast<DiagnosticLogLevel>(level));
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::setOutputDevice(const GUID& identifier) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closing_) return T7NB_INVALID_HANDLE;
-    if (snapshot_.operation != T7NB_OPERATION_NONE || !commands_.empty()) return T7NB_BUSY;
+    if (closing_) return T7RNB_INVALID_HANDLE;
+    if (snapshot_.operation != T7RNB_OPERATION_NONE || !commands_.empty()) return T7RNB_BUSY;
     outputDevice_ = identifier;
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::submit(uint32_t kind, std::string clientDirectory, uint64_t& operationId,
                         std::string playerName, bool skipStartupAnimation) {
-    if (kind != T7NB_OPERATION_CHECK && kind != T7NB_OPERATION_START && kind != T7NB_OPERATION_STOP)
-        return T7NB_INVALID_ARGUMENT;
-    if (kind == T7NB_OPERATION_START && !validPlayerName(playerName)) return T7NB_INVALID_ARGUMENT;
-    if (kind != T7NB_OPERATION_STOP) {
+    if (kind != T7RNB_OPERATION_CHECK && kind != T7RNB_OPERATION_START && kind != T7RNB_OPERATION_STOP)
+        return T7RNB_INVALID_ARGUMENT;
+    if (kind == T7RNB_OPERATION_START && !validPlayerName(playerName)) return T7RNB_INVALID_ARGUMENT;
+    if (kind != T7RNB_OPERATION_STOP) {
         try {
             auto path = fs::path(wide(clientDirectory));
             if (clientDirectory.empty() || !path.is_absolute() || clientDirectory.size() > 32768)
-                return T7NB_INVALID_ARGUMENT;
-        } catch (...) { return T7NB_INVALID_ARGUMENT; }
+                return T7RNB_INVALID_ARGUMENT;
+        } catch (...) { return T7RNB_INVALID_ARGUMENT; }
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closing_) return T7NB_INVALID_HANDLE;
-    if (snapshot_.state == T7NB_STATE_FAILED_CLEANING && kind != T7NB_OPERATION_STOP)
-        return T7NB_BUSY;
+    if (closing_) return T7RNB_INVALID_HANDLE;
+    if (snapshot_.state == T7RNB_STATE_FAILED_CLEANING && kind != T7RNB_OPERATION_STOP)
+        return T7RNB_BUSY;
     // Reserve the first queued command in the snapshot before notifying the
     // worker.  Without this reservation two callers can both observe an idle
     // snapshot during the small enqueue/dequeue window and submit concurrent
     // lifecycle operations even though the worker is strictly serial.
-    const bool active = snapshot_.operation != T7NB_OPERATION_NONE;
+    const bool active = snapshot_.operation != T7RNB_OPERATION_NONE;
     const bool queued = !commands_.empty();
-    if (kind == T7NB_OPERATION_START || kind == T7NB_OPERATION_CHECK) {
-        if ((snapshot_.state != T7NB_STATE_IDLE && snapshot_.state != T7NB_STATE_FAILED) || active || queued)
-            return T7NB_BUSY;
+    if (kind == T7RNB_OPERATION_START || kind == T7RNB_OPERATION_CHECK) {
+        if ((snapshot_.state != T7RNB_STATE_IDLE && snapshot_.state != T7RNB_STATE_FAILED) || active || queued)
+            return T7RNB_BUSY;
     }
-    if (kind == T7NB_OPERATION_STOP && queued) {
+    if (kind == T7RNB_OPERATION_STOP && queued) {
         // A Stop already waiting behind an active operation is enough; do not
         // create an unbounded stop queue from repeated UI clicks.
         for (const auto& command : commands_)
-            if (command.kind == T7NB_OPERATION_STOP) return T7NB_BUSY;
+            if (command.kind == T7RNB_OPERATION_STOP) return T7RNB_BUSY;
     }
-    if (kind == T7NB_OPERATION_STOP && active && snapshot_.operation == T7NB_OPERATION_STOP)
-        return T7NB_BUSY;
-    const bool retryingCleanup = snapshot_.state == T7NB_STATE_FAILED_CLEANING;
+    if (kind == T7RNB_OPERATION_STOP && active && snapshot_.operation == T7RNB_OPERATION_STOP)
+        return T7RNB_BUSY;
+    const bool retryingCleanup = snapshot_.state == T7RNB_STATE_FAILED_CLEANING;
     operationId = nextOperation_++;
-    if (kind == T7NB_OPERATION_STOP && active) {
+    if (kind == T7RNB_OPERATION_STOP && active) {
         cancelOperation_.store(snapshot_.operationId, std::memory_order_release);
-        snapshot_.state = T7NB_STATE_CANCELLING;
+        snapshot_.state = T7RNB_STATE_CANCELLING;
         snapshot_.phase = "cancelling-before-stop";
     }
-    operations_[operationId] = {operationId, kind, T7NB_OPERATION_QUEUED, 0, {}};
+    operations_[operationId] = {operationId, kind, T7RNB_OPERATION_QUEUED, 0, {}};
     commands_.push_back({operationId, kind, std::move(clientDirectory), std::move(playerName), skipStartupAnimation, outputDevice_});
     if (!active) {
         snapshot_.operation = kind;
         snapshot_.operationId = operationId;
         if (!retryingCleanup) snapshot_.errorCode = 0;
         snapshot_.flags &= ~1u;
-        snapshot_.state = kind == T7NB_OPERATION_CHECK ? T7NB_STATE_CHECKING
-            : kind == T7NB_OPERATION_START ? T7NB_STATE_STARTING_RUNTIME : T7NB_STATE_STOPPING_CLIENT;
+        snapshot_.state = kind == T7RNB_OPERATION_CHECK ? T7RNB_STATE_CHECKING
+            : kind == T7RNB_OPERATION_START ? T7RNB_STATE_STARTING_RUNTIME : T7RNB_STATE_STOPPING_CLIENT;
         snapshot_.phase = retryingCleanup ? "cleanup-retry-queued" : "queued";
     }
     changed_.notify_all();
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::cancel(uint64_t operationId) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto found = operations_.find(operationId);
-    if (found == operations_.end()) return T7NB_NOT_FOUND;
-    if (found->second.status != T7NB_OPERATION_QUEUED && found->second.status != T7NB_OPERATION_RUNNING)
-        return T7NB_NOT_READY;
-    if (found->second.status == T7NB_OPERATION_QUEUED) {
-        found->second.status = T7NB_OPERATION_CANCELLED;
-        found->second.errorCode = T7NB_ERROR_CANCELLED;
+    if (found == operations_.end()) return T7RNB_NOT_FOUND;
+    if (found->second.status != T7RNB_OPERATION_QUEUED && found->second.status != T7RNB_OPERATION_RUNNING)
+        return T7RNB_NOT_READY;
+    if (found->second.status == T7RNB_OPERATION_QUEUED) {
+        found->second.status = T7RNB_OPERATION_CANCELLED;
+        found->second.errorCode = T7RNB_ERROR_CANCELLED;
         found->second.error = "operation cancelled before execution";
         commands_.erase(std::remove_if(commands_.begin(), commands_.end(),
             [operationId](const Command& command) { return command.id == operationId; }), commands_.end());
         if (snapshot_.operationId == operationId && snapshot_.operation == found->second.kind) {
-            const bool cleanupPending = snapshot_.errorCode == T7NB_ERROR_CLEANUP;
-            snapshot_.operation = T7NB_OPERATION_NONE;
+            const bool cleanupPending = snapshot_.errorCode == T7RNB_ERROR_CLEANUP;
+            snapshot_.operation = T7RNB_OPERATION_NONE;
             if (cleanupPending) {
-                snapshot_.state = T7NB_STATE_FAILED_CLEANING;
+                snapshot_.state = T7RNB_STATE_FAILED_CLEANING;
                 snapshot_.flags &= ~1u;
-                snapshot_.errorCode = T7NB_ERROR_CLEANUP;
+                snapshot_.errorCode = T7RNB_ERROR_CLEANUP;
                 snapshot_.phase = "failed-cleaning";
             } else {
-                snapshot_.state = T7NB_STATE_IDLE;
-                snapshot_.errorCode = T7NB_ERROR_CANCELLED;
+                snapshot_.state = T7RNB_STATE_IDLE;
+                snapshot_.errorCode = T7RNB_ERROR_CANCELLED;
                 snapshot_.flags |= 1u;
                 snapshot_.phase = "idle";
             }
         }
         changed_.notify_all();
-        return T7NB_OK;
+        return T7RNB_OK;
     }
     cancelOperation_.store(operationId, std::memory_order_release);
     if (snapshot_.operationId == operationId) {
-        snapshot_.state = T7NB_STATE_CANCELLING;
+        snapshot_.state = T7RNB_STATE_CANCELLING;
         snapshot_.phase = "cancelling";
     }
     changed_.notify_all();
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::snapshot(Snapshot& result) const {
     std::lock_guard<std::mutex> lock(mutex_);
     result = snapshot_;
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::operation(uint64_t operationId, Operation& result) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto found = operations_.find(operationId);
-    if (found == operations_.end()) return T7NB_NOT_FOUND;
+    if (found == operations_.end()) return T7RNB_NOT_FOUND;
     result = found->second;
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::error(uint64_t operationId, std::string& result, uint32_t& errorCode) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto found = operations_.find(operationId);
-    if (found == operations_.end()) return T7NB_NOT_FOUND;
+    if (found == operations_.end()) return T7RNB_NOT_FOUND;
     result = found->second.error;
     errorCode = found->second.errorCode;
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 int32_t Session::readLogs(uint64_t& cursor, uint8_t* buffer, uint32_t capacity,
                           uint32_t& required, uint32_t& flags) {
-    if (capacity && !buffer) return T7NB_INVALID_ARGUMENT;
+    if (capacity && !buffer) return T7RNB_INVALID_ARGUMENT;
     std::lock_guard<std::mutex> lock(mutex_);
     flags = 0;
     uint64_t readCursor = cursor == 0 ? earliestLog_ : cursor;
@@ -252,11 +252,11 @@ int32_t Session::readLogs(uint64_t& cursor, uint8_t* buffer, uint32_t capacity,
         // A short buffer must never consume the caller's cursor.  The gap
         // flag is repeated on the retry, where the full record set can be
         // copied and the cursor advances atomically.
-        return T7NB_BUFFER_TOO_SMALL;
+        return T7RNB_BUFFER_TOO_SMALL;
     }
     if (required) std::memcpy(buffer, output.data(), required);
     cursor = nextLog_;
-    return T7NB_OK;
+    return T7RNB_OK;
 }
 
 void Session::workerLoop() {
@@ -267,14 +267,15 @@ void Session::workerLoop() {
             bool hasCommand = false;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                const auto interval = snapshot_.state == T7NB_STATE_RUNNING ? 5 : 50;
+                const auto interval = snapshot_.state == T7RNB_STATE_RUNNING ? 5 : 50;
                 hasCommand = changed_.wait_for(lock, std::chrono::milliseconds(interval),
                     [this] { return closing_ || !commands_.empty(); });
-                if (!hasCommand && snapshot_.state == T7NB_STATE_RUNNING && !closing_) {
+                if (!hasCommand && snapshot_.state == T7RNB_STATE_RUNNING && !closing_) {
                     lock.unlock();
                     const auto now = std::chrono::steady_clock::now();
                     if (now >= nextMonitor) {
                         monitorClient();
+                        monitorTitles();
                         nextMonitor = now + std::chrono::milliseconds(50);
                     }
                     monitorWorld();
@@ -288,13 +289,13 @@ void Session::workerLoop() {
                 command = std::move(commands_.front());
                 commands_.pop_front();
                 auto& operation = operations_.at(command.id);
-                operation.status = T7NB_OPERATION_RUNNING;
+                operation.status = T7RNB_OPERATION_RUNNING;
                 snapshot_.operation = command.kind;
                 snapshot_.operationId = command.id;
                 snapshot_.errorCode = 0;
                 snapshot_.flags &= ~1u;
-                snapshot_.state = command.kind == T7NB_OPERATION_CHECK ? T7NB_STATE_CHECKING
-                    : command.kind == T7NB_OPERATION_START ? T7NB_STATE_STARTING_RUNTIME : T7NB_STATE_STOPPING_CLIENT;
+                snapshot_.state = command.kind == T7RNB_OPERATION_CHECK ? T7RNB_STATE_CHECKING
+                    : command.kind == T7RNB_OPERATION_START ? T7RNB_STATE_STARTING_RUNTIME : T7RNB_STATE_STOPPING_CLIENT;
                 snapshot_.phase = "queued";
             }
             try {
@@ -304,8 +305,8 @@ void Session::workerLoop() {
                     // cancel() uses the same lock: accepting cancellation and
                     // publishing success must have one atomic ordering.
                     std::lock_guard<std::mutex> lock(mutex_);
-                    cancellationWon = cancelled(command.id) && command.kind != T7NB_OPERATION_STOP;
-                    if (!cancellationWon) finishOperationLocked(command.id, T7NB_OPERATION_SUCCEEDED);
+                    cancellationWon = cancelled(command.id) && command.kind != T7RNB_OPERATION_STOP;
+                    if (!cancellationWon) finishOperationLocked(command.id, T7RNB_OPERATION_SUCCEEDED);
                 }
                 if (cancellationWon) {
                     // Cancellation can race with the final instruction of a
@@ -313,14 +314,14 @@ void Session::workerLoop() {
                     // path as an in-flight cancellation; otherwise a Start
                     // could be reported cancelled while its client remains
                     // running.
-                    setFailure(command.id, T7NB_ERROR_CANCELLED, "operation cancelled");
+                    setFailure(command.id, T7RNB_ERROR_CANCELLED, "operation cancelled");
                 }
             } catch (const std::exception& error) {
                 setFailure(command.id, errorCodeFor(error), error.what());
             } catch (...) {
-                setFailure(command.id, T7NB_INTERNAL_ERROR, "non-standard native exception");
+                setFailure(command.id, T7RNB_INTERNAL_ERROR, "non-standard native exception");
             }
-#if defined(T7_NATIVE_BRIDGE_TESTING)
+#if defined(T7R_NATIVE_BRIDGE_TESTING)
             if (afterOperationForTest_) afterOperationForTest_();
 #endif
         }
@@ -340,14 +341,14 @@ void Session::finishOperationLocked(uint64_t operationId, uint32_t status) {
     // must become visible together before another command can be submitted.
     auto& operation = operations_.at(operationId);
     operation.status = status;
-    snapshot_.operation = T7NB_OPERATION_NONE;
+    snapshot_.operation = T7RNB_OPERATION_NONE;
     snapshot_.operationId = operationId;
-    if (snapshot_.state != T7NB_STATE_FAILED && snapshot_.state != T7NB_STATE_FAILED_CLEANING) {
-        snapshot_.state = (operation.kind == T7NB_OPERATION_STOP || operation.kind == T7NB_OPERATION_CHECK)
-            ? T7NB_STATE_IDLE : snapshot_.state;
-        snapshot_.phase = snapshot_.state == T7NB_STATE_RUNNING ? "running" : "idle";
+    if (snapshot_.state != T7RNB_STATE_FAILED && snapshot_.state != T7RNB_STATE_FAILED_CLEANING) {
+        snapshot_.state = (operation.kind == T7RNB_OPERATION_STOP || operation.kind == T7RNB_OPERATION_CHECK)
+            ? T7RNB_STATE_IDLE : snapshot_.state;
+        snapshot_.phase = snapshot_.state == T7RNB_STATE_RUNNING ? "running" : "idle";
     }
-    if (snapshot_.state == T7NB_STATE_RUNNING || snapshot_.state == T7NB_STATE_FAILED_CLEANING)
+    if (snapshot_.state == T7RNB_STATE_RUNNING || snapshot_.state == T7RNB_STATE_FAILED_CLEANING)
         snapshot_.flags &= ~1u;
     else snapshot_.flags |= 1u;
     auto expectedCancel = operationId;
@@ -364,7 +365,7 @@ void Session::monitorClient() {
         } catch (const std::exception& error) {
             detail += ": " + std::string(error.what());
         }
-        setFailure(0, T7NB_ERROR_OPERATION, detail);
+        setFailure(0, T7RNB_ERROR_OPERATION, detail);
         return;
     }
     bool alive = true, windowClosed = false;
@@ -376,7 +377,7 @@ void Session::monitorClient() {
             windowClosed = alive;
         }
     } catch (const std::exception& error) {
-        setFailure(0, T7NB_ERROR_OPERATION, std::string("owned client status failed: ") + error.what());
+        setFailure(0, T7RNB_ERROR_OPERATION, std::string("owned client status failed: ") + error.what());
         return;
     }
     if (alive && !windowClosed) {
@@ -386,12 +387,12 @@ void Session::monitorClient() {
     DWORD exitCode = 0;
     try { if (!windowClosed) exitCode = bootstrap_.exitCode(); }
     catch (const std::exception& error) {
-        setFailure(0, T7NB_ERROR_OPERATION, error.what());
+        setFailure(0, T7RNB_ERROR_OPERATION, error.what());
         return;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STOPPING_CLIENT;
+        snapshot_.state = T7RNB_STATE_STOPPING_CLIENT;
         snapshot_.phase = windowClosed ? "client-window-closed" : "client-exited";
     }
     if (windowClosed) log("owned game window closed; stopping remaining session processes");
@@ -400,14 +401,14 @@ void Session::monitorClient() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (cleanupError.empty()) {
-            snapshot_.state = normalExit ? T7NB_STATE_IDLE : T7NB_STATE_FAILED;
-            snapshot_.errorCode = normalExit ? 0 : T7NB_ERROR_CLIENT_EXIT;
+            snapshot_.state = normalExit ? T7RNB_STATE_IDLE : T7RNB_STATE_FAILED;
+            snapshot_.errorCode = normalExit ? 0 : T7RNB_ERROR_CLIENT_EXIT;
             snapshot_.flags |= 1u;
             snapshot_.phase = windowClosed ? "client-window-closed" : normalExit ? "client-exited" : "client-exited-error";
         } else {
-            snapshot_.state = T7NB_STATE_FAILED_CLEANING;
+            snapshot_.state = T7RNB_STATE_FAILED_CLEANING;
             snapshot_.flags &= ~1u;
-            snapshot_.errorCode = T7NB_ERROR_CLEANUP;
+            snapshot_.errorCode = T7RNB_ERROR_CLEANUP;
             snapshot_.phase = "failed-cleaning";
         }
     }
@@ -431,16 +432,16 @@ void Session::monitorWorld() {
         try {
             if (!bootstrap_.running()) { monitorClient(); return; }
         } catch (const std::exception& statusError) {
-            setFailure(0, T7NB_ERROR_OPERATION, std::string("owned client status failed: ") + statusError.what());
+            setFailure(0, T7RNB_ERROR_OPERATION, std::string("owned client status failed: ") + statusError.what());
             return;
         }
-        setFailure(0, T7NB_ERROR_OPERATION, std::string("world snapshot failed: ") + error.what());
+        setFailure(0, T7RNB_ERROR_OPERATION, std::string("world snapshot failed: ") + error.what());
     }
 }
 
 void Session::execute(const Command& command) {
-    if (command.kind == T7NB_OPERATION_CHECK) executeCheck(command);
-    else if (command.kind == T7NB_OPERATION_START) executeStart(command);
+    if (command.kind == T7RNB_OPERATION_CHECK) executeCheck(command);
+    else if (command.kind == T7RNB_OPERATION_START) executeStart(command);
     else executeStop(command);
 }
 
@@ -480,10 +481,11 @@ void Session::executeStart(const Command& command) {
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        graphics_.state = T7NB_GRAPHICS_UNAVAILABLE;
+        graphics_.state = T7RNB_GRAPHICS_UNAVAILABLE;
         ++graphics_.revision; graphicsQueued_ = false;
-        audio_.state = T7NB_AUDIO_UNAVAILABLE;
+        audio_.state = T7RNB_AUDIO_UNAVAILABLE;
         ++audio_.revision; audioQueued_ = false;
+        titleUpdates_.clear(); titleRequest_ = {}; titleError_.clear();
     }
     if (!winsockStarted_) {
         WSADATA data{};
@@ -500,7 +502,7 @@ void Session::executeStart(const Command& command) {
     config.ports[0] = config.ports[1] = config.ports[2] = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STARTING_RUNTIME;
+        snapshot_.state = T7RNB_STATE_STARTING_RUNTIME;
         snapshot_.phase = "runtime-ready-wait";
     }
     server_ = std::make_unique<Server>();
@@ -512,14 +514,14 @@ void Session::executeStart(const Command& command) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         snapshot_.ports[0] = actual.ports[0]; snapshot_.ports[1] = actual.ports[1]; snapshot_.ports[2] = actual.ports[2];
-        snapshot_.state = T7NB_STATE_STARTING_CLIENT;
+        snapshot_.state = T7RNB_STATE_STARTING_CLIENT;
         snapshot_.phase = "client-start";
     }
     bootstrap_.launch(fs::path(wide(command.clientDirectory)), actual,
         [this](DiagnosticLogLevel level, std::string line) { log(line, level); },
         [this, id = command.id] { return cancelled(id); },
         [this, id = command.id] {
-            setState(T7NB_STATE_ADAPTING_CLIENT, T7NB_OPERATION_START, id, "client-adaptation");
+            setState(T7RNB_STATE_ADAPTING_CLIENT, T7RNB_OPERATION_START, id, "client-adaptation");
         },
         [this](std::string line) { log(line, DiagnosticLogLevel::Warn); }, logFilter_->allows(DiagnosticLogLevel::Debug));
     if (cancelled(command.id)) throw std::runtime_error("start cancelled");
@@ -529,7 +531,7 @@ void Session::executeStart(const Command& command) {
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_RUNNING;
+        snapshot_.state = T7RNB_STATE_RUNNING;
         snapshot_.phase = "running";
         snapshot_.revision = ++revisionCounter_;
     }
@@ -540,13 +542,13 @@ void Session::executeStop(const Command& command) {
     (void)command;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STOPPING_CLIENT;
+        snapshot_.state = T7RNB_STATE_STOPPING_CLIENT;
         snapshot_.phase = "client-stop";
     }
     bootstrap_.stop();
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STOPPING_RUNTIME;
+        snapshot_.state = T7RNB_STATE_STOPPING_RUNTIME;
         snapshot_.phase = "runtime-stop";
     }
     std::vector<std::string> journalLines;
@@ -567,8 +569,8 @@ void Session::setFailure(uint64_t operationId, uint32_t code, const std::string&
     const bool wasCancelled = cancelled(operationId);
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.errorCode = wasCancelled ? T7NB_ERROR_CANCELLED : code;
-        snapshot_.state = wasCancelled ? T7NB_STATE_CANCELLING : T7NB_STATE_FAILED_CLEANING;
+        snapshot_.errorCode = wasCancelled ? T7RNB_ERROR_CANCELLED : code;
+        snapshot_.state = wasCancelled ? T7RNB_STATE_CANCELLING : T7RNB_STATE_FAILED_CLEANING;
         snapshot_.flags &= ~1u;
         snapshot_.phase = wasCancelled ? "cancelling" : "failed-cleaning";
     }
@@ -579,27 +581,27 @@ void Session::setFailure(uint64_t operationId, uint32_t code, const std::string&
         auto found = operations_.find(operationId);
         if (found != operations_.end()) {
             found->second.errorCode = cleanupError.empty()
-                ? (wasCancelled ? T7NB_ERROR_CANCELLED : code) : T7NB_ERROR_CLEANUP;
+                ? (wasCancelled ? T7RNB_ERROR_CANCELLED : code) : T7RNB_ERROR_CLEANUP;
             found->second.error = message;
             if (!cleanupError.empty()) found->second.error += "; cleanup=" + cleanupError;
         }
         if (wasCancelled && cleanupError.empty()) {
-            snapshot_.state = T7NB_STATE_IDLE;
-            snapshot_.errorCode = T7NB_ERROR_CANCELLED;
+            snapshot_.state = T7RNB_STATE_IDLE;
+            snapshot_.errorCode = T7RNB_ERROR_CANCELLED;
             snapshot_.flags |= 1u;
             snapshot_.phase = "idle";
         } else if (cleanupError.empty()) {
-            snapshot_.state = T7NB_STATE_FAILED;
+            snapshot_.state = T7RNB_STATE_FAILED;
             snapshot_.flags |= 1u;
             snapshot_.phase = "failed";
         } else {
-            snapshot_.state = T7NB_STATE_FAILED_CLEANING;
+            snapshot_.state = T7RNB_STATE_FAILED_CLEANING;
             snapshot_.flags &= ~1u;
-            snapshot_.errorCode = T7NB_ERROR_CLEANUP;
+            snapshot_.errorCode = T7RNB_ERROR_CLEANUP;
             snapshot_.phase = "failed-cleaning";
         }
         if (found != operations_.end())
-            finishOperationLocked(operationId, wasCancelled ? T7NB_OPERATION_CANCELLED : T7NB_OPERATION_FAILED);
+            finishOperationLocked(operationId, wasCancelled ? T7RNB_OPERATION_CANCELLED : T7RNB_OPERATION_FAILED);
     }
 }
 
@@ -607,7 +609,7 @@ std::string Session::cleanup() noexcept {
     std::string errors;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STOPPING_CLIENT;
+        snapshot_.state = T7RNB_STATE_STOPPING_CLIENT;
         snapshot_.phase = "client-stop";
     }
     try { bootstrap_.stop(); }
@@ -615,7 +617,7 @@ std::string Session::cleanup() noexcept {
     catch (...) { errors = "non-standard client cleanup error"; }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.state = T7NB_STATE_STOPPING_RUNTIME;
+        snapshot_.state = T7RNB_STATE_STOPPING_RUNTIME;
         snapshot_.phase = "runtime-stop";
     }
     try { if (server_) { server_->stop(); server_.reset(); } }
@@ -665,5 +667,5 @@ void Session::setState(uint32_t state, uint32_t operation, uint64_t operationId,
 
 }
 
-namespace t7::bridge {
+namespace t7r::bridge {
 }

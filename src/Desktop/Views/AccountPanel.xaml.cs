@@ -6,9 +6,9 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Desktop.ViewModels;
 
-namespace T7.Rekindle.Desktop.Views
+namespace T7R.Desktop.Views
 {
     public partial class AccountPanel : UserControl
     {
@@ -90,6 +90,12 @@ namespace T7.Rekindle.Desktop.Views
             AccountPopup.IsOpen = false;
             if (account?.LogoutCommand.CanExecute(null) == true) await account.LogoutCommand.ExecuteAsync(null);
             AccountToggle.Focus();
+        }
+        private void OnTitles(object sender, RoutedEventArgs e)
+        {
+            AccountPopup.IsOpen = false;
+            if (Account == null) return;
+            new TitlesDialog(Account) { Owner = Window.GetWindow(this) }.ShowDialog();
         }
         private void OnAvatarFailed(object sender, ExceptionRoutedEventArgs e) => ((Image)sender).Visibility = Visibility.Hidden;
         private void OnAvatarChanged(object sender, DataTransferEventArgs e) => ((Image)sender).Visibility = Visibility.Visible;

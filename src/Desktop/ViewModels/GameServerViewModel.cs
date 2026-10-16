@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Desktop.Services;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     // Endpoint preferences persist; one-use guest tickets are protected by Windows.
     public sealed class GameServerViewModel : ObservableObject
@@ -54,7 +54,7 @@ namespace T7.Rekindle.Desktop.ViewModels
             var host = Host.Trim();
             if (Uri.CheckHostName(host) == UriHostNameType.Unknown || !ushort.TryParse(Port, out var port) || port == 0)
                 throw new InvalidOperationException("请填写有效的服务器 IP 或域名和端口。");
-            var nameError = T7.Rekindle.Core.PlayerNameRules.Validate(playerName);
+            var nameError = T7R.Core.PlayerNameRules.Validate(playerName);
             if (nameError.Length != 0) throw new InvalidOperationException(nameError);
             var endpoint = new UriBuilder("https", host, port, "/auth/guest").Uri;
             using (var client = _clientFactory())

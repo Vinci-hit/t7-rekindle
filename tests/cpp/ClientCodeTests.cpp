@@ -5,19 +5,19 @@
 bool verifyClientCode() {
     try {
         bool baselineRejected = false;
-        try { t7::recoverClientCode(t7::Bytes{'M', 'Z'}); }
+        try { t7r::recoverClientCode(t7r::Bytes{'M', 'Z'}); }
         catch (const std::runtime_error& error) {
             baselineRejected = std::string(error.what()) == "unsupported client code baseline";
         }
         if (!baselineRejected) throw std::runtime_error("unknown client image accepted");
         bool cancelled = false;
-        try { t7::recoverClientCode({}, [] { return true; }); }
+        try { t7r::recoverClientCode({}, [] { return true; }); }
         catch (const std::runtime_error& error) {
             cancelled = std::string(error.what()) == "client code preparation cancelled";
         }
         if (!cancelled) throw std::runtime_error("client code cancellation ignored");
         bool imageRejected = false;
-        try { t7::recoverClientImage(t7::Bytes{'M', 'Z'}); }
+        try { t7r::recoverClientImage(t7r::Bytes{'M', 'Z'}); }
         catch (const std::runtime_error& error) {
             imageRejected = std::string(error.what()) == "unsupported client code baseline";
         }

@@ -213,7 +213,7 @@ def test_periodic_instance_sync_keeps_measured_server_latency():
 
 def test_state_migration_preserves_pending_requests_without_issuing_effects():
     client = Client()
-    assert app.STATE_VERSION == 22
+    assert app.STATE_VERSION == 23
     restored = app.migrateState(17, client.state)
     assert restored == client.state and restored is not client.state
     restored["sessions"]["1"]["customLobby"]["nextId"] = 1

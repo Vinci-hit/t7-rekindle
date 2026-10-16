@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
+using T7R.Core;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class MainWindowViewModel
     {
@@ -14,7 +14,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         public string ClientVersionText => "客户端版本：" + (_clientVersion.Length == 0 ? "未识别" : _clientVersion);
         public string ResourceCheckText => _resourceCheckText;
 
-        private static bool IsResourceFailure(string message) => message?.Contains("[T7_RESOURCE:") == true;
+        private static bool IsResourceFailure(string message) => message?.Contains("[T7R_RESOURCE:") == true;
 
         private void ResetClientResources()
         {

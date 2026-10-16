@@ -33,7 +33,7 @@ def test_native_outputs_are_configuration_scoped_and_not_overridden():
     intermediate = root.findtext("ms:PropertyGroup/ms:IntDir", namespaces=MSBUILD)
     assert output == "$(MSBuildThisFileDirectory)artifacts\\native\\bin\\$(Platform)\\$(Configuration)\\"
     assert intermediate == "$(MSBuildThisFileDirectory)artifacts\\native\\obj\\$(ProjectName)\\$(Platform)\\$(Configuration)\\"
-    projects = [ROOT / "src/Runtime/T7.NativeBridge.vcxproj"]
+    projects = [ROOT / "src/Runtime/T7R.NativeBridge.vcxproj"]
     projects.extend((ROOT / "tests/cpp").glob("*.vcxproj"))
     for project in projects:
         document = ET.parse(project).getroot()

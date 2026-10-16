@@ -1,6 +1,6 @@
 using System;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     internal sealed class LauncherAnnouncement
     {

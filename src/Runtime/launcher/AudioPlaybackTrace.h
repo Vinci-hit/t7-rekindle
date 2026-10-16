@@ -3,7 +3,7 @@
 #include <array>
 #include <cstddef>
 
-namespace t7 {
+namespace t7r {
 enum class AudioPlaybackApi : uint32_t {
     LoadBank = 1, UnloadBank, PostEventName, PostEventId, GetId, RtpcName, RtpcId, Init
 };

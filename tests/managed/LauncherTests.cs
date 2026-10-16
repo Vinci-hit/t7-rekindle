@@ -3,11 +3,11 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
+using T7R.Core;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class LauncherTests
     {
@@ -15,7 +15,7 @@ namespace T7.ManagedHarness
         {
             var context = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
-            var directory = Path.Combine(Path.GetTempPath(), "T7-launcher-tests-" + Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(Path.GetTempPath(), "T7R-launcher-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             try
             {

@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <functional>
 
-namespace t7 {
+namespace t7r {
 bool validGraphicsValues(const GraphicsValues& v) {
     return v.width >= 640 && v.width <= 7680 && v.height >= 480 && v.height <= 4320
         && v.fullScreen <= 1 && v.quality <= 4 && v.verticalSync <= 1 && v.fog <= 1

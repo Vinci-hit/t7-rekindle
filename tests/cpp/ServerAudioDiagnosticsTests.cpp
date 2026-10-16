@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <iostream>
 
-namespace t7 {
+namespace t7r {
 struct ServerAudioDiagnosticsTests {
     static void verify(const fs::path& root) {
         Server server;
@@ -48,19 +48,19 @@ struct ServerAudioDiagnosticsTests {
 };
 }
 bool verifyServerAudioDiagnostics() {
-    const auto root = t7::fs::temp_directory_path() / (L"t7-server-audio-" + std::to_wstring(GetCurrentProcessId())
+    const auto root = t7r::fs::temp_directory_path() / (L"t7r-server-audio-" + std::to_wstring(GetCurrentProcessId())
                                                     + L"-" + std::to_wstring(GetTickCount64()));
     bool ownsRoot = false;
     const auto cleanup = [&] {
         if (!ownsRoot) return;
-        if (t7::fs::weakly_canonical(root).parent_path() != t7::fs::canonical(t7::fs::temp_directory_path()))
+        if (t7r::fs::weakly_canonical(root).parent_path() != t7r::fs::canonical(t7r::fs::temp_directory_path()))
             throw std::runtime_error("server audio fixture cleanup extent");
-        t7::fs::remove_all(root);
+        t7r::fs::remove_all(root);
     };
     try {
-        ownsRoot = t7::fs::create_directory(root);
+        ownsRoot = t7r::fs::create_directory(root);
         if (!ownsRoot) throw std::runtime_error("server audio fixture already exists");
-        t7::ServerAudioDiagnosticsTests::verify(root); cleanup();
+        t7r::ServerAudioDiagnosticsTests::verify(root); cleanup();
         std::cout << "Server audio diagnostics: live forwarding, retention and failure isolation passed\n"; return true;
     } catch (const std::exception& error) {
         std::cerr << "Server audio diagnostics: " << error.what() << '\n'; cleanup(); return false;

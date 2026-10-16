@@ -4,7 +4,7 @@
 #include "WorldHookCode.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 uint32_t floatBits(float value) {
     uint32_t bits; std::memcpy(&bits, &value, sizeof(bits)); return bits;
@@ -14,7 +14,9 @@ void verifyMovementCommandFunction(HANDLE process, uint32_t imageBase) {
     if (readClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA, MOVEMENT_COMMAND_ORIGINAL.size())
             != MOVEMENT_COMMAND_ORIGINAL
         || readClientMemory(process, imageBase + MOVEMENT_COMMAND_RVA - 8, 8)
-            != Bytes{0x55,0x8B,0xEC,0x53,0x8B,0x5D,8,0x57})
+            != Bytes{0x55,0x8B,0xEC,0x53,0x8B,0x5D,8,0x57}
+        || readClientMemory(process, imageBase + AIR_INPUT_RVA, AIR_INPUT_ORIGINAL.size()) != AIR_INPUT_ORIGINAL
+        || readClientMemory(process, imageBase + AIR_INPUT_RVA - 6, 6) != Bytes{0x8B,0x0E,0x85,0xC9,0x74,6})
         throw std::runtime_error("movement command signature mismatch");
 }
 Bytes movementCommandJump(uint32_t address, uint32_t imageBase) {
@@ -82,7 +84,57 @@ Bytes buildMovementCommandHook(uint32_t address, uint32_t imageBase, uint32_t th
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D});
     c.bytes.insert(c.bytes.end(), MOVEMENT_COMMAND_ORIGINAL.begin(), MOVEMENT_COMMAND_ORIGINAL.end());
     c.emit({0xE9}); c.word(imageBase + MOVEMENT_COMMAND_RVA + 6 - (code + static_cast<uint32_t>(c.bytes.size()) + 4));
-    if (c.bytes.size() > 0x1000) throw std::runtime_error("movement command hook overflow");
+    if (c.bytes.size() > AIR_INPUT_CODE_OFFSET - MOVEMENT_COMMAND_CODE_OFFSET)
+        throw std::runtime_error("movement command hook overflow");
+    return c.bytes;
+}
+Bytes airInputJump(uint32_t address, uint32_t imageBase) {
+    WorldHookCode c; c.emit({0xE9});
+    c.word(address + AIR_INPUT_CODE_OFFSET - (imageBase + AIR_INPUT_RVA + 5));
+    c.emit({0x90}); return c.bytes;
+}
+Bytes buildAirInputHook(uint32_t address, uint32_t imageBase, uint32_t threadId) {
+    const auto code = address + AIR_INPUT_CODE_OFFSET;
+    WorldHookCode c;
+    auto resume = [&] {
+        c.emit({0xE9});
+        c.word(imageBase + AIR_INPUT_RVA + 6 - (code + static_cast<uint32_t>(c.bytes.size()) + 4));
+    };
+    c.emit({0x9C,0x60}); // ECX child command, EBX GeMovable; no floating-point state is touched.
+    std::vector<size_t> native, blocked;
+    c.emit({0x64,0xA1}); c.word(0x24); c.emit({0x3D}); c.word(threadId); native.push_back(c.branch(0x85));
+    c.emit({0x81,0x3B}); c.word(imageBase + 0x17784E4); native.push_back(c.branch(0x85));
+    c.emit({0x8B,0x43,8,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x3B,0x05}); c.word(address + SPRINT_DATA_OFFSET + 8); native.push_back(c.branch(0x85));
+    c.emit({0xA1}); c.word(imageBase + 0x2E405F8); c.emit({0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x83,0x78,0x38,4}); native.push_back(c.branch(0x85));
+    c.emit({0x8B,0x53,0x38,0x85,0xD2}); native.push_back(c.branch(0x84));
+    c.emit({0x81,0x39}); c.word(imageBase + 0x17782E8); const auto jumpCommand = c.branch(0x84);
+    c.emit({0x80,0x7A,0x0A,0}); const auto takingOff = c.branch(0x85);
+    for (unsigned char flag : std::array<unsigned char, 2>{0x20,0x22}) {
+        c.emit({0x80,0x7B,flag,0}); native.push_back(c.branch(0x84));
+    }
+    c.bind(takingOff);
+    c.emit({0x81,0x39}); c.word(imageBase + 0x17782C8); blocked.push_back(c.branch(0x84));
+    c.emit({0x81,0x39}); c.word(imageBase + 0x17782D8); native.push_back(c.branch(0x85));
+    c.emit({0x80,0x79,0x34,0}); native.push_back(c.branch(0x85)); // State-directed corrections retain their native path.
+    blocked.push_back(c.jump());
+    c.bind(jumpCommand);
+    c.emit({0x80,0x7B,0x20,0}); const auto airborne = c.branch(0x85);
+    c.emit({0x80,0x7A,0x0A,0}); native.push_back(c.branch(0x84));
+    c.bind(airborne);
+    // Jump and crouch share one command. Suppress only the jump bit in a stack
+    // copy so crouch still executes and the queued command remains unchanged.
+    c.emit({0x61,0x9D,0xFF,0x71,0x0C,0xFF,0x71,8,0xC6,4,0x24,0,
+            0xFF,0x71,4,0xFF,0x31,0x8B,0xCC,0x8B,1,0x53,0xFF,0x50,8,0x83,0xC4,16});
+    resume();
+    for (auto branch : blocked) c.bind(branch);
+    c.emit({0x61,0x9D}); resume();
+    for (auto branch : native) c.bind(branch);
+    c.emit({0x61,0x9D});
+    c.bytes.insert(c.bytes.end(), AIR_INPUT_ORIGINAL.begin(), AIR_INPUT_ORIGINAL.end());
+    resume();
+    if (c.bytes.size() > 0x800) throw std::runtime_error("air input hook overflow");
     return c.bytes;
 }
 }

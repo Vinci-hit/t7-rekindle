@@ -2,7 +2,7 @@
 #include <bcrypt.h>
 #include <algorithm>
 
-namespace t7 {
+namespace t7r {
 uint32_t be32(const unsigned char* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint64_t be64(const unsigned char* p) { return uint64_t(be32(p)) << 32 | be32(p + 4); }
 static void append32(Bytes& data, uint32_t n) {

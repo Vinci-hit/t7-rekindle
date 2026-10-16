@@ -14,6 +14,7 @@ ACT_STATE_IDLE = 2
 HIT_POINT_NOTIFY = 0x001B
 HIT_PART_HEAD, HIT_PART_BODY, HIT_PART_LEGS = 1, 2, 3
 DEFENSE_NOTIFY = 0x0028
+PARRY_VALUE_NOTIFY = 0x0030
 DEFENCE_TYPE_WEAPON = 2
 BATTLE_RESULT = 0x0009
 DEAD_NOTIFY = 0x000A
@@ -29,6 +30,13 @@ RESULT_DATA_NORMAL_DAMAGE = 4
 RESULT_DATA_IS_CRITICAL = 5
 RESULT_DATA_DECAY_DELTA_HP = 6
 RESULT_DATA_MAX = 7
+
+
+def encode_parry_value_notify(*, value: float) -> bytes:
+    """Native local-player guard meter: selector followed by one TDR float."""
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise ValueError('invalid guard value')
+    return struct.pack('>Hf', PARRY_VALUE_NOTIFY, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +112,7 @@ class BattleResult:
     attack_weapon_id: int
     target_result_type: int
     target_result_data: int
+    is_critical: bool = False
     target_rb_index: int = 0
 
 
@@ -250,6 +259,7 @@ def encode_battle_result(
     attack_weapon_id: int,
     target_result_type: int,
     target_result_data: int,
+    is_critical: bool = False,
     target_rb_index: int = 0,
 ) -> bytes:
     if type(target_rb_index) is not int or not 0 <= target_rb_index <= 7:
@@ -267,15 +277,9 @@ def encode_battle_result(
             target_rb_index,
             target_life_state,
             0,
-        ) + struct.pack(
-            ">hhiibb",
-            1,
-            target_result_type,
-            target_result_data,
-            attack_weapon_id,
-            0,
-            0,
-        )
+        ) + struct.pack(">hhi", 2 if is_critical else 1, target_result_type, target_result_data
+        ) + (struct.pack(">hi", RESULT_DATA_IS_CRITICAL, 1) if is_critical else b'') + struct.pack(
+            ">ibb", attack_weapon_id, 0, 0)
     except struct.error as error:
         raise ValueError("battle result field is outside its TDR wire range") from error
 
@@ -283,8 +287,8 @@ def encode_battle_result(
 def decode_battle_result(body: bytes) -> BattleResult:
     if not isinstance(body, bytes):
         raise TypeError("body must be bytes")
-    if len(body) != 38:
-        raise ValueError(f"single-target battle result must contain exactly 38 bytes, got {len(body)}")
+    if len(body) not in (38, 44):
+        raise ValueError(f"single-target battle result must contain 38 or 44 bytes, got {len(body)}")
     selector = struct.unpack_from(">H", body)[0]
     if selector != BATTLE_RESULT:
         raise ValueError(f"battle result expected selector 0x{BATTLE_RESULT:04X}")
@@ -294,11 +298,13 @@ def decode_battle_result(body: bytes) -> BattleResult:
     target_life_state = body[21]
     attacker_num = struct.unpack_from(">h", body, 22)[0]
     target_num = struct.unpack_from(">h", body, 24)[0]
-    if attacker_num != 0 or target_num != 1:
-        raise ValueError("battle result fixed counts must be attacker=0 target=1")
+    if attacker_num != 0 or target_num not in (1, 2) or len(body) != 32 + 6 * target_num:
+        raise ValueError("battle result counts must be attacker=0 target=1 or 2")
     target_result_type = struct.unpack_from(">h", body, 26)[0]
     target_result_data = struct.unpack_from(">i", body, 28)[0]
-    attack_weapon_id = struct.unpack_from(">i", body, 32)[0]
+    if target_num == 2 and struct.unpack_from('>hi', body, 32) != (RESULT_DATA_IS_CRITICAL, 1):
+        raise ValueError('unexpected critical result entry')
+    attack_weapon_id = struct.unpack_from(">i", body, 26 + 6 * target_num)[0]
     return BattleResult(
         attacker_rid=attacker_rid,
         target_rid=target_rid,
@@ -307,5 +313,6 @@ def decode_battle_result(body: bytes) -> BattleResult:
         attack_weapon_id=attack_weapon_id,
         target_result_type=target_result_type,
         target_result_data=target_result_data,
-        target_rb_index=body[20],
+        is_critical=target_num == 2,
+        target_rb_index=struct.unpack_from('>b', body, 20)[0],
     )

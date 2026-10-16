@@ -6,13 +6,13 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Desktop.Views;
+using T7R.Core;
+using T7R.Desktop;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Desktop.Views;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class LauncherDesignTests
     {

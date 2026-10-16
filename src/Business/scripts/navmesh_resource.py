@@ -1,16 +1,19 @@
-"""Read-only adapter for the supported client's Havok v5 navigation resource."""
+"""Static server navigation with a read-only Havok v5 adapter for offline export."""
 from functools import lru_cache
 from hashlib import sha256
 import math
 import struct
 
 from .vfs_resource import readResource
+from . import map_navigation_data
 
 MAGIC = bytes.fromhex("1e0db0cacefa11d0")
 MAX_ITEMS = 100000
 MAX_BYTES = 16 * 1024 * 1024
 NAV_PATH = 'data/scene/map/lysd/anavmesh.dat'
 NAV_HASH = "b92da3edc697ada355a95359d94ff3025841bf2de57833297901361452c539a3"
+EDGE_FIELDS = ('a', 'b', 'oppositeEdge', 'oppositeFace')
+FACE_FIELDS = ('startEdgeIndex', 'numEdges', 'numUserEdges')
 
 
 class TagReader:
@@ -141,11 +144,30 @@ class TagReader:
         return root
 
 
-@lru_cache(maxsize=1)
-def loadNavigation(clientDirectory):
+def readNavigationResource(clientDirectory):
+    """Offline export only; verify and parse the supported original topology."""
     from .navigation import NavMesh
     def parse(data):
         if sha256(data).hexdigest() != NAV_HASH:
             raise ValueError("navigation resource does not match the supported client")
-        return NavMesh.fromResource(TagReader(data).document())
+        resource = TagReader(data).document()
+        NavMesh.fromResource(resource)
+        return resource
     return readResource(clientDirectory, 'map.vfs', NAV_PATH, parse)
+
+
+@lru_cache(maxsize=1)
+def loadNavigation(clientDirectory=''):
+    """The directory argument is retained for callers; runtime never reads it."""
+    from .navigation import NavMesh
+    def records(fields, rows):
+        if any(len(row) != len(fields) or any(type(value) is not int for value in row) for row in rows):
+            raise ValueError('invalid static navigation topology row')
+        return [dict(zip(fields, row)) for row in rows]
+    vertices = map_navigation_data.VERTICES
+    if any(len(row) != 3 or any(type(value) not in (int, float) or not math.isfinite(value)
+                               for value in row) for row in vertices):
+        raise ValueError('invalid static navigation vertex')
+    return NavMesh.fromResource(dict(vertices=vertices,
+        edges=records(EDGE_FIELDS, map_navigation_data.EDGES),
+        faces=records(FACE_FIELDS, map_navigation_data.FACES), streamingSets=()))

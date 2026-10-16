@@ -1,13 +1,13 @@
 #include "Session.h"
 
-namespace t7::bridge {
+namespace t7r::bridge {
 namespace {
 const char* audioState(uint32_t state) {
     switch (state) {
-    case T7NB_AUDIO_READY: return "ready";
-    case T7NB_AUDIO_APPLYING: return "applying";
-    case T7NB_AUDIO_CONFLICT: return "conflict";
-    case T7NB_AUDIO_FAILED: return "failed";
+    case T7RNB_AUDIO_READY: return "ready";
+    case T7RNB_AUDIO_APPLYING: return "applying";
+    case T7RNB_AUDIO_CONFLICT: return "conflict";
+    case T7RNB_AUDIO_FAILED: return "failed";
     default: return "unavailable";
     }
 }
@@ -17,29 +17,29 @@ std::string describeSnapshot(const AudioSnapshot& snapshot) {
 }
 int32_t Session::audio(AudioSnapshot& result) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closing_) return T7NB_INVALID_HANDLE;
+    if (closing_) return T7RNB_INVALID_HANDLE;
     result = audio_;
-    if (snapshot_.state != T7NB_STATE_RUNNING || snapshot_.operation != T7NB_OPERATION_NONE)
-        result.state = T7NB_AUDIO_UNAVAILABLE;
-    return T7NB_OK;
+    if (snapshot_.state != T7RNB_STATE_RUNNING || snapshot_.operation != T7RNB_OPERATION_NONE)
+        result.state = T7RNB_AUDIO_UNAVAILABLE;
+    return T7RNB_OK;
 }
 int32_t Session::applyAudio(uint64_t revision, const AudioValues& values) {
-    if (!validAudioValues(values)) return T7NB_INVALID_ARGUMENT;
+    if (!validAudioValues(values)) return T7RNB_INVALID_ARGUMENT;
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closing_) return T7NB_INVALID_HANDLE;
-    if (snapshot_.state != T7NB_STATE_RUNNING || snapshot_.operation != T7NB_OPERATION_NONE
-        || audio_.state == T7NB_AUDIO_UNAVAILABLE || audio_.state == T7NB_AUDIO_FAILED)
-        return T7NB_NOT_READY;
-    if (audio_.state == T7NB_AUDIO_APPLYING || audioQueued_) return T7NB_BUSY;
-    if (revision != audio_.revision) return T7NB_NOT_READY;
+    if (closing_) return T7RNB_INVALID_HANDLE;
+    if (snapshot_.state != T7RNB_STATE_RUNNING || snapshot_.operation != T7RNB_OPERATION_NONE
+        || audio_.state == T7RNB_AUDIO_UNAVAILABLE || audio_.state == T7RNB_AUDIO_FAILED)
+        return T7RNB_NOT_READY;
+    if (audio_.state == T7RNB_AUDIO_APPLYING || audioQueued_) return T7RNB_BUSY;
+    if (revision != audio_.revision) return T7RNB_NOT_READY;
     requestedAudio_ = values; requestedAudioRevision_ = revision;
-    audioQueued_ = true; audio_.state = T7NB_AUDIO_APPLYING;
-    return T7NB_OK;
+    audioQueued_ = true; audio_.state = T7RNB_AUDIO_APPLYING;
+    return T7RNB_OK;
 }
 void Session::monitorAudio() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (audio_.state == T7NB_AUDIO_FAILED) return;
+        if (audio_.state == T7RNB_AUDIO_FAILED) return;
     }
     try {
         AudioValues values; uint32_t result = 0; bool applied = false;
@@ -51,20 +51,20 @@ void Session::monitorAudio() {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto previous = audio_;
             if (result == 0) {
-                audio_.state = applied ? T7NB_AUDIO_FAILED : T7NB_AUDIO_UNAVAILABLE;
+                audio_.state = applied ? T7RNB_AUDIO_FAILED : T7RNB_AUDIO_UNAVAILABLE;
                 audioQueued_ = false;
             } else {
-                if (!sameAudioValues(audio_.values, values) || audio_.state == T7NB_AUDIO_UNAVAILABLE) {
+                if (!sameAudioValues(audio_.values, values) || audio_.state == T7RNB_AUDIO_UNAVAILABLE) {
                     audio_.values = values; ++audio_.revision;
                 }
                 if (audioQueued_) {
                     submit = requestedAudioRevision_ == audio_.revision;
                     request = requestedAudio_; audioQueued_ = false;
-                    audio_.state = submit ? T7NB_AUDIO_APPLYING : T7NB_AUDIO_CONFLICT;
+                    audio_.state = submit ? T7RNB_AUDIO_APPLYING : T7RNB_AUDIO_CONFLICT;
                 } else if (applied) {
-                    audio_.state = result == 2 ? T7NB_AUDIO_CONFLICT : T7NB_AUDIO_READY;
-                } else if (audio_.state != T7NB_AUDIO_CONFLICT) {
-                    audio_.state = T7NB_AUDIO_READY;
+                    audio_.state = result == 2 ? T7RNB_AUDIO_CONFLICT : T7RNB_AUDIO_READY;
+                } else if (audio_.state != T7RNB_AUDIO_CONFLICT) {
+                    audio_.state = T7RNB_AUDIO_READY;
                 }
             }
             observed = audio_;
@@ -85,10 +85,10 @@ void Session::monitorAudio() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             last = audio_;
-            audio_.state = T7NB_AUDIO_FAILED; audioQueued_ = false;
+            audio_.state = T7RNB_AUDIO_FAILED; audioQueued_ = false;
         }
         log("Audio settings last snapshot; " + describeSnapshot(last)
-            + (last.state == T7NB_AUDIO_UNAVAILABLE ? "; values=not-current" : "; " + describeAudioValues(last.values)), DiagnosticLogLevel::Debug);
+            + (last.state == T7RNB_AUDIO_UNAVAILABLE ? "; values=not-current" : "; " + describeAudioValues(last.values)), DiagnosticLogLevel::Debug);
         log(std::string("Audio synchronization stopped: ") + error.what()
             + "; scope=settings-mailbox; playbackStatus=not-observed", DiagnosticLogLevel::Warn);
     }

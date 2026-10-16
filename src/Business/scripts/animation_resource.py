@@ -103,26 +103,45 @@ class AnimationReader:
             return None  # Compressed animation bytes do not contribute duration metadata.
         return self.values(kind, size, subtype, count, True)
 
-    def durations(self):
-        durations = []
+    def objects(self):
+        result = [None]
         while True:
             tag = self.integer()
             if tag == 7:
                 if self.position != len(self.data):
                     raise ValueError('trailing animation data')
-                return durations
+                return result
             if tag != 4:
                 raise ValueError('unsupported animation object tag')
             classId = self.integer()
             if not 0 < classId < len(self.classes):
                 raise ValueError('invalid animation class reference')
-            value = self.members(self.classes[classId])[0]
-            if value['className'] == 'hkaSplineCompressedAnimation':
-                durations.append(value.get('duration'))
+            result.extend(self.members(self.classes[classId]))
+
+    def durations(self):
+        supported = ('hkaSplineCompressedAnimation', 'hkaInterleavedUncompressedAnimation', 'hkaQuantizedAnimation')
+        return [value.get('duration') for value in self.objects()[1:] if value['className'] in supported]
+
+
+class ClipReader(AnimationReader):
+    """Animation assets encode bulk vector widths; character/behavior assets do not."""
+
+    def values(self, kind, size, subtype, count, bulk=False):
+        if kind & 32 and not kind & 16:
+            return [self.values(kind & ~32, None, subtype, size, True) for _ in range(count)]
+        if count and bulk and kind in (4, 5, 6, 7):
+            width, declaredWidth = self.integer(), (kind - 3) * 4
+            if not 0 < width <= declaredWidth:
+                raise ValueError('unsupported animation bulk vector width')
+            return [struct.unpack('<' + 'f' * width, self.take(width * 4))
+                    + (0.,) * (declaredWidth - width) for _ in range(count)]
+        if count and bulk and kind == 3:
+            raise ValueError('unsupported animation bulk scalar real encoding')
+        return super().values(kind, size, subtype, count, bulk)
 
 
 def animationDurationMs(data):
-    durations = AnimationReader(data).durations()
+    durations = ClipReader(data).durations()
     if len(durations) != 1:
         raise ValueError('expected one supported animation clip')
     seconds = durations[0]

@@ -4,10 +4,10 @@ using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
-using T7.Rekindle.Desktop.Services;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class UpdateChannelTests
     {
@@ -28,17 +28,17 @@ namespace T7.ManagedHarness
         private static async Task RunAsync()
         {
             TestDisplayVersion();
-            var configured = Environment.GetEnvironmentVariable("T7_BUILD_CHANNEL");
+            var configured = Environment.GetEnvironmentVariable("T7R_BUILD_CHANNEL");
             var embedded = LauncherInformation.CurrentBuild;
             if (!string.IsNullOrEmpty(configured))
             {
                 Assert(embedded.Channel == (configured == "stable" ? UpdateChannel.Stable : UpdateChannel.Preview)
-                    && embedded.RunId.ToString() == Environment.GetEnvironmentVariable("T7_PREVIEW_RUN_ID")
-                    && embedded.RunNumber.ToString() == Environment.GetEnvironmentVariable("T7_PREVIEW_RUN_NUMBER")
-                    && embedded.RunAttempt.ToString() == Environment.GetEnvironmentVariable("T7_PREVIEW_RUN_ATTEMPT"),
+                    && embedded.RunId.ToString() == Environment.GetEnvironmentVariable("T7R_PREVIEW_RUN_ID")
+                    && embedded.RunNumber.ToString() == Environment.GetEnvironmentVariable("T7R_PREVIEW_RUN_NUMBER")
+                    && embedded.RunAttempt.ToString() == Environment.GetEnvironmentVariable("T7R_PREVIEW_RUN_ATTEMPT"),
                     "assembly build identity differs from the packaging environment");
                 Assert(ReleaseMetadata.ParseVersion(embedded.Version)
-                    == ReleaseMetadata.ParseVersion(Environment.GetEnvironmentVariable("T7_BUILD_VERSION")),
+                    == ReleaseMetadata.ParseVersion(Environment.GetEnvironmentVariable("T7R_BUILD_VERSION")),
                     "assembly version differs from package identity");
             }
             foreach (var current in new[] { "v0.1.0", "v1.2.3", "v9.0.0" })

@@ -108,7 +108,7 @@ def main() -> None:
         summary = (f"{subject}\n\n提交 `{build['commitHash']}`\n\n"
                    f"[查看 CI 构建](https://github.com/{repository}/actions/runs/{build['runId']})")
         store = AwsR2Store(os.environ["R2_ACCOUNT_ID"], os.environ["R2_BUCKET"])
-        with tempfile.TemporaryDirectory(prefix="t7-preview-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="t7r-preview-") as temporary:
             published = publish_preview(build, assets, store, os.environ["R2_PUBLIC_BASE_URL"], Path(temporary), summary)
         print("Published preview feed." if published else "A newer preview is already published.")
     except (OSError, RuntimeError, ValueError, zipfile.BadZipFile) as error:

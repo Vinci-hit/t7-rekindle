@@ -39,7 +39,7 @@ def test_battle_result_decodes_count_referenced_wire_fixture():
                                DAMAGE_RESULT[:24] + bytes(60) + DAMAGE_RESULT[24:32]
                                + bytes(54) + DAMAGE_RESULT[32:]], ids=['truncated', 'trailing', 'capacity-padded'])
 def test_decoder_rejects_truncated_trailing_and_capacity_padded_messages(body):
-    with pytest.raises(ValueError, match='38 bytes'):
+    with pytest.raises(ValueError, match='38 or 44 bytes'):
         battle_flow.decode_battle_result(body)
 
 

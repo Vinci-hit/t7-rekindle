@@ -1,8 +1,7 @@
 #pragma once
 #include "../core/Common.h"
-#include <array>
 
-namespace t7 {
+namespace t7r {
 struct AudioValues {
     uint32_t musicMuted = 0;
     float musicVolume = 1;
@@ -27,15 +26,14 @@ static_assert(COMBAT_AUDIO_NAMES_OFFSET + COMBAT_AUDIO_BANKS.size() * 32 <= AUDI
 static_assert(AUDIO_ROOT_OFFSET + MAX_PATH * sizeof(wchar_t) < AUDIO_CODE_OFFSET, "audio root capacity");
 Bytes buildAudioRoot(const fs::path& directory);
 Bytes buildAudioMap(uint32_t address, uint32_t imageBase);
-Bytes buildAudioHook(uint32_t address, uint32_t imageBase, uint32_t threadId, bool combatBanks = false);
+Bytes buildAudioHook(uint32_t address, uint32_t imageBase, uint32_t threadId);
 
 class AudioSettings final {
 public:
-    void attach(HANDLE process, uint32_t address, uint32_t imageBase, bool combatBanks = false);
+    void attach(HANDLE process, uint32_t address, uint32_t imageBase);
     void clear();
     bool poll(AudioValues& values, uint32_t& result, bool& applied);
     void apply(const AudioValues& values);
-    bool pollCombat(uint64_t instanceEpoch, std::array<uint32_t, 6>& results);
 private:
     void request(uint32_t command);
     HANDLE process_ = nullptr;
@@ -43,7 +41,5 @@ private:
     ULONGLONG requestedAt_ = 0;
     AudioValues lastValues_;
     bool hasValues_ = false;
-    bool combatEnabled_ = false, combatPending_ = false;
-    uint64_t combatEpoch_ = 0;
 };
 }

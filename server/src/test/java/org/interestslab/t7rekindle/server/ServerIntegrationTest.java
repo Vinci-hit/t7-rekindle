@@ -78,6 +78,7 @@ class ServerIntegrationTest {
     @Autowired QqGroupMapper groupDb;
     @Autowired QqCookieVault cookieVault;
     @Autowired PresenceService presence;
+    @Autowired TitleService titles;
     @Autowired AuthMapper db;
     @Autowired AdminMapper adminDb;
     @Autowired AnnouncementService announcements;
@@ -147,6 +148,9 @@ class ServerIntegrationTest {
     }
 
     @BeforeEach void reset() {
+        jdbc.update("DELETE FROM account_title_selection");
+        jdbc.update("DELETE FROM account_title");
+        jdbc.update("UPDATE player_title SET description='测试纪念',sort_order=title_id-1007,enabled=TRUE");
         jdbc.update("DELETE FROM announcement");
         jdbc.update("DELETE FROM account_presence");
         jdbc.update("DELETE FROM auth_session");
@@ -160,7 +164,7 @@ class ServerIntegrationTest {
 
     @Test void startupMigratesBeforeInitializingAdmin() {
         assertThat(flyway.info().applied()).extracting(migration -> migration.getScript())
-                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql", "V004__qq_group_verification.sql", "V005__announcements.sql");
+                .containsExactly("V001__authentication.sql", "V002__administration.sql", "V003__qq_authentication.sql", "V004__qq_group_verification.sql", "V005__announcements.sql", "V006__account_titles.sql");
         assertThat(flyway.info().pending()).isEmpty();
         assertThat(adminDb.admin()).isNotNull();
         assertThat(admins.initialize()).isNull();
@@ -591,6 +595,40 @@ class ServerIntegrationTest {
         assertThat(groupDb.refreshed(1, "STALE_CREDENTIAL")).isZero();
         groupDb.record("12345", new Decision("123456", 1, "ERROR", now.plusSeconds(2)));
         assertThat(jdbc.queryForObject("SELECT result FROM qq_group_check WHERE qq_number='12345'", String.class)).isEqualTo("MEMBER");
+    }
+
+    @Test void titleOwnershipApiRequiresOnlineOwnerAndPersistsUnequipAndRevocation() throws Exception {
+        var created = accounts.create(ADMIN, "title-player");
+        var session = auth.login(created.loginName(), created.password(), "IP");
+        var identity = auth.authenticate(session.sessionToken());
+        var online = presence.online(identity);
+        String path = "/api/v1/auth/online/" + online.connectionId() + "/titles";
+        titles.revoke(ADMIN, identity.accountId(), 1008);
+        titles.grant(ADMIN, identity.accountId(), 1007);
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization", "Bearer " + session.sessionToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.titles.length()").value(2))
+                .andExpect(jsonPath("$.equippedTitleId").value(1007));
+        mvc.perform(put(path + "/equipped").header("Authorization", "Bearer " + session.sessionToken())
+                .contentType("application/json").content("{\"titleId\":1008}"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("TITLE_NOT_AVAILABLE"));
+        mvc.perform(put(path + "/equipped").header("Authorization", "Bearer " + session.sessionToken())
+                .contentType("application/json").content("{\"titleId\":null}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.equippedTitleId").isEmpty());
+        var next = presence.online(identity);
+        assertThat(titles.current(identity, next.connectionId()).equippedTitleId()).isNull();
+        assertThat(jdbc.queryForObject("SELECT state FROM account_title WHERE account_id=? AND title_id=1008",
+                String.class, identity.accountId())).isEqualTo("REVOKED");
+        mvc.perform(get(path).header("Authorization", "Bearer " + session.sessionToken()))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ONLINE_TAKEN_OVER"));
+        titles.grant(ADMIN, identity.accountId(), 1008);
+        assertThat(titles.current(identity, next.connectionId()).equippedTitleId()).isEqualTo(1008);
+        titles.configure(ADMIN, 1008, new org.interestslab.t7rekindle.server.domain.TitleModels.Draft("测试奖励", 9, false));
+        assertThat(titles.current(identity, next.connectionId()).equippedTitleId()).isNull();
+        titles.configure(ADMIN, 1008, new org.interestslab.t7rekindle.server.domain.TitleModels.Draft("测试奖励", 9, true));
+        assertThat(titles.current(identity, next.connectionId()).equippedTitleId()).isNull();
+        presence.offline(identity, next.connectionId());
+        assertThatThrownBy(() -> titles.current(identity, next.connectionId())).isInstanceOf(Problem.class);
     }
 
     private QqCookies groupCookies() {

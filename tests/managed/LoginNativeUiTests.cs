@@ -9,14 +9,14 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
-using T7.Rekindle.Desktop;
-using T7.Rekindle.Desktop.Views;
-using T7.Rekindle.Desktop.Services;
-using T7.Rekindle.Desktop.ViewModels;
-using T7.Rekindle.Core;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop;
+using T7R.Desktop.Views;
+using T7R.Desktop.Services;
+using T7R.Desktop.ViewModels;
+using T7R.Core;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class LoginNativeUiTests
     {
@@ -27,7 +27,7 @@ namespace T7.ManagedHarness
             var app = new App(false);
             app.InitializeComponent();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var directory = Path.Combine(Path.GetTempPath(), "T7-login-ui-" + Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(Path.GetTempPath(), "T7R-login-ui-" + Guid.NewGuid().ToString("N"));
             QqLoginDialog dialog = null;
             try
             {

@@ -11,7 +11,7 @@ constexpr uint32_t REQUEST = DATA, STEPS = DATA + 4, VELOCITY = DATA + 8, HEADIN
 constexpr uint32_t STEP = DATA + 0x600, GRAVITY = DATA + 16, ACTIVE = DATA + 0x700;
 constexpr uint32_t FLUSH_RVA = 0x3D0AAE, FORCE_STEP_RVA = 0x29B200;
 inline void prepare(HANDLE process) {
-    t7::WorldHookCode c;
+    t7r::WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24});
     c.emit({0xA1}); c.word(REQUEST); c.emit({0x85,0xC0}); const auto idle = c.branch(0x84);
@@ -22,15 +22,15 @@ inline void prepare(HANDLE process) {
     c.emit({0x68}); c.word(0x3DCCCCCD); c.call(STEP);
     c.bind(done); c.store(REQUEST, 0); c.bind(idle);
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D,0xC3});
-    t7::writeClientMemory(process, DISPATCH, c.bytes);
+    t7r::writeClientMemory(process, DISPATCH, c.bytes);
 
-    // The command already changed direction before the unconditional native flush.
+    // Isolate the flush after command application; input gating is tested separately.
     c.bytes.clear(); c.emit({0x55,0x8B,0xEC,0x56,0x57,0x8B,0xF1,0x8B,0x7D,8});
     c.emit({0xA1}); c.word(HEADING); c.emit({0x8B,0x4E,0x38,0x89,0x81}); c.word(0xAC);
     c.emit({0x8B,0x01,0xE9});
     c.word(BASE + FLUSH_RVA - (APPLY + static_cast<uint32_t>(c.bytes.size()) + 4));
-    t7::writeClientMemory(process, APPLY, c.bytes);
-    t7::writeClientMemory(process, BASE + FLUSH_RVA,
+    t7r::writeClientMemory(process, APPLY, c.bytes);
+    t7r::writeClientMemory(process, BASE + FLUSH_RVA,
         {0xFF,0x90,0xD0,0,0,0,0x5F,0x5E,0x5D,0xC2,4,0});
 
     // Native force-update advances a full controller interval, even at zero elapsed time.
@@ -41,16 +41,16 @@ inline void prepare(HANDLE process) {
     c.emit({0x8B,0xCE,0xF3,0x0F,0x11,0x04,0x24,0xFF,0x90,0xA0,0,0,0,0x8B,0x06});
     c.emit({0xC7,0x86,0xE8,0,0,0,0,0,0,0,0xC7,0x86,0xF0,0,0,0,0,0,0,0});
     c.emit({0x8B,0xCE,0x5E,0xFF,0xA0,0xA8,0,0,0,0x5E,0xC3});
-    t7::writeClientMemory(process, BASE + FORCE_STEP_RVA, c.bytes);
+    t7r::writeClientMemory(process, BASE + FORCE_STEP_RVA, c.bytes);
     writeWord(process, BASE + 0x1A9E2B8, 0x3A83126F); // 0.001 seconds per millisecond.
     writeWord(process, GRAVITY, 0x41200000);
     c.bytes.clear(); c.emit({0xFF,0x05}); c.word(STEPS);
     c.emit({0xF3,0x0F,0x10,0x44,0x24,4,0xF3,0x0F,0x59,0x05}); c.word(GRAVITY);
     c.emit({0xF3,0x0F,0x10,0x0D}); c.word(VELOCITY);
     c.emit({0xF3,0x0F,0x5C,0xC8,0xF3,0x0F,0x11,0x0D}); c.word(VELOCITY); c.emit({0xC2,4,0});
-    t7::writeClientMemory(process, STEP, c.bytes);
-    t7::writeClientMemory(process, ACTIVE, {0xB0,1,0xC3});
-    t7::writeClientMemory(process, ACTIVE + 16, {0xC3});
+    t7r::writeClientMemory(process, STEP, c.bytes);
+    t7r::writeClientMemory(process, ACTIVE, {0xB0,1,0xC3});
+    t7r::writeClientMemory(process, ACTIVE + 16, {0xC3});
 }
 inline void verify(HANDLE process) {
     using worldFixture::MOVABLE;
@@ -115,10 +115,19 @@ inline void verify(HANDLE process) {
     writeWord(process, MOVABLE + 8, worldFixture::ENTITY);
     writeWord(process, CONTROLLER + 8, 0x10001); expect(true); // A queued new jump retains its initial step.
     writeWord(process, CONTROLLER + 8, 1);
+    writeWord(process, DIRECTION + 0x0C, 2);
     for (uint32_t commandType : {0x17782B8u,0x17782D8u,0x17782E8u,0x1778318u}) {
-        writeWord(process, DIRECTION, BASE + commandType); expect(true);
+        writeWord(process, DIRECTION, BASE + commandType);
+        expect(commandType == 0x17782B8 || commandType == 0x1778318);
     }
+    writeWord(process, DIRECTION, BASE + 0x17782D8);
+    writeWord(process, DIRECTION + 0x34, 1); expect(true); writeWord(process, DIRECTION + 0x34, 0);
+    writeWord(process, DIRECTION, BASE + 0x17782E8);
+    writeWord(process, DIRECTION + 0x0C, 1); expect(true); writeWord(process, DIRECTION + 0x0C, 2);
     writeWord(process, DIRECTION, BASE + 0x17782C8);
+    writeWord(process, CHILDREN + 4, DIRECTION);
+    writeWord(process, COMMAND + 0x14, CHILDREN + 8); expect(false);
+    writeWord(process, CHILDREN + 4, 0);
     writeWord(process, COMMAND + 0x14, CHILDREN + 8); expect(true); // Position + direction corrections stay native.
     writeWord(process, COMMAND + 0x14, CHILDREN); expect(true);
     writeWord(process, COMMAND + 0x14, CHILDREN + 4);

@@ -25,7 +25,7 @@
     </ItemGroup>
   </Target>
 
-  <UsingTask TaskName="T7PrepareBusinessScripts" TaskFactory="RoslynCodeTaskFactory"
+  <UsingTask TaskName="T7RPrepareBusinessScripts" TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <Task>
       <Code Type="Class" Language="cs"><![CDATA[
@@ -34,7 +34,7 @@ using System.Collections.Generic;
 using System.IO;
 using Microsoft.Build.Framework;
 
-public sealed class T7PrepareBusinessScripts : Microsoft.Build.Utilities.Task
+public sealed class T7RPrepareBusinessScripts : Microsoft.Build.Utilities.Task
 {
     [Required] public string SourceDirectory { get; set; }
     [Required] public string OutputDirectory { get; set; }
@@ -130,7 +130,7 @@ public sealed class T7PrepareBusinessScripts : Microsoft.Build.Utilities.Task
   <Target Name="PrepareBusinessScripts" BeforeTargets="PrepareForBuild;GetCopyToOutputDirectoryItems"
           Condition="'$(DesignTimeBuild)' != 'true'">
     <Error Condition="'$(OutDir)' == ''" Text="Business output directory is missing." />
-    <T7PrepareBusinessScripts SourceDirectory="$(RepositoryRoot)src\Business"
+    <T7RPrepareBusinessScripts SourceDirectory="$(RepositoryRoot)src\Business"
                               OutputDirectory="$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(OutDir)'))" />
   </Target>
 </Project>

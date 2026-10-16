@@ -31,6 +31,12 @@ def effect(attacker=1, target=2, parried=False, health=None):
         direction=[1.,0.,0.], material=4, lives=health or lives())
 
 
+def native_evidence(value, defence_weapon=0):
+    return dict(value, defenceWeaponId=defence_weapon, bodyIndex=0, region='torso',
+        sourceVelocity=[0., 0., 0.], targetVelocity=[0., 0., 0.], weaponVelocity=[0., 0., 0.],
+        velocityReady=False, airborne=False, targetAirborne=False)
+
+
 @pytest.mark.parametrize('weapon_contact', [False, True])
 def test_native_contact_only_reports_local_actor_and_never_locally_awards_damage(monkeypatch, spawnPoints, weapon_contact):
     client = running(monkeypatch, spawnPoints, peer=True)
@@ -40,7 +46,7 @@ def test_native_contact_only_reports_local_actor_and_never_locally_awards_damage
         state=238, seq=3, targetState=2, targetSeq=1, phaseAt=900, targetPhaseAt=800,
         occurredAt=950., along=.5, sourcePosition=[0.,0.,.5], targetPosition=[1.2,0.,.5],
         sourceHeading=0., targetHeading=180., position=[.9,0.,1.5], normal=[-1.,0.,0.], direction=[1.,0.,0.], material=4)
-    hit['weaponContact'] = weapon_contact
+    hit = native_evidence(hit, 1030411 if weapon_contact else 0)
     client.context['botWorld'] = dict(ready=True, sampledAt=1000, instanceStartedAt=epoch,
         actors={'1':dict(ready=True, entity=101, position=[0.,0.,.5], heading=0.)},
         contactJournal=dict(throughAt=1000, batchId=1, frames=10, dropped=0,
@@ -67,7 +73,7 @@ def test_native_contact_only_reports_local_actor_and_never_locally_awards_damage
         assert sum(p['reason'] == 'online-parry-sound' for p in result['send']) == 1
     if weapon_contact:
         client.reply(int(request['requestId']), 'contactAccepted', matchId=MATCH, inputSeq=1, accepted=False)
-        client.context['botWorld']['contactJournal'].update(batchId=3, events=[{**hit, 'weaponContact': False}])
+        client.context['botWorld']['contactJournal'].update(batchId=3, events=[{**hit, 'defenceWeaponId': 0}])
         result = client.event('world')
         body = next(json.loads(v['request'])['command'] for v in result['gateway'] if 'contactInput' in v['request'])
         assert body['payload']['inputSeq'] == 2 and not body['payload']['contact'].get('weaponContact', False)
@@ -210,7 +216,8 @@ def test_contacts_follow_sweep_time_instead_of_collection_order(monkeypatch, spa
         occurredAt=950., along=.5, sourcePosition=[0.,0.,.5], targetPosition=[1.2,0.,.5],
         sourceHeading=0., targetHeading=180., position=[.9,0.,1.5], normal=[-1.,0.,0.],
         direction=[1.,0.,0.], material=4)
-    weapon = {**body, 'weaponContact': True, 'occurredAt': 949. if weapon_first else 951.}
+    body = native_evidence(body)
+    weapon = {**body, 'defenceWeaponId': 1030411, 'occurredAt': 949. if weapon_first else 951.}
     client.context['botWorld'] = dict(ready=True, sampledAt=1000, instanceStartedAt=epoch,
         actors={'1':dict(ready=True, entity=101, position=[0.,0.,.5], heading=0.)},
         contactJournal=dict(throughAt=1000, batchId=1, frames=10, dropped=0, events=[weapon, body]))

@@ -12,11 +12,11 @@ constexpr uint32_t ENTITY = BASE + 0x10000, MOVABLE = BASE + 0x14000, CONTROLLER
 constexpr uint32_t PLAYER = BASE + 0x1C000;
 constexpr uint32_t TABLE = BASE + 0xAA00, ANCHOR = BASE + 0xAB00, RESOLVE = BASE + 0xAC00;
 constexpr uint32_t FRAME_GATE = BASE + 0xAD00;
-inline void word(t7::Bytes& bytes, uint32_t v) {
+inline void word(t7r::Bytes& bytes, uint32_t v) {
     for (unsigned s = 0; s < 32; s += 8) bytes.push_back(static_cast<unsigned char>(v >> s));
 }
 inline void writeWord(HANDLE process, uint32_t address, uint32_t value) {
-    t7::Bytes bytes; word(bytes, value); t7::writeClientMemory(process, address, bytes);
+    t7r::Bytes bytes; word(bytes, value); t7r::writeClientMemory(process, address, bytes);
 }
 inline void prepare(HANDLE process) {
     writeWord(process, BASE + 0x2E405F8, STATE); writeWord(process, STATE + 0x38, 4);
@@ -25,31 +25,31 @@ inline void prepare(HANDLE process) {
     writeWord(process, BASE + 0x2E3FA8C, RIDS); writeWord(process, RIDS + 0x274, RIDS);
     writeWord(process, BASE + 0x2D27358, ENGINE); writeWord(process, ENGINE, ENGINE_TABLE);
     writeWord(process, ENGINE_TABLE + 0x28, RESOLVE);
-    t7::writeClientMemory(process, BASE + 0x647770, {0x55,0x8B,0xEC,0xFF,0x75,0x08,0x58,0x5D,0xC3});
-    t7::Bytes resolver{0x8B,0x44,0x24,4,0x48,0xC1,0xE0,8,0x05}; word(resolver, ENTITY);
-    resolver.insert(resolver.end(), {0xC2,4,0}); t7::writeClientMemory(process, RESOLVE, resolver);
-    t7::WorldHookCode component;
+    t7r::writeClientMemory(process, BASE + 0x647770, {0x55,0x8B,0xEC,0xFF,0x75,0x08,0x58,0x5D,0xC3});
+    t7r::Bytes resolver{0x8B,0x44,0x24,4,0x48,0xC1,0xE0,8,0x05}; word(resolver, ENTITY);
+    resolver.insert(resolver.end(), {0xC2,4,0}); t7r::writeClientMemory(process, RESOLVE, resolver);
+    t7r::WorldHookCode component;
     component.emit({0x55,0x8B,0xEC,0x8B,0x55,0x08,0x56,0x8B,0x71,0x7C,0x81,0xFA});
     component.word(BASE + 0x179ED94); const auto movable = component.branch(0x85);
     component.emit({0x8B,0x81}); component.word(0x84); const auto done = component.jump();
     component.bind(movable); component.emit({0x8B,0x81}); component.word(0x80);
     component.bind(done); component.emit({0x5E,0x5D,0xC2,4,0});
-    t7::writeClientMemory(process, BASE + 0x26A1C0, component.bytes);
-    t7::writeClientMemory(process, BASE + 0x64C9D0, {0x83,0x79,0x34,1,0x0F,0x95,0xC0,0xC3});
-    t7::Bytes getter{0x55,0x8B,0xEC,0x8B,0x49,0x38,0x83,0xEC,0x0C,0x8B,0x45,8};
+    t7r::writeClientMemory(process, BASE + 0x26A1C0, component.bytes);
+    t7r::writeClientMemory(process, BASE + 0x64C9D0, {0x83,0x79,0x34,1,0x0F,0x95,0xC0,0xC3});
+    t7r::Bytes getter{0x55,0x8B,0xEC,0x8B,0x49,0x38,0x83,0xEC,0x0C,0x8B,0x45,8};
     for (unsigned char offset : std::array<unsigned char, 3>{0, 4, 8})
         getter.insert(getter.end(), {0x8B,0x51,static_cast<unsigned char>(0x10 + offset),0x89,0x50,offset});
     // Clobber x87/XMM contents without leaking one x87 stack slot per getter call.
     getter.insert(getter.end(), {0xD9,0xEE,0xDD,0xD9,0x0F,0x57,0xC0,0x8B,0xE5,0x5D,0xC2,4,0});
-    t7::writeClientMemory(process, BASE + 0x3D1200, getter);
-    t7::writeClientMemory(process, BASE + 0x2956F0, {0x53,0x8B,0xDC,0x83,0xEC,8,0x83,0xE4,0xF0});
-    t7::writeClientMemory(process, BASE + 0x3D11F0, {0x8B,0x49,0x38,0x8B,0x01,0x8B,0x40,0x74,0xFF,0xE0});
-    t7::writeClientMemory(process, BASE + 0x3D11B0, {0xD9,0x81,0xAC,0,0,0,0xC3});
-    t7::Bytes setter{0x53,0x8B,0xDC,0x83,0xEC,8,0x83,0xE4,0xF0,0x8B,0x43,8};
+    t7r::writeClientMemory(process, BASE + 0x3D1200, getter);
+    t7r::writeClientMemory(process, BASE + 0x2956F0, {0x53,0x8B,0xDC,0x83,0xEC,8,0x83,0xE4,0xF0});
+    t7r::writeClientMemory(process, BASE + 0x3D11F0, {0x8B,0x49,0x38,0x8B,0x01,0x8B,0x40,0x74,0xFF,0xE0});
+    t7r::writeClientMemory(process, BASE + 0x3D11B0, {0xD9,0x81,0xAC,0,0,0,0xC3});
+    t7r::Bytes setter{0x53,0x8B,0xDC,0x83,0xEC,8,0x83,0xE4,0xF0,0x8B,0x43,8};
     for (unsigned char offset : std::array<unsigned char, 3>{0, 4, 8})
         setter.insert(setter.end(), {0x8B,0x50,offset,0x89,0x51,static_cast<unsigned char>(0x10 + offset)});
     setter.insert(setter.end(), {0x8B,0xE3,0x5B,0xC2,4,0});
-    t7::writeClientMemory(process, BASE + 0x296030, setter);
+    t7r::writeClientMemory(process, BASE + 0x296030, setter);
     writeWord(process, TABLE + 0x30, BASE + 0x296030);
     writeWord(process, TABLE + 0x34, BASE + 0x2956F0); writeWord(process, ANCHOR + 0x14, ANCHOR);
     writeWord(process, TABLE + 0x74, BASE + 0x3D11B0);
@@ -64,15 +64,15 @@ inline void prepare(HANDLE process) {
         writeWord(process, CONTROLLER + i * 0x100, TABLE);
         writeWord(process, CONTROLLER + i * 0x100 + 0xA8, ANCHOR);
         const std::array<float, 3> position{270.f + i, 150.f + i, .25f};
-        t7::Bytes bytes(sizeof(position)); std::memcpy(bytes.data(), position.data(), bytes.size());
-        t7::writeClientMemory(process, CONTROLLER + i * 0x100 + 0x10, bytes);
+        t7r::Bytes bytes(sizeof(position)); std::memcpy(bytes.data(), position.data(), bytes.size());
+        t7r::writeClientMemory(process, CONTROLLER + i * 0x100 + 0x10, bytes);
         const float yaw = i == 0 ? -.5f : 2.5f;
         bytes.resize(sizeof(yaw)); std::memcpy(bytes.data(), &yaw, bytes.size());
-        t7::writeClientMemory(process, CONTROLLER + i * 0x100 + 0xAC, bytes);
+        t7r::writeClientMemory(process, CONTROLLER + i * 0x100 + 0xAC, bytes);
     }
 }
-inline t7::WorldSnapshot read(t7::ClientWorld& reader) {
-    t7::WorldSnapshot value;
+inline t7r::WorldSnapshot read(t7r::ClientWorld& reader) {
+    t7r::WorldSnapshot value;
     const auto deadline = GetTickCount64() + 3000;
     while (!reader.poll(value)) {
         if (GetTickCount64() >= deadline) throw std::runtime_error("world fixture response timeout");
@@ -80,9 +80,9 @@ inline t7::WorldSnapshot read(t7::ClientWorld& reader) {
     }
     return value;
 }
-inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
+inline void verify(HANDLE process, t7r::ClientWorld& reader, uint32_t mailbox) {
     auto value = read(reader);
-    if (t7::readClientMemory(process, mailbox, 4) != t7::Bytes(4, 0))
+    if (t7r::readClientMemory(process, mailbox, 4) != t7r::Bytes(4, 0))
         throw std::runtime_error("world reader requested another frame before consumer acknowledgement");
     if (!value.ready || value.instanceStartedAt != 0x1000004D2ULL || !value.sampledAt
         || value.player != std::array<float, 3>{270, 150, .25f}
@@ -129,8 +129,8 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
     if (read(reader).actors[1].ready) throw std::runtime_error("world accepted an uninitialized life state");
     writeWord(process, PLAYER + 0x134, 0);
     const std::array<float, 3> nearby{271.8f, 150.f, .25f};
-    t7::Bytes position(sizeof(nearby)); std::memcpy(position.data(), nearby.data(), position.size());
-    t7::writeClientMemory(process, CONTROLLER + 0x210, position);
+    t7r::Bytes position(sizeof(nearby)); std::memcpy(position.data(), nearby.data(), position.size());
+    t7r::writeClientMemory(process, CONTROLLER + 0x210, position);
     read(reader); read(reader); value = read(reader);
     if (value.actors[1].ready || !value.actors[2].ready || value.actors[0].targetId != 3
         || !value.actors[0].terrain[1].ready)
@@ -140,7 +140,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader, uint32_t mailbox) {
         throw std::runtime_error("world failed to reacquire a respawned actor");
     const std::array<float, 3> original{272.f, 152.f, .25f};
     std::memcpy(position.data(), original.data(), position.size());
-    t7::writeClientMemory(process, CONTROLLER + 0x210, position); read(reader);
+    t7r::writeClientMemory(process, CONTROLLER + 0x210, position); read(reader);
     writeWord(process, CONTROLLER + 0x110, 0x7FC00000); read(reader);
     if (read(reader).actors[1].ready) throw std::runtime_error("world accepted a non-finite position");
     writeWord(process, CONTROLLER + 0x110, 0x43878000); read(reader);

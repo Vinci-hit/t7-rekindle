@@ -1,3 +1,4 @@
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -136,7 +137,7 @@ def test_configuration_is_edited_only_in_settings_and_error_is_inline():
 
 def test_notices_are_interactive_overlays_at_top_of_content():
     root = _xaml(ROOT / "src/Desktop/MainWindow.xaml")
-    host = root.find(".//{clr-namespace:T7.Rekindle.Desktop.Views}ToastHost")
+    host = root.find(".//{clr-namespace:T7R.Desktop.Views}ToastHost")
     assert host.attrib["VerticalAlignment"] == "Top"
     assert int(host.attrib["Panel.ZIndex"]) > 0
     parents = {child: parent for parent in root.iter() for child in parent}
@@ -259,7 +260,7 @@ def test_environment_information_has_a_local_dialog_and_copy_action():
 
 
 def test_project_information_uses_the_public_repository():
-    project = ET.parse(ROOT / "src/Desktop/T7.Desktop.csproj").getroot()
+    project = ET.parse(ROOT / "src/Desktop/T7R.Desktop.csproj").getroot()
     assert project.findtext("PropertyGroup/Product") == "铁骑·重燃（T7-Rekindle）"
     assert project.findtext("PropertyGroup/Description") == (
         "铁骑·重燃是一个独立开源项目，目标是重新实现《刀锋铁骑》的服务端，让玩家通过原版客户端重回熟悉的战场。"
@@ -275,12 +276,12 @@ def test_project_information_uses_the_public_repository():
     assert metadata["DownloadUrl"] == "$(RepositoryUrl)/releases"
     assert metadata["BuildsUrl"] == "$(RepositoryUrl)/actions/workflows/ci.yml"
     assert metadata["IssuesUrl"] == "$(RepositoryUrl)/issues"
-    assert metadata["UpdateBaseUrl"] == "$(T7_UPDATE_BASE_URL)"
+    assert metadata["UpdateBaseUrl"] == "$(T7R_UPDATE_BASE_URL)"
     assert metadata["AuthBaseUrl"] == "$(T7R_SERVER_BASE_URL)"
-    assert metadata["BuildChannel"] == "$(T7_BUILD_CHANNEL)"
-    assert metadata["PreviewRunId"] == "$(T7_PREVIEW_RUN_ID)"
-    assert metadata["PreviewRunNumber"] == "$(T7_PREVIEW_RUN_NUMBER)"
-    assert metadata["PreviewRunAttempt"] == "$(T7_PREVIEW_RUN_ATTEMPT)"
+    assert metadata["BuildChannel"] == "$(T7R_BUILD_CHANNEL)"
+    assert metadata["PreviewRunId"] == "$(T7R_PREVIEW_RUN_ID)"
+    assert metadata["PreviewRunNumber"] == "$(T7R_PREVIEW_RUN_NUMBER)"
+    assert metadata["PreviewRunAttempt"] == "$(T7R_PREVIEW_RUN_ATTEMPT)"
 
 
 def test_update_page_reuses_header_actions_without_a_result_dialog():
@@ -434,9 +435,9 @@ def test_inno_version_accepts_a_release_override_with_a_local_default():
     assert '#ifndef MyAppVersion\n#define MyAppVersion "0.1.0"\n#endif' in text
     assert 'AppVersion={#MyAppVersion}' in text
     assert r'AppMutex=Local\T7-Rekindle.Desktop' in text
-    project = ET.parse(ROOT / "src/Desktop/T7.Desktop.csproj").getroot()
-    assert project.findtext("PropertyGroup/AssemblyVersion") == "$(T7_RELEASE_VERSION)"
-    assert project.findtext("PropertyGroup/FileVersion") == "$(T7_RELEASE_VERSION)"
+    project = ET.parse(ROOT / "src/Desktop/T7R.Desktop.csproj").getroot()
+    assert project.findtext("PropertyGroup/AssemblyVersion") == "$(T7R_RELEASE_VERSION)"
+    assert project.findtext("PropertyGroup/FileVersion") == "$(T7R_RELEASE_VERSION)"
 
 
 def test_in_app_update_installs_in_place_after_launcher_exit():
@@ -475,29 +476,36 @@ def test_managed_build_enables_binding_redirect_output():
 
 
 def test_native_bridge_exports_are_explicit_and_versioned():
-    text = (ROOT / "src/Runtime" / "bridge" / "T7NativeBridge.def").read_text(encoding="utf-8")
+    text = (ROOT / "src/Runtime" / "bridge" / "T7RNativeBridge.def").read_text(encoding="utf-8")
     lines = [line.strip() for line in text.splitlines()]
-    assert lines[0] == "LIBRARY T7.NativeBridge.dll"
+    assert lines[0] == "LIBRARY T7R.NativeBridge.dll"
     assert lines[1] == "EXPORTS"
     exports = [line for line in lines[2:] if line]
     assert exports == [
-        "t7_native_get_abi",
-        "t7_native_create",
-        "t7_native_release",
-        "t7_native_submit_check",
-        "t7_native_submit_start",
-        "t7_native_submit_start_named",
-        "t7_native_submit_start_options",
-        "t7_native_submit_stop",
-        "t7_native_cancel",
-        "t7_native_get_snapshot",
-        "t7_native_get_operation",
-        "t7_native_get_error",
-        "t7_native_read_logs",
-        "t7_native_get_graphics",
-        "t7_native_apply_graphics",
-        "t7_native_get_audio",
-        "t7_native_apply_audio",
-        "t7_native_set_output_device",
-        "t7_native_set_log_level",
+        "t7r_native_get_abi",
+        "t7r_native_create",
+        "t7r_native_release",
+        "t7r_native_submit_check",
+        "t7r_native_submit_start",
+        "t7r_native_submit_start_named",
+        "t7r_native_submit_start_options",
+        "t7r_native_submit_stop",
+        "t7r_native_cancel",
+        "t7r_native_get_snapshot",
+        "t7r_native_get_operation",
+        "t7r_native_get_error",
+        "t7r_native_read_logs",
+        "t7r_native_get_graphics",
+        "t7r_native_apply_graphics",
+        "t7r_native_get_audio",
+        "t7r_native_apply_audio",
+        "t7r_native_set_output_device",
+        "t7r_native_set_log_level",
+        "t7r_native_publish_titles",
+        "t7r_native_get_title_request",
     ]
+    service = (ROOT / "src/Desktop/Services/NativeBridgeService.cs").read_text(encoding="utf-8")
+    bindings = re.findall(r'Resolve<\w+>\(module, "([^"]+)"\)', service)
+    assert sorted(bindings) == sorted(exports)
+    contract = (ROOT / "src/Core/NativeBridgeContract.cs").read_text(encoding="utf-8")
+    assert 'public const string LibraryName = "T7R.NativeBridge.dll";' in contract

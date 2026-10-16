@@ -5,16 +5,16 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Desktop.Services;
-using static T7.ManagedHarness.LauncherTests;
+using T7R.Desktop.Services;
+using static T7R.ManagedHarness.LauncherTests;
 
-namespace T7.ManagedHarness
+namespace T7R.ManagedHarness
 {
     internal static class UpdateDownloadTests
     {
         internal static void Run()
         {
-            var root = Path.Combine(Path.GetTempPath(), "T7-update-tests-" + Guid.NewGuid().ToString("N"));
+            var root = Path.Combine(Path.GetTempPath(), "T7R-update-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             try { RunAsync(root).GetAwaiter().GetResult(); }
             finally { Directory.Delete(root, true); }

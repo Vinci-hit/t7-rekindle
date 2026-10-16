@@ -1,7 +1,7 @@
 #include "ClientImports.h"
 #include <algorithm>
 
-namespace t7 {
+namespace t7r {
 namespace {
 void put32(Bytes& bytes, size_t offset, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) bytes.at(offset + i) = static_cast<unsigned char>(value >> (8 * i));

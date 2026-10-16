@@ -1,7 +1,7 @@
 #include "LobbyNews.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
 void word(Bytes& code, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) code.push_back(static_cast<unsigned char>(value >> (i * 8)));

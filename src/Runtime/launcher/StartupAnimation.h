@@ -2,7 +2,7 @@
 #include <string>
 #include <string_view>
 
-namespace t7 {
+namespace t7r {
 std::string startupAnimationResourcePath();
 bool isStartupAnimationResourcePath(std::string_view path);
 std::string skipStartupAnimation(std::string_view source);

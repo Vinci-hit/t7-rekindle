@@ -2,7 +2,7 @@
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t CHAT_INPUT_DATA_OFFSET = 0x400;
 constexpr uint32_t WINDOW_RVA = 0x243B70C, WINDOW_VTABLE_RVA = 0x172D034;

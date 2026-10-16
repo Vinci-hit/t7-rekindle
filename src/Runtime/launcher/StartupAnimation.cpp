@@ -1,7 +1,7 @@
 #include "StartupAnimation.h"
 #include "ClientResourceXml.h"
 
-namespace t7 {
+namespace t7r {
 namespace {
 using namespace resourceXml;
 size_t onlyChild(const std::vector<Element>& nodes, size_t parent, const char* tag) {

@@ -2,7 +2,7 @@
 
 #include "../launcher/Bootstrap.h"
 #include "../server/Server.h"
-#include "T7NativeBridge.h"
+#include "T7RNativeBridge.h"
 #include "../core/DiagnosticLog.h"
 #include <atomic>
 #include <chrono>
@@ -15,11 +15,11 @@
 #include <string>
 #include <thread>
 
-namespace t7::bridge {
+namespace t7r::bridge {
 
 struct Snapshot {
-    uint32_t state = T7NB_STATE_IDLE;
-    uint32_t operation = T7NB_OPERATION_NONE;
+    uint32_t state = T7RNB_STATE_IDLE;
+    uint32_t operation = T7RNB_OPERATION_NONE;
     uint64_t operationId = 0;
     uint64_t revision = 0;
     uint16_t ports[3] = {};
@@ -31,8 +31,8 @@ struct Snapshot {
 
 struct Operation {
     uint64_t id = 0;
-    uint32_t kind = T7NB_OPERATION_NONE;
-    uint32_t status = T7NB_OPERATION_UNKNOWN;
+    uint32_t kind = T7RNB_OPERATION_NONE;
+    uint32_t status = T7RNB_OPERATION_UNKNOWN;
     uint32_t errorCode = 0;
     std::string error;
 };
@@ -43,19 +43,19 @@ struct LogRecord {
 };
 struct GraphicsSnapshot {
     uint64_t revision = 0;
-    uint32_t state = T7NB_GRAPHICS_UNAVAILABLE;
+    uint32_t state = T7RNB_GRAPHICS_UNAVAILABLE;
     GraphicsValues values;
 };
 struct AudioSnapshot {
     uint64_t revision = 0;
-    uint32_t state = T7NB_AUDIO_UNAVAILABLE;
+    uint32_t state = T7RNB_AUDIO_UNAVAILABLE;
     AudioValues values;
 };
 
 class Session final : public std::enable_shared_from_this<Session> {
 public:
     static std::shared_ptr<Session> create(std::string packageRoot);
-#if defined(T7_NATIVE_BRIDGE_TESTING)
+#if defined(T7R_NATIVE_BRIDGE_TESTING)
     // Internal test seam. It is compiled only into native test hosts and is
     // deliberately absent from the exported C ABI.
     static std::shared_ptr<Session> createForTest(
@@ -76,6 +76,8 @@ public:
     int32_t applyGraphics(uint64_t revision, const GraphicsValues& values);
     int32_t audio(AudioSnapshot& result) const;
     int32_t applyAudio(uint64_t revision, const AudioValues& values);
+    int32_t publishTitles(uint64_t epoch, std::string json, uint64_t requestId, bool success, Bytes descriptions);
+    int32_t titleRequest(TitleRequest& result) const;
     int32_t operation(uint64_t operationId, Operation& result) const;
     int32_t error(uint64_t operationId, std::string& result, uint32_t& errorCode) const;
     int32_t readLogs(uint64_t& cursor, uint8_t* buffer, uint32_t capacity,
@@ -103,6 +105,7 @@ private:
     void monitorWorld();
     void monitorGraphics();
     void monitorAudio();
+    void monitorTitles();
     void setFailure(uint64_t operationId, uint32_t code, const std::string& message);
     std::string cleanup() noexcept;
     void log(const std::string& text, DiagnosticLogLevel level = DiagnosticLogLevel::Info);
@@ -123,7 +126,7 @@ private:
     uint64_t revisionCounter_ = 0;
     bool closing_ = false;
     bool workerExited_ = false;
-#if defined(T7_NATIVE_BRIDGE_TESTING)
+#if defined(T7R_NATIVE_BRIDGE_TESTING)
     std::function<void()> afterOperationForTest_;
 #endif
     Snapshot snapshot_;
@@ -136,6 +139,10 @@ private:
     AudioValues requestedAudio_;
     uint64_t requestedAudioRevision_ = 0;
     bool audioQueued_ = false;
+    struct TitleUpdate { uint64_t epoch = 0, requestId = 0; std::string json; bool success = false; Bytes descriptions; };
+    std::deque<TitleUpdate> titleUpdates_;
+    TitleRequest titleRequest_;
+    std::string titleError_;
     std::atomic<uint64_t> cancelOperation_{0};
     std::unique_ptr<Server> server_;
     Bootstrap bootstrap_;

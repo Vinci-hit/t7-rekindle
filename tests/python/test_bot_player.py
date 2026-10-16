@@ -140,12 +140,12 @@ def test_leave_cancels_all_bot_timers(nav):
     assert flow.session["bot"]["status"] == "stopped"
 
 
-def test_old_state_migration_does_not_spawn_in_running_instance():
+def test_old_state_migration_rejects_running_instance_without_changes():
     state = flowAt().state
     state["sessions"]["1"].pop("bot")
     original = deepcopy(state)
-    migrated = app.migrateState(2, state)
-    assert migrated == original
+    with pytest.raises(ValueError, match='restart Runtime'):
+        app.migrateState(2, state)
     assert state == original
 
 
@@ -154,6 +154,7 @@ def test_vision_refresh_preserves_bot_position_and_action(nav):
     flow.session["bot"]["position"] = [279., 159., 0.2]
     flow.session["bot"]["heading"] = -87
     battle.startAction(flow, 300550, released=True, actorId=wire.BOT_ID)
+    duration = battle_flow.decode_battle_state_sync_simple(flow.result['send'][-1]['body']).state_time_ms
     flow.result["send"].clear()
     flow.now += 150
     before = deepcopy(flow.session["bot"])
@@ -162,7 +163,7 @@ def test_vision_refresh_preserves_bot_position_and_action(nav):
     assert flow.result["send"][0]["body"] == bot.vision(before)
     assert struct.unpack_from(">h", flow.result["send"][0]["body"], 45)[0] == -87
     current = battle_flow.decode_battle_state_sync_simple(flow.result["send"][1]["body"])
-    assert current.instance_id == wire.BOT_ID and current.state == 241 and current.state_time_ms == 150
+    assert current.instance_id == wire.BOT_ID and current.state == 241 and current.state_time_ms == duration
 
 
 @pytest.mark.parametrize("intent", tuple(battle.ATTACK_CHAINS) + tuple(battle.BLOCK_CHAINS))
@@ -211,7 +212,11 @@ def test_parry_release_cannot_reach_another_instance():
     assert flow.session["bot"]["action"]["index"] == -1
 
 
-def test_missing_navigation_and_disconnected_target_stop_without_fallback(monkeypatch):
+def test_invalid_static_navigation_and_disconnected_target_stop_without_fallback(monkeypatch, request):
+    from Business.scripts import map_navigation_data, navmesh_resource
+    monkeypatch.setattr(map_navigation_data, 'FACES', ())
+    navmesh_resource.loadNavigation.cache_clear()
+    request.addfinalizer(navmesh_resource.loadNavigation.cache_clear)
     flow = flowAt()
     snapshot(flow)
     tick(flow)

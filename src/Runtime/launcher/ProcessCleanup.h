@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <exception>
 
-namespace t7 {
+namespace t7r {
 inline void stopOwnedProcess(HANDLE process, DWORD waitMs = 10000) {
     auto state = WaitForSingleObject(process, 0);
     if (state == WAIT_OBJECT_0) return;

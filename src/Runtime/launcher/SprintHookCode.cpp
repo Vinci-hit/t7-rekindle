@@ -1,11 +1,14 @@
 #include "SprintHookCode.h"
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
+#include "CombatProfileHookCode.h"
 #include <cstring>
 
-namespace t7 {
+namespace t7r {
 namespace {
-constexpr uint32_t DIRECTIONS_OFFSET = 0x200;
+constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = SPRINT_STATES_OFFSET;
+constexpr uint32_t STATE_KEYS_OFFSET = SPRINT_STATES_OFFSET + 0x40;
+constexpr uint32_t JUMP_EVENT_OFFSET = 0x180, END_JUMP_EVENT_OFFSET = 0x198;
 constexpr uint32_t SPEED_RVA = 0x3D2550, RUNNING_RVA = 0x3D2E20, STATE_RVA = 0x3D2570;
 constexpr uint32_t LINE_MOVE_RVA = 0x75D140, STOP_MOVE_RVA = 0x75D3B0;
 uint32_t floatBits(float value) {
@@ -47,9 +50,11 @@ void writeSprintDirections(Bytes& page) {
     nativeString(END_JUMP_EVENT_OFFSET, "EndJump");
     // Native states enumerate forward/left-forward/left/.../right-forward.
     const uint32_t states[]{1,2,6,1,4,3,5,4,8,9,7,8,1,2,6,1};
-    std::memcpy(page.data() + SPRINT_STATES_OFFSET, states, sizeof(states));
+    std::memcpy(page.data() + STATES_OFFSET, states, sizeof(states));
+    const uint32_t stateKeys[]{0,0,1,5,4,6,2,10,8,9,1,5,9};
+    std::memcpy(page.data() + STATE_KEYS_OFFSET, stateKeys, sizeof(stateKeys));
 }
-Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash) {
+Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProfile& dash, bool dynamicProfiles) {
     const auto dashMoveMs = dash.enabled ? dash.moveMs : 0;
     const auto dashSpeed = dash.enabled ? static_cast<float>(dash.speedMilli) / 1000.f : 0.f;
     // State contains identities/timestamps, never a pointer reused across frames.
@@ -60,7 +65,9 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     const auto jumping = data + 48, animationIdentity = data + 52;
     const auto phaseTick = data + 56, dashMoving = data + 60;
     const auto sequence = data + 64, lastSequence = data + 68;
-    const auto jumpSequence = data + 72;
+    const auto selectedMoveMs = data + 72, selectedDashSpeed = data + 76;
+    const auto airLocked = data + 80, airKeys = data + 84, resumeMovement = data + 88;
+    const auto jumpSequence = data + 92;
     WorldHookCode c;
     c.emit({0x9C,0x60,0x8B,0xEC,0x81,0xEC}); c.word(0x210);
     c.emit({0x83,0xE4,0xF0,0x0F,0xAE,0x04,0x24,0xFC});
@@ -96,6 +103,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     for (auto branch : changed) c.bind(branch);
     c.store(tracking, 0); c.store(lastDash, 0); c.store(jumping, 0); c.store(animationIdentity, 0);
     c.store(dashMoving, 0); c.store(lastSequence, 0);
+    c.store(airLocked, 0);
     for (uint32_t offset : {0u, 4u}) {
         c.emit({0x8B,0x46,static_cast<unsigned char>(0x68 + offset),0xA3}); c.word(epoch + offset);
     }
@@ -111,20 +119,48 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x8B,0x70,0x38}); // ESI battle state
     c.emit({0x8B,0x48,0x40,0x89,0x0D}); c.word(sequence);
     c.emit({0x8B,0x48,0x48,0x89,0x0D}); c.word(phaseTick);
+    if (dynamicProfiles) {
+        c.emit({0x8B,0x90}); c.word(0x98); c.emit({0x8B,0xCF});
+        c.call(address + COMBAT_PROFILE_CODE_OFFSET);
+        c.store(selectedMoveMs, 0); c.store(selectedDashSpeed, 0);
+        c.emit({0x85,0xC0}); const auto noProfile = c.branch(0x84);
+        c.emit({0x8B,0x48,24,0x89,0x0D}); c.word(selectedMoveMs);
+        c.emit({0x8B,0x48,28,0x89,0x0D}); c.word(selectedDashSpeed); c.bind(noProfile);
+    }
     component(0x178692C, 0x17868BC);
     c.emit({0x83,0x78,0x60,6}); invalid.push_back(c.branch(0x82));
     c.emit({0x8B,0x40,0x54}); nonzero(0xC0);
     c.emit({0x8B,0x38,0x83,0xE7,0x3F}); // EDI W/S/A/D/crouch/jump
+    c.store(resumeMovement, 0);
+    c.emit({0x83,0x3D}); c.word(game); c.emit({4}); const auto outsideAirControl = c.branch(0x85);
+    c.emit({0x8B,0x43,0x38,0x80,0x78,0x0A,0}); const auto takingOff = c.branch(0x85);
+    std::vector<size_t> landed;
+    for (unsigned char flag : std::array<unsigned char, 2>{0x20,0x22}) {
+        c.emit({0x80,0x7B,flag,0}); landed.push_back(c.branch(0x84));
+    }
+    c.bind(takingOff);
+    c.emit({0x83,0x3D}); c.word(airLocked); c.emit({0}); const auto locked = c.branch(0x85);
+    // Capture the applied native direction, not keyboard changes made after takeoff.
+    c.emit({0x8B,0x43,0x2C,0x33,0xD2,0x83,0xF8,12}); const auto unknownState = c.branch(0x87);
+    c.emit({0x8B,0x14,0x85}); c.word(address + STATE_KEYS_OFFSET); c.bind(unknownState);
+    c.emit({0x89,0x15}); c.word(airKeys); c.store(airLocked, 1);
+    c.bind(locked); c.emit({0x83,0xE7,0x30,0x0B,0x3D}); c.word(airKeys);
+    const auto airInputReady = c.jump();
+    for (auto branch : landed) c.bind(branch);
+    c.emit({0xA1}); c.word(airLocked); c.emit({0xA3}); c.word(resumeMovement);
+    c.bind(outsideAirControl); c.store(airLocked, 0); c.bind(airInputReady);
     c.emit({0xA1}); c.word(imageBase + 0x16F6228); nonzero(0xC0);
     c.emit({0xFF,0xD0,0xA3}); c.word(now);
     c.store(speed, floatBits(JOG_SPEED)); c.store(running, 0);
 
-    auto move = [&](float maxSpeed) {
+    auto move = [&](float maxSpeed, bool selectedDash = false) {
         // EAX direction mask; original commands retain collision/gravity and own the movement queue.
         c.emit({0x83,0xE0,0x0F,0x6B,0xC0,24,0x05}); c.word(address + DIRECTIONS_OFFSET);
         c.emit({0x8B,0x0D}); c.word(offline);
         c.emit({0x83,0x78,0x10,0}); const auto stop = c.branch(0x84);
-        c.emit({0x50,0x6A,0,0x68}); c.word(floatBits(maxSpeed));
+        c.emit({0x50,0x6A,0});
+        if (selectedDash && dynamicProfiles) { c.emit({0xFF,0x35}); c.word(selectedDashSpeed); }
+        else { c.emit({0x68}); c.word(floatBits(maxSpeed)); }
         c.emit({0xFF,0x35}); c.word(speed); c.call(imageBase + LINE_MOVE_RVA);
         const auto done = c.jump(); c.bind(stop); c.call(imageBase + STOP_MOVE_RVA); c.bind(done);
     };
@@ -152,7 +188,10 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x8B,0xC7,0x83,0xE0,0x13,0x83,0xF8,1}); reset.push_back(c.branch(0x85));
     // Carry an established run through jump input/takeoff/landing while still moving forward.
     c.emit({0x83,0x3D}); c.word(tracking); c.emit({2}); const auto keepRunning = c.branch(0x84);
-    c.emit({0x80,0x7B,0x20,0}); reset.push_back(c.branch(0x85)); // Native airborne flag, not Space key state.
+    // Terrain contact loss alone is not a physical jump and must retain run warmup.
+    c.emit({0x80,0x7B,0x20,0}); const auto notAirborne = c.branch(0x84);
+    c.emit({0x80,0x7B,0x22,0}); reset.push_back(c.branch(0x85));
+    c.bind(notAirborne);
     c.emit({0xF7,0xC7}); c.word(0x20); reset.push_back(c.branch(0x85)); // No new run starts while jumping.
     c.emit({0x83,0x3D}); c.word(tracking); c.emit({0}); const auto started = c.branch(0x85);
     c.emit({0xA1}); c.word(now); c.emit({0xA3}); c.word(began); c.store(tracking, 1);
@@ -172,8 +211,12 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.store(tracking, 0); c.store(speed, 0);
     c.emit({0x33,0xD2,0x81,0xFE}); c.word(439); const auto preparation = c.branch(0x85);
     c.emit({0xA1}); c.word(now); c.emit({0x2B,0x05}); c.word(phaseTick);
-    c.emit({0x3D}); c.word(dashMoveMs); const auto expired = c.branch(0x83);
-    c.store(speed, floatBits(dashSpeed)); c.emit({0x42});
+    if (dynamicProfiles) { c.emit({0x3B,0x05}); c.word(selectedMoveMs); }
+    else { c.emit({0x3D}); c.word(dashMoveMs); }
+    const auto expired = c.branch(0x83);
+    if (dynamicProfiles) { c.emit({0xA1}); c.word(selectedDashSpeed); c.emit({0xA3}); c.word(speed); }
+    else c.store(speed, floatBits(dashSpeed));
+    c.emit({0x42});
     c.bind(preparation); c.bind(expired);
     c.emit({0x3B,0x35}); c.word(lastDash); const auto phaseChanged = c.branch(0x85);
     c.emit({0xA1}); c.word(sequence); c.emit({0x3B,0x05}); c.word(lastSequence);
@@ -183,7 +226,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.bind(phaseChanged); c.bind(sequenceChanged); c.bind(keysChanged);
     c.emit({0x89,0x35}); c.word(lastDash); c.emit({0x89,0x3D}); c.word(lastKeys);
     c.emit({0xA1}); c.word(sequence); c.emit({0xA3}); c.word(lastSequence);
-    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed);
+    c.emit({0x89,0x15}); c.word(dashMoving); c.emit({0x8B,0xC2}); move(dashSpeed, true);
     c.bind(sameDash); c.bind(warming); c.bind(armed); c.bind(resetDone);
     // Native infantry turning checks command speed, not velocity. Preserve the
     // stop command's zero speed so the original TurnDir updater can select Turn.
@@ -192,6 +235,10 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.emit({0x8B,0xC7,0x83,0xE0,0x0F,0x83,0x3C,0x85}); c.word(address + SPRINT_STATES_OFFSET);
     c.emit({1}); const auto moving = c.branch(0x85);
     c.store(speed, 0); c.bind(moving); c.bind(dashSpeedSelected); c.bind(outsideGame);
+    // Input edges were consumed in midair. On landing, resume the current native
+    // key snapshot once, including a released key's stop command; never replay Jump.
+    c.emit({0x83,0x3D}); c.word(resumeMovement); c.emit({0}); const auto noLandingMove = c.branch(0x84);
+    c.emit({0x8B,0xC7}); move(RUN_SPEED); c.bind(noLandingMove);
     // Reapply only when the native key tree or a phase change altered the commanded speed.
     c.emit({0x8B,0x4B,0x38,0xA1}); c.word(speed); c.emit({0x3B,0x41,0x24});
     const auto sameSpeed = c.branch(0x84);
@@ -257,6 +304,7 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
     c.store(tracking, 0); c.store(lastDash, 0); c.store(identity, 0);
     c.store(dashMoving, 0); c.store(lastSequence, 0);
     c.store(jumping, 0); c.store(animationIdentity, 0);
+    c.store(airLocked, 0);
     c.bind(done);
     c.emit({0x0F,0xAE,0x0C,0x24,0x8B,0xE5,0x61,0x9D,0xC3});
     if (c.bytes.size() > JUMP_PHYSICS_CODE_OFFSET - SPRINT_CODE_OFFSET)
@@ -290,13 +338,19 @@ Bytes buildJumpPhysicsHook(uint32_t address, uint32_t imageBase, uint32_t thread
     c.emit({0x8B,0x01,0x81,0xB8}); c.word(0xD0); c.word(imageBase + 0x29B200);
     native.push_back(c.branch(0x85));
     c.emit({0x81,0x3F}); c.word(imageBase + 0x17782A4); native.push_back(c.branch(0x85));
-    c.emit({0x8B,0x47,0x10,0x85,0xC0}); native.push_back(c.branch(0x84));
-    c.emit({0x8D,0x50,4,0x3B,0x57,0x14}); native.push_back(c.branch(0x85));
-    c.emit({0x8B,0x00,0x85,0xC0}); native.push_back(c.branch(0x84));
-    c.emit({0x81,0x38}); c.word(imageBase + 0x17782C8); native.push_back(c.branch(0x85));
-    // Heading is already applied. The frame loop owns elapsed-time physics;
-    // this command-only flush would add a full gravity step and erase its remainder.
-    // Position, jump, activation and mixed command groups retain the native path.
+    c.emit({0x8B,0x57,0x10,0x85,0xD2}); native.push_back(c.branch(0x84));
+    c.emit({0x8B,0x5F,0x14,0x3B,0xD3}); native.push_back(c.branch(0x83));
+    const auto child = c.bytes.size();
+    c.emit({0x8B,2,0x85,0xC0}); native.push_back(c.branch(0x84));
+    c.emit({0x81,0x38}); c.word(imageBase + 0x17782C8); const auto heading = c.branch(0x84);
+    c.emit({0x81,0x38}); c.word(imageBase + 0x17782D8); const auto movement = c.branch(0x84);
+    c.emit({0x81,0x38}); c.word(imageBase + 0x17782E8); native.push_back(c.branch(0x85));
+    c.emit({0x83,0x78,0x0C,1}); native.push_back(c.branch(0x86)); // Preserve crouch in a combined command.
+    const auto jumpOnly = c.jump();
+    c.bind(movement); c.emit({0x80,0x78,0x34,0}); native.push_back(c.branch(0x85));
+    c.bind(heading); c.bind(jumpOnly); c.emit({0x83,0xC2,4,0x3B,0xD3}); c.bind(c.branch(0x82), child);
+    // Rejected airborne input must not add a gravity step or erase the frame
+    // clock's remainder. Corrections, crouch and activation still flush natively.
     c.emit({0x61,0x9D}); resume();
     for (auto branch : native) c.bind(branch);
     c.emit({0x61,0x9D});

@@ -46,15 +46,15 @@ def file_digest(path: Path) -> str:
 
 
 def base_version() -> str:
-    project = Path(__file__).resolve().parents[1] / "src/Desktop/T7.Desktop.csproj"
+    project = Path(__file__).resolve().parents[1] / "src/Desktop/T7R.Desktop.csproj"
     return ET.parse(project).findtext("PropertyGroup/Version")
 
 
 def is_preview_build(environment: dict[str, str]) -> bool:
     return (environment.get("GITHUB_REF_TYPE") == "branch"
             and environment.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch")
-            and bool(environment.get("T7_DEFAULT_BRANCH"))
-            and environment.get("GITHUB_REF_NAME") == environment["T7_DEFAULT_BRANCH"])
+            and bool(environment.get("T7R_DEFAULT_BRANCH"))
+            and environment.get("GITHUB_REF_NAME") == environment["T7R_DEFAULT_BRANCH"])
 
 
 def validate_preview_build(build: dict) -> dict:
@@ -72,11 +72,11 @@ def validate_preview_build(build: dict) -> dict:
 
 
 def package_build_metadata(environment: dict[str, str]) -> dict:
-    build = {"channel": environment.get("T7_BUILD_CHANNEL", "preview"),
-             "version": environment.get("T7_RELEASE_VERSION") or environment.get("T7_BUILD_VERSION") or base_version(),
-             "runId": int(environment.get("T7_PREVIEW_RUN_ID") or "0"),
-             "runNumber": int(environment.get("T7_PREVIEW_RUN_NUMBER") or "0"),
-             "runAttempt": int(environment.get("T7_PREVIEW_RUN_ATTEMPT") or "0"),
+    build = {"channel": environment.get("T7R_BUILD_CHANNEL", "preview"),
+             "version": environment.get("T7R_RELEASE_VERSION") or environment.get("T7R_BUILD_VERSION") or base_version(),
+             "runId": int(environment.get("T7R_PREVIEW_RUN_ID") or "0"),
+             "runNumber": int(environment.get("T7R_PREVIEW_RUN_NUMBER") or "0"),
+             "runAttempt": int(environment.get("T7R_PREVIEW_RUN_ATTEMPT") or "0"),
              "commitHash": environment.get("GITHUB_SHA", "")}
     parse_version(build["version"])
     if build["channel"] not in ("stable", "preview"):
@@ -121,12 +121,12 @@ def prepare_build(environment: dict[str, str]) -> None:
     if not destination:
         raise ValueError("GITHUB_ENV is required to export build metadata.")
     preview = is_preview_build(environment)
-    values = {"T7_RELEASE_VERSION": version, "T7_UPDATE_BASE_URL": base_url,
-              "T7_BUILD_CHANNEL": "stable" if version else "preview",
-              "T7_BUILD_VERSION": version or base_version(),
-              "T7_PREVIEW_RUN_ID": environment.get("GITHUB_RUN_ID", "") if preview else "0",
-              "T7_PREVIEW_RUN_NUMBER": environment.get("GITHUB_RUN_NUMBER", "") if preview else "0",
-              "T7_PREVIEW_RUN_ATTEMPT": environment.get("GITHUB_RUN_ATTEMPT", "") if preview else "0"}
+    values = {"T7R_RELEASE_VERSION": version, "T7R_UPDATE_BASE_URL": base_url,
+              "T7R_BUILD_CHANNEL": "stable" if version else "preview",
+              "T7R_BUILD_VERSION": version or base_version(),
+              "T7R_PREVIEW_RUN_ID": environment.get("GITHUB_RUN_ID", "") if preview else "0",
+              "T7R_PREVIEW_RUN_NUMBER": environment.get("GITHUB_RUN_NUMBER", "") if preview else "0",
+              "T7R_PREVIEW_RUN_ATTEMPT": environment.get("GITHUB_RUN_ATTEMPT", "") if preview else "0"}
     build = package_build_metadata({**environment, **values})
     if preview:
         validate_preview_build(build)

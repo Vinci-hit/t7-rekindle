@@ -38,9 +38,9 @@ def test_project_sources_and_filenames_have_no_legacy_brand():
 
 
 def test_launcher_and_installer_share_the_product_name():
-    project = ET.parse(ROOT / "src/Desktop/T7.Desktop.csproj").getroot()
+    project = ET.parse(ROOT / "src/Desktop/T7R.Desktop.csproj").getroot()
     assert project.findtext("PropertyGroup/AssemblyName") == "T7-Rekindle"
-    assert project.findtext("PropertyGroup/RootNamespace") == "T7.Rekindle.Desktop"
+    assert project.findtext("PropertyGroup/RootNamespace") == "T7R.Desktop"
     lock = json.loads((ROOT / "tests/managed/packages.lock.json").read_text(encoding="utf-8"))
     assert lock["dependencies"][".NETFramework,Version=v4.8"]["t7-rekindle"]["type"] == "Project"
     assert (ROOT / "T7-Rekindle.sln").is_file()

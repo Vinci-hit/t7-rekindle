@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <algorithm>
 
-namespace t7::detail {
+namespace t7r::detail {
 enum class DrainResult { Empty, Budget, Blocked };
 struct SendAttempt { int bytes; int error = 0; };
 constexpr size_t SEND_BYTE_BUDGET = 64 * 1024;

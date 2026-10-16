@@ -2,13 +2,13 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace T7.Rekindle.Core
+namespace T7R.Core
 {
     public static class NativeBridgeContract
     {
         public const uint AbiVersion = 1;
         public const uint StructPack = 8;
-        public const string LibraryName = "T7.NativeBridge.dll";
+        public const string LibraryName = "T7R.NativeBridge.dll";
 
         public static bool IsUtf8PathAcceptable(string path)
         {

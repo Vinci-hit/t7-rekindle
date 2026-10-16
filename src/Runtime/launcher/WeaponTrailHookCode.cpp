@@ -3,9 +3,10 @@
 #include "RemoteImage.h"
 #include "WorldHookCode.h"
 
-namespace t7 {
+namespace t7r {
 namespace {
 constexpr uint32_t DATA_OFFSET = 0x500, PRESET_OFFSET = 0x520;
+constexpr uint32_t TEXTURE_GROUP_OFFSET = 0x98;
 constexpr uint32_t SETTINGS_RVA = 0x6EC2D0, OPEN_RVA = 0x3735A0, CLOSE_RVA = 0x373630, TEXTURE_RVA = 0x373A60;
 std::string bluePreset() { return resourceXml::encoded(L"PVP赵云专用"); }
 }
@@ -95,6 +96,7 @@ Bytes buildWeaponTrailHook(uint32_t address, uint32_t imageBase) {
     }
     const auto preset = bluePreset();
     std::vector<size_t> configure;
+    c.emit({0x83,0xBF}); c.word(TEXTURE_GROUP_OFFSET); c.emit({0}); configure.push_back(c.branch(0x85));
     c.emit({0x83,0x7F,0x30,static_cast<unsigned char>(preset.size())}); configure.push_back(c.branch(0x85));
     c.emit({0x8D,0x57,0x20,0x83,0x7F,0x34,16}); const auto inlineName = c.branch(0x82);
     c.emit({0x8B,0x12}); c.bind(inlineName); nonzero(0xD2, configure);
@@ -106,6 +108,8 @@ Bytes buildWeaponTrailHook(uint32_t address, uint32_t imageBase) {
     for (auto branch : configure) c.bind(branch);
     c.emit({0x80,0x7F,0x1C,0}); const auto alreadyClosed = c.branch(0x84);
     c.emit({0x8B,0xCF}); c.call(imageBase + CLOSE_RVA); c.bind(alreadyClosed);
+    // Blue textures occupy group 0; hammers can retain the preset's empty group 1.
+    c.emit({0xC7,0x87}); c.word(TEXTURE_GROUP_OFFSET); c.word(0);
     c.emit({0x68}); c.word(address + PRESET_OFFSET); c.emit({0x8B,0xCF}); c.call(imageBase + TEXTURE_RVA);
     c.bind(configured);
     c.emit({0x80,0x7F,0x1C,0}); next.push_back(c.branch(0x85));

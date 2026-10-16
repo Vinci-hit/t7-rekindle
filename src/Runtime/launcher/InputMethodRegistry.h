@@ -2,7 +2,7 @@
 #include "../core/Common.h"
 #include <functional>
 
-namespace t7 {
+namespace t7r {
 enum class InputMethodScope { User, Machine };
 enum class InputMethodView { X86, X64 };
 struct InputMethodRegistration {

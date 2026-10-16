@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_build():
-    spec = importlib.util.spec_from_file_location("t7_build", ROOT / "scripts/build.py")
+    spec = importlib.util.spec_from_file_location("t7r_build", ROOT / "scripts/build.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -20,7 +20,7 @@ def load_build():
 def test_managed_build_restores_in_locked_mode():
     build = load_build()
     with patch.object(build.subprocess, "run") as run:
-        build.run_msbuild(ROOT / "src/Desktop/T7.Desktop.csproj", "x64", Path("MSBuild.exe"), None)
+        build.run_msbuild(ROOT / "src/Desktop/T7R.Desktop.csproj", "x64", Path("MSBuild.exe"), None)
     command = run.call_args.args[0]
     assert "/restore" in command
     assert "/p:RestoreLockedMode=true" in command
@@ -29,7 +29,7 @@ def test_managed_build_restores_in_locked_mode():
 def test_native_build_does_not_restore_nuget():
     build = load_build()
     with patch.object(build.subprocess, "run") as run:
-        build.run_msbuild(ROOT / "src/Runtime/T7.NativeBridge.vcxproj", "x64", Path("MSBuild.exe"), None)
+        build.run_msbuild(ROOT / "src/Runtime/T7R.NativeBridge.vcxproj", "x64", Path("MSBuild.exe"), None)
     assert "/restore" not in run.call_args.args[0]
 
 
@@ -37,13 +37,14 @@ def test_native_build_does_not_restore_nuget():
 def test_msbuild_receives_selected_configuration(configuration):
     build = load_build()
     with patch.object(build.subprocess, "run") as run:
-        build.run_msbuild(ROOT / "src/Desktop/T7.Desktop.csproj", "x64",
+        build.run_msbuild(ROOT / "src/Desktop/T7R.Desktop.csproj", "x64",
                           Path("MSBuild.exe"), None, configuration)
     assert f"/p:Configuration={configuration}" in run.call_args.args[0]
 
 
-@pytest.mark.parametrize("project,count", [("all", 7), ("native", 1),
-                                         ("native-tests", 4), ("managed", 3)])
+@pytest.mark.parametrize("project,count", [("all", 10), ("native", 1),
+                                         ("native-tests", 4), ("managed", 5),
+                                         ("battle", 3), ("battle-tests", 4)])
 @pytest.mark.parametrize("configuration", [None, "Debug", "Release"])
 def test_build_configuration_reaches_all_projects(monkeypatch, project, count, configuration):
     build = load_build()
@@ -53,7 +54,8 @@ def test_build_configuration_reaches_all_projects(monkeypatch, project, count, c
     monkeypatch.setattr(build.sys, "argv", arguments)
     for name in ("locate_msbuild", "check_python", "check_managed_sdk", "check_wpf_targeting_pack"):
         monkeypatch.setattr(build, name, lambda *args, **kwargs: Path("TOOLCHAIN"))
-    with patch.object(build, "run_msbuild") as run, patch.object(build, "run_native_tests") as tests:
+    with patch.object(build, "run_msbuild") as run, patch.object(build, "run_native_tests") as tests, \
+            patch.object(build, "run_battle_tests") as battle_tests:
         build.main()
     selected = configuration or "Release"
     assert len(run.call_args_list) == count
@@ -62,6 +64,29 @@ def test_build_configuration_reaches_all_projects(monkeypatch, project, count, c
         tests.assert_called_once_with(Path("TOOLCHAIN"), selected)
     else:
         tests.assert_not_called()
+    if project in ("all", "battle-tests"):
+        battle_tests.assert_called_once_with(Path("TOOLCHAIN"), selected)
+    else:
+        battle_tests.assert_not_called()
+
+
+@pytest.mark.parametrize("configuration", ["Debug", "Release"])
+def test_battle_module_tests_use_isolated_runtime_and_selected_configuration(tmp_path, configuration):
+    build = load_build()
+    build.ROOT = tmp_path
+    fixture = tmp_path / 'artifacts/tmp/runtime-fixture-battle'
+    with patch.object(build, 'prepare_runtime_fixture', return_value=fixture), \
+            patch.object(build, 'remove_tree') as remove, patch.object(build.shutil, 'copy2') as copy, \
+            patch.object(build.subprocess, 'run') as run:
+        build.run_battle_tests(tmp_path / 'python', configuration)
+    assert [Path(call.args[0][0]) for call in run.call_args_list] == [
+        tmp_path / 'artifacts/native/bin/x64' / configuration / 'T7R.BattleHostTests.exe',
+        tmp_path / 'artifacts/bin/T7R.BattleHarness/x64' / configuration / 'net48/T7R.BattleHarness.exe']
+    assert all(call.args[0][1] == str(fixture) for call in run.call_args_list)
+    assert all(call.kwargs['env']['LOCALAPPDATA'] == str(fixture / 'state') for call in run.call_args_list)
+    copy.assert_called_once_with(tmp_path / 'artifacts/native/bin/x64' / configuration / 'T7R.NativeBridge.dll',
+                                 fixture / 'T7R.NativeBridge.dll')
+    remove.assert_called_once_with(fixture)
 
 
 def test_invalid_configuration_stops_before_toolchain_discovery(monkeypatch):
@@ -82,7 +107,7 @@ def test_native_tests_run_from_selected_output(tmp_path, configuration):
         build.run_native_tests(tmp_path / "python", configuration)
     assert [Path(call.args[0][0]) for call in run.call_args_list] == [
         tmp_path / "artifacts/native/bin/x64" / configuration / name
-        for name in ("T7.NativeTests.exe", "T7.BridgeTests.exe", "T7.RuntimeTests.exe")]
+        for name in ("T7R.NativeTests.exe", "T7R.BridgeTests.exe", "T7R.RuntimeTests.exe")]
     remove.assert_called_once_with(tmp_path / "fixture")
 
 
@@ -120,12 +145,17 @@ def test_runtime_fixture_includes_standard_library_extensions(tmp_path, embedded
     assert not (fixture / "python/python314.dll").exists()
     assert (fixture / "synthetic-client/vfs/map.vfs").read_bytes()[:4] == bytes.fromhex("9010ba22")
     assert (business / "scripts/navmesh_resource.py").read_text(encoding="utf-8") == 'NAV_HASH = "production"\n'
+    assert (fixture / 'Business/scripts/navmesh_resource.py').read_bytes() == (business / 'scripts/navmesh_resource.py').read_bytes()
+    for name, key, count in [('map_data.py', 'SPAWNS', 2), ('map_navigation_data.py', 'FACES', 2)]:
+        namespace = {}
+        exec((fixture / 'Business/scripts' / name).read_text(encoding='utf-8'), namespace)
+        assert len(namespace[key]) == count
 
 
 def test_native_tests_support_matching_solution_configurations():
     namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
     solution = (ROOT / "T7-Rekindle.sln").read_text(encoding="utf-8")
-    for name in ("T7.NativeTests", "T7.BridgeTests", "T7.RuntimeTests"):
+    for name in ("T7R.NativeTests", "T7R.BridgeTests", "T7R.RuntimeTests"):
         project = ET.parse(ROOT / "tests/cpp" / f"{name}.vcxproj").getroot()
         configurations = {item.get("Include") for item in project.findall(".//m:ProjectConfiguration", namespace)}
         assert configurations == {"Debug|x64", "Release|x64"}
@@ -133,6 +163,17 @@ def test_native_tests_support_matching_solution_configurations():
         for configuration in ("Debug", "Release"):
             for mapping in ("ActiveCfg", "Build.0"):
                 assert f"{guid}.{configuration}|x64.{mapping} = {configuration}|x64" in solution
+
+
+def test_world_hook_projects_include_combat_lookup():
+    namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
+    for directory in (ROOT / "src/Runtime", ROOT / "tests/cpp"):
+        for path in directory.glob("*.vcxproj"):
+            project = ET.parse(path).getroot()
+            sources = {item.get("Include", "").replace("\\", "/").split("/")[-1]
+                       for item in project.findall(".//m:ClCompile", namespace)}
+            if "WorldHookCode.cpp" in sources:
+                assert "CombatProfileHookCode.cpp" in sources, path.name
 
 
 def test_managed_msbuild_discovery_does_not_require_vc(tmp_path):
@@ -159,7 +200,7 @@ def test_managed_directories_are_project_scoped_and_docs_are_optional():
 
 
 def test_desktop_declares_the_x64_solution_platform():
-    project = ET.parse(ROOT / "src/Desktop/T7.Desktop.csproj").getroot()
+    project = ET.parse(ROOT / "src/Desktop/T7R.Desktop.csproj").getroot()
     platforms = project.findtext("PropertyGroup/Platforms", default="AnyCPU").split(";")
     assert "x64" in platforms
     assert project.findtext("PropertyGroup/PlatformTarget") == "x64"
@@ -167,11 +208,11 @@ def test_desktop_declares_the_x64_solution_platform():
 
 def test_solution_builds_native_bridge_before_desktop():
     namespace = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
-    native = ET.parse(ROOT / "src/Runtime/T7.NativeBridge.vcxproj").getroot()
+    native = ET.parse(ROOT / "src/Runtime/T7R.NativeBridge.vcxproj").getroot()
     guid = native.findtext(".//m:ProjectGuid", namespaces=namespace)
     solution = (ROOT / "T7-Rekindle.sln").read_text(encoding="utf-8")
     desktop = next(project for project in solution.split("\nEndProject\n")
-                   if ' = "T7.Desktop",' in project)
+                   if ' = "T7R.Desktop",' in project)
     section = "ProjectSection(ProjectDependencies) = postProject"
     assert section in desktop, "Desktop must wait for NativeBridge before copying its DLL"
     dependencies = desktop.split(section, 1)[1].split("EndProjectSection", 1)[0]

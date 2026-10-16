@@ -25,16 +25,16 @@ inline void prepare(HANDLE process) {
         {ASSOCIATE_IMPORT,ASSOCIATE}, {SEND_MESSAGE_IMPORT,SEND_MESSAGE}, {UI,UI_VTABLE},
         {CAMERA,CAMERA_VTABLE}
     }) writeWord(process, item.first, item.second);
-    t7::writeClientMemory(process, CAMERA + 0x61, {1});
-    t7::writeClientMemory(process, WINDOW + 0x115, {1});
+    t7r::writeClientMemory(process, CAMERA + 0x61, {1});
+    t7r::writeClientMemory(process, WINDOW + 0x115, {1});
     // Signature anchors for the native window, UI focus, activation and cursor handlers.
-    t7::writeClientMemory(process, BASE + 0x12670, {0x8B,0x81,0x38,1,0,0,0xC3});
-    t7::writeClientMemory(process, BASE + 0x7D33B,
+    t7r::writeClientMemory(process, BASE + 0x12670, {0x8B,0x81,0x38,1,0,0,0xC3});
+    t7r::writeClientMemory(process, BASE + 0x7D33B,
         {0x0F,0x94,0xC0,0x80,0xB9,0x11,1,0,0,0,0x88,0x81,0x10,1,0,0});
-    t7::writeClientMemory(process, BASE + 0x3FF3FB, {0x80,0x7E,0x7D,0});
-    t7::writeClientMemory(process, BASE + 0x4B2C70, {0x80,0x79,0x61,1,0x75,9,0x80,0x79,0x60,0});
-    t7::writeClientMemory(process, BASE + 0x4B450D, {0x80,0x79,0x68,1,0x74,0x11,0x83,0x79,0x64,0,0x7F,0x0B});
-    t7::WorldHookCode c;
+    t7r::writeClientMemory(process, BASE + 0x3FF3FB, {0x80,0x7E,0x7D,0});
+    t7r::writeClientMemory(process, BASE + 0x4B2C70, {0x80,0x79,0x61,1,0x75,9,0x80,0x79,0x60,0});
+    t7r::writeClientMemory(process, BASE + 0x4B450D, {0x80,0x79,0x68,1,0x74,0x11,0x83,0x79,0x64,0,0x7F,0x0B});
+    t7r::WorldHookCode c;
     auto check = [&]() {
         const auto valid = c.branch(0x84);
         c.emit({0xFF,0x05}); c.word(ERRORS); c.bind(valid);
@@ -46,7 +46,7 @@ inline void prepare(HANDLE process) {
     c.emit({0x8B,0x44,0x24,8,0x87,0x05}); c.word(CONTEXT); // Return the previous HIMC.
     c.emit({0xFF,0x05}); c.word(ASSOCIATIONS);
     c.emit({0xD9,0xEE,0x0F,0x57,0xC0,0xC2,8,0});
-    t7::writeClientMemory(process, ASSOCIATE, c.bytes);
+    t7r::writeClientMemory(process, ASSOCIATE, c.bytes);
     c.bytes.clear(); windowArgument();
     c.emit({0x81,0x7C,0x24,8}); c.word(0x41E); check();
     c.emit({0x83,0x7C,0x24,16,0}); check();
@@ -55,23 +55,23 @@ inline void prepare(HANDLE process) {
     c.emit({0xA3}); c.word(CAMERA_BLOCKED); // GE_SHOW_MOUSE / GE_HIDE_MOUSE subscriber.
     c.emit({0xFF,0x05}); c.word(MESSAGES);
     c.emit({0xD9,0xEE,0x0F,0x57,0xC0,0x33,0xC0,0xC2,16,0});
-    t7::writeClientMemory(process, SEND_MESSAGE, c.bytes);
+    t7r::writeClientMemory(process, SEND_MESSAGE, c.bytes);
     c.bytes.clear();
     c.emit({0x55,0x8B,0xEC,0x6A,0xFF,0x58});
     c.emit({0x81,0xF9}); c.word(UI); check();
     c.emit({0xFF,0x05}); c.word(FOCUS_RESETS);
     c.emit({0xE9}); c.word(BASE + 0xD700 - (RESET_FOCUS + static_cast<uint32_t>(c.bytes.size()) + 4));
-    t7::writeClientMemory(process, RESET_FOCUS, c.bytes);
+    t7r::writeClientMemory(process, RESET_FOCUS, c.bytes);
     c.bytes.clear();
     // UIResetFocus owns the native focus event: both IME and keyboard subscribers see focus loss.
     c.emit({0x80,0x79,0x7D,0}); const auto notFocused = c.branch(0x84);
     c.emit({0xC6,0x41,0x7D,0,0xA1}); c.word(IME_GLOBAL);
     c.emit({0xC6,0x40,8,0}); c.store(CONTEXT, 0); c.store(KEYBOARD_BLOCKED, 0);
     c.bind(notFocused); c.emit({0xD9,0xEE,0x0F,0x57,0xC0,0x5D,0xC3});
-    t7::writeClientMemory(process, BASE + 0xD700, c.bytes);
+    t7r::writeClientMemory(process, BASE + 0xD700, c.bytes);
 }
 
-inline void verify(HANDLE process, t7::ClientWorld& reader) {
+inline void verify(HANDLE process, t7r::ClientWorld& reader) {
     auto require = [&](bool value, const char* reason) { if (!value) throw std::runtime_error(reason); };
     auto pollWorld = [&]() {
         worldFixture::read(reader); // Discard a sample requested before the current input state.
@@ -101,13 +101,13 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     auto focus = [&](bool enabled) {
         // The original TextInputFocusChange handler also associates/detaches its cached HIMC.
         writeWord(process, CONTEXT, enabled ? 0x1234 : 0);
-        t7::writeClientMemory(process, IME + 8, {static_cast<unsigned char>(enabled)});
-        t7::writeClientMemory(process, UI + 0x7D, {static_cast<unsigned char>(enabled)});
+        t7r::writeClientMemory(process, IME + 8, {static_cast<unsigned char>(enabled)});
+        t7r::writeClientMemory(process, UI + 0x7D, {static_cast<unsigned char>(enabled)});
         writeWord(process, KEYBOARD_BLOCKED, enabled ? 1 : 0);
     };
     auto freeCursor = [&]() {
         writeWord(process, CAMERA_BLOCKED, 1);
-        t7::writeClientMemory(process, UI + 0x184, {1});
+        t7r::writeClientMemory(process, UI + 0x184, {1});
         // Publish last: the running frame may immediately capture this flag again during chat.
         const unsigned char value = 1; SIZE_T written = 0;
         require(WriteProcessMemory(process, reinterpret_cast<void*>(static_cast<uintptr_t>(WINDOW + 0x114)),
@@ -162,35 +162,35 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
 
     // IME may retain an uninitialized non-boolean byte without an actual UI text focus.
     updateInput([&]() {
-        t7::writeClientMemory(process, IME + 8, {0x59});
+        t7r::writeClientMemory(process, IME + 8, {0x59});
         freeCursor();
     });
     expect(0, true, "IME residue without UI text focus captured the cursor");
-    t7::writeClientMemory(process, IME + 8, {0});
+    t7r::writeClientMemory(process, IME + 8, {0});
 
     // Chat temporarily captures an already-free cursor, but restores that mode on close.
-    t7::writeClientMemory(process, CAMERA + 0x69, {1}); // Manual cursor toggle, not a menu request.
+    t7r::writeClientMemory(process, CAMERA + 0x69, {1}); // Manual cursor toggle, not a menu request.
     freeCursor(); expect(0, true, "ordinary free-cursor mode was captured outside chat");
     const auto beforeFreeChat = readWord(process, MESSAGES);
     focus(true); expect(0x1234, false, "chat over a free cursor did not enable camera control");
     pollWorld();
     focus(false); expect(0, true, "chat stole the previous free-cursor mode");
     require(readWord(process, MESSAGES) == beforeFreeChat + 2, "redundant native cursor events");
-    t7::writeClientMemory(process, CAMERA + 0x69, {0});
+    t7r::writeClientMemory(process, CAMERA + 0x69, {0});
 
     auto captureCursor = [&]() {
         writeWord(process, CAMERA_BLOCKED, 0);
-        t7::writeClientMemory(process, UI + 0x184, {0});
-        t7::writeClientMemory(process, WINDOW + 0x114, {0});
+        t7r::writeClientMemory(process, UI + 0x184, {0});
+        t7r::writeClientMemory(process, WINDOW + 0x114, {0});
     };
     updateInput([&]() {
         captureCursor(); focus(true);
-        t7::writeClientMemory(process, IME + 8, {0});
+        t7r::writeClientMemory(process, IME + 8, {0});
     });
     expect(0x1234, false, "UI text focus was ignored when the IME flag lagged behind");
     updateInput([&]() {
-        t7::writeClientMemory(process, CAMERA + 0x61, {0});
-        t7::writeClientMemory(process, WINDOW + 0x115, {0});
+        t7r::writeClientMemory(process, CAMERA + 0x61, {0});
+        t7r::writeClientMemory(process, WINDOW + 0x115, {0});
         freeCursor();
     });
     expect(0x1234, true, "background chat recaptured the mouse");
@@ -198,8 +198,8 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     pollWorld();
     require(readWord(process, MESSAGES) == backgroundMessages, "inactive window resent cursor events");
     updateInput([&]() {
-        t7::writeClientMemory(process, CAMERA + 0x61, {1});
-        t7::writeClientMemory(process, WINDOW + 0x115, {1});
+        t7r::writeClientMemory(process, CAMERA + 0x61, {1});
+        t7r::writeClientMemory(process, WINDOW + 0x115, {1});
     });
     expect(0x1234, false, "foreground chat did not resume camera control");
     focus(false); expect(0, false, "chat blur after activation lost its prior mouse mode");
@@ -251,7 +251,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
 
     // A stale camera subscriber is independent of the window's desired cursor flag.
     writeWord(process, worldFixture::STATE + 0x38, 2); pump(process);
-    t7::writeClientMemory(process, WINDOW + 0x114, {0});
+    t7r::writeClientMemory(process, WINDOW + 0x114, {0});
     writeWord(process, CAMERA_BLOCKED, 1);
     writeWord(process, worldFixture::STATE + 0x38, 4); expect(0, false, "second battle entry");
     focus(true); expect(0x1234, false, "second battle chat");
@@ -295,16 +295,16 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     // Settlement can keep actor state GAME while multiple native UI requests own the cursor.
     updateInput([&]() {
         writeWord(process, CAMERA + 0x64, 2);
-        t7::writeClientMemory(process, CAMERA + 0x68, {1});
-        t7::writeClientMemory(process, IME + 8, {0x59});
+        t7r::writeClientMemory(process, CAMERA + 0x68, {1});
+        t7r::writeClientMemory(process, IME + 8, {0x59});
         captureCursor();
     });
     expect(0, true, "settlement with a stale IME flag lost its cursor");
     const auto settlementResets = readWord(process, FOCUS_RESETS);
     for (unsigned char active : std::array<unsigned char, 4>{0, 1, 0, 1}) {
         updateInput([&]() {
-            t7::writeClientMemory(process, CAMERA + 0x61, {active});
-            t7::writeClientMemory(process, WINDOW + 0x115, {active});
+            t7r::writeClientMemory(process, CAMERA + 0x61, {active});
+            t7r::writeClientMemory(process, WINDOW + 0x115, {active});
         });
         expect(0, true, "settlement activation handed the cursor back to the camera");
     }
@@ -314,7 +314,7 @@ inline void verify(HANDLE process, t7::ClientWorld& reader) {
     }
     require(readWord(process, FOCUS_RESETS) == settlementResets,
         "settlement activation reset the native UI focus");
-    t7::writeClientMemory(process, CAMERA + 0x68, {0}); closeMenu();
+    t7r::writeClientMemory(process, CAMERA + 0x68, {0}); closeMenu();
 
     menu(true, false);
     const auto respawnResets = readWord(process, FOCUS_RESETS);

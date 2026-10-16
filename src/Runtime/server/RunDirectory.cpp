@@ -3,7 +3,7 @@
 #include <atomic>
 #include <memory>
 
-namespace t7 {
+namespace t7r {
 namespace {
 std::atomic<uint64_t> sequence{0};
 

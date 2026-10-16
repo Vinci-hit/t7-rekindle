@@ -1,38 +1,14 @@
 #include "PythonHost.h"
+#include "PythonContext.h"
 #include <memory>
 #include <mutex>
 #include <cmath>
 #include <limits>
+#include <chrono>
 
-namespace t7 {
+namespace t7r {
+using namespace python;
 namespace {
-struct Release { void operator()(PyObject* p) const { Py_XDECREF(p); } };
-using Object = std::unique_ptr<PyObject, Release>;
-std::string error() {
-    Object exception(PyErr_GetRaisedException());
-    if (!exception) return "Python operation failed";
-    std::string summary = Py_TYPE(exception.get())->tp_name;
-    Object text(PyObject_Str(exception.get()));
-    if (text) {
-        const char* chars = PyUnicode_AsUTF8(text.get());
-        if (chars) summary += std::string(": ") + chars;
-    }
-    PyErr_Clear();
-    Object traceback(PyImport_ImportModule("traceback"));
-    if (traceback) {
-        Object lines(PyObject_CallMethod(traceback.get(), "format_exception", "O", exception.get()));
-        Object separator(PyUnicode_FromString(""));
-        if (lines && separator) {
-            Object formatted(PyUnicode_Join(separator.get(), lines.get()));
-            if (formatted) {
-                const char* chars = PyUnicode_AsUTF8(formatted.get());
-                if (chars) return summary + "\n" + chars;
-            }
-        }
-    }
-    PyErr_Clear();
-    return summary;
-}
 std::mutex ownerMutex;
 bool ownerActive = false;
 
@@ -64,93 +40,6 @@ void acquireOwner() {
     ownerActive = true;
 }
 
-Object checked(PyObject* p) { if (!p) throw std::runtime_error(error()); return Object(p); }
-std::string string(PyObject* p) {
-    if (!p) throw std::runtime_error("missing Python string");
-    const char* result = PyUnicode_AsUTF8(p);
-    if (!result) throw std::runtime_error(error());
-    return result;
-}
-void put(PyObject* dict, const char* key, PyObject* owned) {
-    auto value = checked(owned);
-    if (PyDict_SetItemString(dict, key, value.get()) < 0) throw std::runtime_error(error());
-}
-Object terrainValue(const TerrainContact& contact) {
-    auto value = checked(PyDict_New());
-    put(value.get(), "ready", PyBool_FromLong(contact.ready ? 1 : 0));
-    put(value.get(), "hit", PyBool_FromLong(contact.hit ? 1 : 0));
-    put(value.get(), "material", PyLong_FromLong(contact.material));
-    put(value.get(), "position", Py_BuildValue("[fff]", contact.position[0], contact.position[1], contact.position[2]));
-    put(value.get(), "normal", Py_BuildValue("[fff]", contact.normal[0], contact.normal[1], contact.normal[2]));
-    put(value.get(), "direction", Py_BuildValue("[fff]", contact.direction[0], contact.direction[1], contact.direction[2]));
-    return value;
-}
-Object bladeValue(const BladeTrace& blade) {
-    auto value = checked(PyDict_New());
-    put(value.get(), "ready", PyBool_FromLong(blade.ready ? 1 : 0));
-    put(value.get(), "spanMs", PyLong_FromUnsignedLong(blade.spanMs));
-    put(value.get(), "length", PyFloat_FromDouble(blade.length));
-    put(value.get(), "base", Py_BuildValue("[fff]", blade.base[0], blade.base[1], blade.base[2]));
-    put(value.get(), "tip", Py_BuildValue("[fff]", blade.tip[0], blade.tip[1], blade.tip[2]));
-    auto contacts = checked(PyList_New(0));
-    for (const auto& hit : blade.contacts) {
-        if (!hit.contact.hit) continue;
-        auto contact = terrainValue(hit.contact);
-        put(contact.get(), "targetId", PyLong_FromUnsignedLong(hit.targetId));
-        put(contact.get(), "time", PyFloat_FromDouble(hit.time));
-        put(contact.get(), "along", PyFloat_FromDouble(hit.along));
-        if (PyList_Append(contacts.get(), contact.get()) < 0) throw std::runtime_error(error());
-    }
-    put(value.get(), "contacts", contacts.release());
-    return value;
-}
-Object contactJournal(const WorldSnapshot& world) {
-    auto journal = checked(PyDict_New());
-    put(journal.get(), "throughAt", PyLong_FromUnsignedLongLong(world.sampledAt));
-    put(journal.get(), "frames", PyLong_FromUnsignedLong(world.contactFrames));
-    put(journal.get(), "dropped", PyLong_FromUnsignedLong(world.droppedContacts));
-    put(journal.get(), "batchId", PyLong_FromUnsignedLong(world.contactBatchId));
-    auto events = checked(PyList_New(0));
-    for (const auto& event : world.contacts) {
-        auto value = terrainValue(event.hit.contact);
-        for (const auto& field : std::initializer_list<std::pair<const char*, uint32_t>>{
-            {"actorId", event.actorId}, {"targetId", event.hit.targetId}, {"entity", event.entity},
-            {"targetEntity", event.targetEntity}, {"state", event.state}, {"seq", event.sequence},
-            {"targetState", event.targetState}, {"targetSeq", event.targetSequence}})
-            put(value.get(), field.first, PyLong_FromUnsignedLong(field.second));
-        put(value.get(), "phaseAt", PyLong_FromUnsignedLongLong(event.phaseAt));
-        put(value.get(), "targetPhaseAt", PyLong_FromUnsignedLongLong(event.targetPhaseAt));
-        put(value.get(), "occurredAt", PyFloat_FromDouble(event.occurredAt));
-        put(value.get(), "along", PyFloat_FromDouble(event.hit.along));
-        put(value.get(), "weaponContact", PyBool_FromLong(event.weaponContact));
-        put(value.get(), "sourcePosition", Py_BuildValue("[fff]", event.sourcePosition[0], event.sourcePosition[1], event.sourcePosition[2]));
-        put(value.get(), "targetPosition", Py_BuildValue("[fff]", event.targetPosition[0], event.targetPosition[1], event.targetPosition[2]));
-        put(value.get(), "sourceHeading", PyFloat_FromDouble(event.sourceHeading));
-        put(value.get(), "targetHeading", PyFloat_FromDouble(event.targetHeading));
-        if (PyList_Append(events.get(), value.get()) < 0) throw std::runtime_error(error());
-    }
-    put(journal.get(), "events", events.release());
-    return journal;
-}
-PyObject* field(PyObject* object, const char* key) {
-    if (!object || !PyDict_Check(object)) throw std::runtime_error("Python field container is not a dict");
-    PyObject* value = PyDict_GetItemString(object, key);
-    if (!value) throw std::runtime_error(std::string("missing field: ") + key);
-    return value;
-}
-Object dashValue(const DashAttackProfile& profile) {
-    auto value = checked(PyDict_New());
-    put(value.get(), "enabled", PyBool_FromLong(profile.enabled ? 1 : 0));
-    put(value.get(), "weaponId", PyLong_FromLong(profile.weaponId));
-    put(value.get(), "weaponCategory", PyLong_FromLong(profile.weaponCategory));
-    for (const auto& entry : std::initializer_list<std::pair<const char*, uint32_t>>{
-        {"durationMs", profile.durationMs}, {"moveMs", profile.moveMs}, {"speedMilli", profile.speedMilli},
-        {"contactStartMs", profile.contactStartMs}, {"contactEndMs", profile.contactEndMs}, {"reboundMs", profile.reboundMs}})
-        put(value.get(), entry.first, PyLong_FromUnsignedLong(entry.second));
-    put(value.get(), "durationSource", PyUnicode_FromString(profile.durationSource.c_str()));
-    put(value.get(), "animationPath", PyUnicode_FromString(profile.animationPath.c_str()));
-    return value;
-}
 DashAttackProfile readDash(PyObject* value) {
     auto integer = [&](const char* key, long minimum, long maximum) {
         auto item = field(value, key);
@@ -207,6 +96,20 @@ MovementAnimationProfile readMovementAnimation(PyObject* value) {
         throw std::runtime_error("invalid movement animation gait order");
     return profile;
 }
+Object eventValue(const Event& event) {
+    if (!event.serialized.empty()) return checked(PyUnicode_FromString(event.serialized.c_str()));
+    auto dict = checked(PyDict_New());
+    put(dict.get(), "type", PyUnicode_FromString(event.type.c_str()));
+    put(dict.get(), "eventId", PyLong_FromUnsignedLongLong(event.id));
+    put(dict.get(), "role", PyUnicode_FromString(event.role.c_str()));
+    put(dict.get(), "name", PyUnicode_FromString(event.name.c_str()));
+    put(dict.get(), "connection", PyLong_FromUnsignedLongLong(event.connection));
+    put(dict.get(), "sequence", PyLong_FromUnsignedLongLong(event.sequence));
+    put(dict.get(), "serverTimeMs", PyLong_FromUnsignedLongLong(event.serverTime));
+    put(dict.get(), "command", PyLong_FromLong(event.command));
+    put(dict.get(), "body", PyBytes_FromStringAndSize(reinterpret_cast<const char*>(event.body.data()), static_cast<Py_ssize_t>(event.body.size())));
+    return dict;
+}
 PyObject* tupleField(PyObject* tuple, Py_ssize_t index) {
     auto value = PyTuple_GetItem(tuple, index);
     if (!value) throw std::runtime_error("missing Python tuple field");
@@ -255,6 +158,7 @@ PythonHost::PythonHost(const fs::path& root, const fs::path& cache) {
     ownerLease.transfer();
 }
 PythonHost::~PythonHost() {
+    context_.reset();
     if (runtime_) { Object closed(PyObject_CallMethod(runtime_, "close", nullptr)); PyErr_Clear(); }
     Py_XDECREF(runtime_); Py_XDECREF(module_); Py_FinalizeEx();
     releaseOwner();
@@ -264,63 +168,16 @@ std::string PythonHost::encode(PyObject* object) {
 }
 std::string PythonHost::context(const Config& config, uint64_t now, const std::vector<uint64_t>& connections,
                                 const WorldSnapshot& world) {
-    auto dict = checked(PyDict_New());
-    put(dict.get(), "nowMs", PyLong_FromUnsignedLongLong(now));
-    put(dict.get(), "advertisedAddress", PyUnicode_FromString(config.advertisedAddress.c_str()));
-    put(dict.get(), "instancePort", PyLong_FromLong(config.ports[2]));
-    put(dict.get(), "playerName", PyUnicode_FromString(config.playerName.c_str()));
-    put(dict.get(), "runtimeMovement", PyBool_FromLong(config.runtimeMovement ? 1 : 0));
-    if (config.roomGateway) {
-        auto gateway = checked(Py_BuildValue("{s:s}", "accountId", config.roomGateway->accountId.c_str()));
-        put(dict.get(), "roomGateway", gateway.release());
-    }
-    put(dict.get(), "clientDirectory", PyUnicode_FromWideChar(config.clientDirectory.c_str(), -1));
-    put(dict.get(), "dashAttack", dashValue(config.dashAttack).release());
-    auto snapshot = checked(PyDict_New());
-    put(snapshot.get(), "ready", PyBool_FromLong(world.ready ? 1 : 0));
-    put(snapshot.get(), "sampledAt", PyLong_FromUnsignedLongLong(world.sampledAt));
-    put(snapshot.get(), "instanceStartedAt", PyLong_FromUnsignedLongLong(world.instanceStartedAt));
-    if (world.contactsReady) put(snapshot.get(), "contactJournal", contactJournal(world).release());
-    put(snapshot.get(), "player", Py_BuildValue("[fff]", world.player[0], world.player[1], world.player[2]));
-    put(snapshot.get(), "bot", Py_BuildValue("[fff]", world.bot[0], world.bot[1], world.bot[2]));
-    put(snapshot.get(), "playerHeading", PyFloat_FromDouble(world.playerHeading));
-    put(snapshot.get(), "botHeading", PyFloat_FromDouble(world.botHeading));
-    auto allActors = checked(PyDict_New());
-    auto blades = checked(PyDict_New());
-    for (size_t rid = 1; rid <= world.actors.size(); ++rid) {
-        const auto& actor = world.actors[rid - 1];
-        put(blades.get(), std::to_string(rid).c_str(), bladeValue(actor.blade).release());
-        auto entry = checked(PyDict_New());
-        put(entry.get(), "ready", PyBool_FromLong(actor.ready ? 1 : 0));
-        put(entry.get(), "position", Py_BuildValue("[fff]", actor.position[0], actor.position[1], actor.position[2]));
-        put(entry.get(), "heading", PyFloat_FromDouble(actor.heading));
-        put(entry.get(), "targetId", PyLong_FromUnsignedLong(actor.targetId));
-        put(entry.get(), "entity", PyLong_FromUnsignedLong(actor.entity));
-        put(entry.get(), "airborne", PyBool_FromLong(actor.airborne));
-        put(entry.get(), "jumping", PyBool_FromLong(actor.jumping));
-        put(entry.get(), "state", PyLong_FromUnsignedLong(actor.state));
-        put(entry.get(), "seq", PyLong_FromUnsignedLong(actor.sequence));
-        put(entry.get(), "phaseAt", PyLong_FromUnsignedLongLong(actor.phaseAt));
-        auto probes = checked(PyDict_New());
-        for (size_t i = 0; i < actor.terrain.size(); ++i)
-            put(probes.get(), i == 0 ? "forward" : "target", terrainValue(actor.terrain[i]).release());
-        put(entry.get(), "terrain", probes.release());
-        auto targets = checked(PyDict_New());
-        for (size_t target = 0; target < actor.targetTerrain.size(); ++target)
-            if (actor.targetTerrain[target].ready)
-                put(targets.get(), std::to_string(target + 1).c_str(), terrainValue(actor.targetTerrain[target]).release());
-        put(entry.get(), "targetTerrain", targets.release());
-        put(allActors.get(), std::to_string(rid).c_str(), entry.release());
-    }
-    put(snapshot.get(), "actors", allActors.release());
-    put(snapshot.get(), "blades", blades.release());
-    put(dict.get(), "botWorld", snapshot.release());
-    auto list = checked(PyList_New(0));
-    for (auto id : connections) {
-        auto value = checked(PyLong_FromUnsignedLongLong(id));
-        if (PyList_Append(list.get(), value.get()) < 0) throw std::runtime_error(error());
-    }
-    put(dict.get(), "connections", list.release()); return encode(dict.get());
+    PythonContext context(config);
+    PublishedWorld publication{1, world};
+    return encode(context.make(now, connections, &publication, true).get());
+}
+std::string PythonHost::initializeContext(const Config& config, uint64_t now) {
+    auto context = std::make_unique<PythonContext>(config);
+    // Configuration is immutable for the lifetime of this server.
+    auto initial = encode(context->make(now, {}, nullptr, false).get());
+    context_ = std::move(context);
+    return initial;
 }
 std::string PythonHost::create(const std::string& context) {
     auto value = checked(PyObject_CallMethod(runtime_, "create", "s", context.c_str())); return string(value.get());
@@ -331,6 +188,18 @@ ResourceCheck PythonHost::checkResources(const fs::path& directory, const std::s
     ResourceCheck resources;
     resources.dashAttack = readDash(field(result.get(), "dashAttack"));
     resources.movementAnimation = readMovementAnimation(field(result.get(), "movementAnimation"));
+    auto profiles = field(result.get(), "combatProfiles");
+    if (!PyList_CheckExact(profiles) || PyList_Size(profiles) < 1 || PyList_Size(profiles) > 2048)
+        throw std::runtime_error("invalid combat profile list");
+    for (Py_ssize_t i = 0; i < PyList_Size(profiles); ++i) {
+        auto item = PyList_GetItem(profiles, i);
+        auto hero = field(item, "heroId");
+        if (!PyLong_CheckExact(hero)) throw std::runtime_error("invalid combat profile hero");
+        const auto heroId = PyLong_AsLong(hero);
+        if (PyErr_Occurred() || heroId <= 0) throw std::runtime_error("invalid combat profile hero");
+        resources.combatProfiles.push_back({static_cast<int32_t>(heroId),
+            readMovementAnimation(field(item, "movementAnimation")), readDash(field(item, "dashAttack"))});
+    }
     auto diagnostics = field(result.get(), "diagnostics");
     if (!PyList_Check(diagnostics)) throw std::runtime_error("invalid resource diagnostics list");
     for (Py_ssize_t i = 0; i < PyList_Size(diagnostics); ++i) {
@@ -371,25 +240,35 @@ std::string PythonHost::switchVersion(const std::string& state, bool rollback) {
     auto value = checked(PyObject_CallMethod(runtime_, "switch", "si", state.c_str(), rollback ? 1 : 0)); return string(value.get());
 }
 Transition PythonHost::dispatch(const Event& event, const std::string& state, const std::string& context) {
-    std::string serialized = event.serialized;
-    if (serialized.empty()) {
-        auto dict = checked(PyDict_New());
-        put(dict.get(), "type", PyUnicode_FromString(event.type.c_str()));
-        put(dict.get(), "eventId", PyLong_FromUnsignedLongLong(event.id));
-        put(dict.get(), "role", PyUnicode_FromString(event.role.c_str()));
-        put(dict.get(), "name", PyUnicode_FromString(event.name.c_str()));
-        put(dict.get(), "connection", PyLong_FromUnsignedLongLong(event.connection));
-        put(dict.get(), "sequence", PyLong_FromUnsignedLongLong(event.sequence));
-        put(dict.get(), "serverTimeMs", PyLong_FromUnsignedLongLong(event.serverTime));
-        put(dict.get(), "receivedAtMs", PyLong_FromUnsignedLongLong(event.receivedAt));
-        put(dict.get(), "command", PyLong_FromLong(event.command));
-        put(dict.get(), "body", PyBytes_FromStringAndSize(reinterpret_cast<const char*>(event.body.data()), static_cast<Py_ssize_t>(event.body.size())));
-        serialized = encode(dict.get());
-    }
+    auto object = eventValue(event);
+    auto serialized = event.serialized.empty() ? encode(object.get()) : event.serialized;
     auto value = checked(PyObject_CallMethod(runtime_, "dispatch", "sss", serialized.c_str(), state.c_str(), context.c_str()));
-    if (!PyTuple_Check(value.get()) || (PyTuple_Size(value.get()) < 4 || PyTuple_Size(value.get()) > 6)) throw std::runtime_error("invalid bridge transition");
-    Transition result; result.state = string(tupleField(value.get(), 0));
-    auto sends = tupleField(value.get(), 1);
+    return readTransition(value.get());
+}
+Transition PythonHost::dispatchNative(const Event& event, const std::string& state, uint64_t now,
+                                      const std::vector<uint64_t>& connections, const PublishedWorld* world) {
+    if (!context_) throw std::runtime_error("Python context not initialized");
+    const auto started = std::chrono::steady_clock::now();
+    auto context = context_->make(now, connections, world, event.type == "world");
+    const auto prepared = std::chrono::steady_clock::now();
+    auto object = eventValue(event);
+    auto value = checked(PyObject_CallMethod(runtime_, "dispatchNative", "OsO", object.get(), state.c_str(), context.get()));
+    if (!PyTuple_Check(value.get()) || PyTuple_Size(value.get()) != 9)
+        throw std::runtime_error("invalid native transition");
+    const auto returned = std::chrono::steady_clock::now();
+    auto result = readTransition(value.get());
+    result.timing.contextMs = std::chrono::duration<double, std::milli>(prepared - started).count();
+    result.timing.resultMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - returned).count();
+    result.timing.contextRebuilt = context_->rebuilt(); result.timing.worldVersion = context_->version();
+    if (!context_->observation().empty()) result.logs.push_back({DiagnosticLogLevel::Debug, context_->observation()});
+    return result;
+}
+Transition PythonHost::readTransition(PyObject* value) {
+    if (!PyTuple_Check(value) || (PyTuple_Size(value) != 4 && PyTuple_Size(value) != 5
+            && PyTuple_Size(value) != 6 && PyTuple_Size(value) != 9))
+        throw std::runtime_error("invalid bridge transition");
+    Transition result; result.state = string(tupleField(value, 0));
+    auto sends = tupleField(value, 1);
     if (!PyList_Check(sends)) throw std::runtime_error("invalid transition send list");
     auto sendCount = PyList_Size(sends);
     if (sendCount < 0) throw std::runtime_error(error());
@@ -408,7 +287,7 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
         message.body.assign(pointer, pointer + length);
         message.reason = string(field(item, "reason")); result.send.push_back(std::move(message));
     }
-    auto timers = tupleField(value.get(), 2);
+    auto timers = tupleField(value, 2);
     if (!PyList_Check(timers)) throw std::runtime_error("invalid transition timer list");
     auto timerCount = PyList_Size(timers);
     if (timerCount < 0) throw std::runtime_error(error());
@@ -419,7 +298,7 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
         result.timers.push_back({string(tupleField(item, 0)), PyLong_AsLongLong(tupleField(item, 1)),
             string(tupleField(item, 2)), PyLong_AsUnsignedLongLong(tupleField(item, 3))});
     }
-    auto logs = tupleField(value.get(), 3);
+    auto logs = tupleField(value, 3);
     if (!PyList_Check(logs)) throw std::runtime_error("invalid transition log list");
     auto logCount = PyList_Size(logs);
     if (logCount < 0) throw std::runtime_error(error());
@@ -428,9 +307,30 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
         if (!item || !PyDict_Check(item)) throw std::runtime_error("invalid transition log item");
         result.logs.push_back({parseDiagnosticLevel(string(field(item, "level"))), string(field(item, "message"))});
     }
-    if (PyTuple_Size(value.get()) >= 5) {
-        auto effects = tupleField(value.get(), 4);
-        if (!PyList_Check(effects) || PyList_Size(effects) > 8) throw std::runtime_error("invalid room gateway effects");
+    if (PyTuple_Size(value) == 9) {
+        result.phase = string(tupleField(value, 4));
+        auto timing = tupleField(value, 5);
+        auto duration = [&](const char* name) {
+            auto number = PyFloat_AsDouble(field(timing, name));
+            if (PyErr_Occurred()) throw std::runtime_error(error());
+            if (!std::isfinite(number) || number < 0) throw std::runtime_error("invalid dispatch timing");
+            return number;
+        };
+        result.timing.decodeMs = duration("decodeMs"); result.timing.handlerMs = duration("handlerMs");
+        result.timing.validationMs = duration("validationMs"); result.timing.encodeMs = duration("encodeMs");
+    }
+    if (PyTuple_Size(value) == 9 && tupleField(value, 6) != Py_None) {
+        auto request = tupleField(value, 6);
+        result.titleRequest.requestId = PyLong_AsUnsignedLongLong(field(request, "requestId"));
+        result.titleRequest.epoch = PyLong_AsUnsignedLongLong(field(request, "epoch"));
+        result.titleRequest.connection = PyLong_AsUnsignedLongLong(field(request, "connection"));
+        result.titleRequest.titleId = static_cast<uint32_t>(PyLong_AsUnsignedLong(field(request, "titleId")));
+    }
+    const auto size = PyTuple_Size(value);
+    if (size == 5 || size == 6 || size == 9) {
+        auto effects = tupleField(value, size == 9 ? 7 : 4);
+        if (!PyList_Check(effects) || PyList_Size(effects) > 8)
+            throw std::runtime_error("invalid room gateway effects");
         for (Py_ssize_t i = 0; i < PyList_Size(effects); ++i) {
             auto item = PyList_GetItem(effects, i);
             GatewayEffect effect;
@@ -441,9 +341,10 @@ Transition PythonHost::dispatch(const Event& event, const std::string& state, co
             result.gateway.push_back(std::move(effect));
         }
     }
-    if (PyTuple_Size(value.get()) == 6) {
-        auto effects = tupleField(value.get(), 5);
-        if (!PyList_Check(effects) || PyList_Size(effects) > 19) throw std::runtime_error("invalid remote motion effects");
+    if (size == 6 || size == 9) {
+        auto effects = tupleField(value, size == 9 ? 8 : 5);
+        if (!PyList_Check(effects) || PyList_Size(effects) > 19)
+            throw std::runtime_error("invalid remote motion effects");
         for (Py_ssize_t i = 0; i < PyList_Size(effects); ++i) {
             auto item = PyList_GetItem(effects, i);
             RemoteMotion motion;

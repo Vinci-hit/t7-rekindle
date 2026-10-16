@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def load_package_module():
-    spec = importlib.util.spec_from_file_location("t7_rekindle_package", ROOT / "scripts/package.py")
+    spec = importlib.util.spec_from_file_location("t7r_rekindle_package", ROOT / "scripts/package.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -23,25 +23,25 @@ def test_package_manifest_excludes_client(tmp_path, business_directory):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business/scripts").mkdir(parents=True)
     (source / "src/Business/scripts/__init__.py").write_text("API_VERSION=1\nSTATE_VERSION=1\n", encoding="utf-8")
     (source / "src/Business/news").mkdir()
     (source / "src/Business/news/index.html").write_text("<title>战场快讯</title>", encoding="utf-8")
-    stale = source / "artifacts/bin/T7.Desktop/x64/Release/net48" / business_directory
+    stale = source / "artifacts/bin/T7R.Desktop/x64/Release/net48" / business_directory
     (stale / "scripts/__pycache__").mkdir(parents=True)
     (stale / "scripts/__init__.py").write_text("stale = True\n", encoding="utf-8")
     (stale / "scripts/removed.py").write_text("stale = True\n", encoding="utf-8")
     (stale / "scripts/__pycache__/removed.pyc").write_bytes(b"stale bytecode")
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7.Core.dll").write_bytes(b"core")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7.NativeBridge.dll").write_bytes(b"bridge")
-    harness = source / "artifacts/bin/T7.ManagedHarness/x64/Release/net48"
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7R.Core.dll").write_bytes(b"core")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    harness = source / "artifacts/bin/T7R.ManagedHarness/x64/Release/net48"
     harness.mkdir(parents=True)
-    (harness / "T7.ManagedHarness.exe").write_bytes(b"test-only")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/runtimes").mkdir()
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/runtimes/managed.dll").write_bytes(b"managed")
+    (harness / "T7R.ManagedHarness.exe").write_bytes(b"test-only")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/runtimes").mkdir()
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/runtimes/managed.dll").write_bytes(b"managed")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     for relative in ("src/Runtime", "scripts", "tests", ".local", "client", "work"):
         directory = source / relative
@@ -56,9 +56,9 @@ def test_package_manifest_excludes_client(tmp_path, business_directory):
     assert manifest["minimumWindowsBuild"] == "10.0.19041"
     assert manifest["rawWireCaptureDefault"] is False
     assert manifest["clientIncluded"] is False
-    assert "T7.NativeBridge.dll" in manifest["files"]
-    assert "T7.Core.dll" in manifest["files"]
-    assert "T7.ManagedHarness.exe" not in manifest["files"]
+    assert "T7R.NativeBridge.dll" in manifest["files"]
+    assert "T7R.Core.dll" in manifest["files"]
+    assert "T7R.ManagedHarness.exe" not in manifest["files"]
     assert "runtimes/managed.dll" in manifest["files"]
     assert "Business/scripts/__init__.py" in manifest["files"]
     assert (output / "Business/scripts/__init__.py").read_bytes() == (source / "src/Business/scripts/__init__.py").read_bytes()
@@ -101,10 +101,10 @@ def test_python_runtime_dlls_move_to_package_root(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     archive = tmp_path / "python.zip"
     python_archive(archive, module)
@@ -150,13 +150,15 @@ def test_windows_archive_name_collisions_are_rejected(tmp_path):
                 raise AssertionError(f"unsafe Windows archive name was accepted: {entries[1]}")
 
 
-def test_archive_cannot_embed_product_control_files(tmp_path):
+@pytest.mark.parametrize("name", ["T7-Rekindle.exe", "T7R.Core.dll", "T7R.NativeBridge.dll",
+                                  "T7.Core.dll", "T7.NativeBridge.dll"])
+def test_archive_cannot_embed_product_control_files(tmp_path, name):
     module = load_package_module()
     destination = tmp_path / "python"
     destination.mkdir()
     archive = tmp_path / "product-files.zip"
     with zipfile.ZipFile(archive, "w") as value:
-        value.writestr("T7-Rekindle.exe", b"not python")
+        value.writestr(name, b"not python")
     with zipfile.ZipFile(archive) as value:
         try:
             module.safe_archive_members(value, destination)
@@ -208,8 +210,8 @@ def test_managed_output_cannot_replace_native_bridge(tmp_path):
     destination = tmp_path / "package"
     source.mkdir()
     destination.mkdir()
-    (source / "T7.NativeBridge.dll").write_bytes(b"stale")
-    (destination / "T7.NativeBridge.dll").write_bytes(b"native")
+    (source / "T7R.NativeBridge.dll").write_bytes(b"stale")
+    (destination / "T7R.NativeBridge.dll").write_bytes(b"native")
     try:
         module.copy_product_output(source, destination)
     except ValueError:
@@ -224,20 +226,20 @@ def test_identical_native_bridge_copy_is_not_a_collision(tmp_path):
     destination = tmp_path / "package"
     source.mkdir()
     destination.mkdir()
-    (source / "T7.NativeBridge.dll").write_bytes(b"native")
-    (destination / "T7.NativeBridge.dll").write_bytes(b"native")
+    (source / "T7R.NativeBridge.dll").write_bytes(b"native")
+    (destination / "T7R.NativeBridge.dll").write_bytes(b"native")
     module.copy_product_output(source, destination)
-    assert (destination / "T7.NativeBridge.dll").read_bytes() == b"native"
+    assert (destination / "T7R.NativeBridge.dll").read_bytes() == b"native"
 
 
 def test_failed_package_does_not_leave_partial_output(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     archive = tmp_path / "incomplete.zip"
     with zipfile.ZipFile(archive, "w") as value:
@@ -253,15 +255,16 @@ def test_failed_package_does_not_leave_partial_output(tmp_path):
     assert not output.exists()
 
 
-def test_forbidden_product_names_are_case_insensitive(tmp_path):
+@pytest.mark.parametrize("name", ["SeRvEr.ExE", "T7.CoRe.DlL", "t7.NATIVEbridge.dll"])
+def test_forbidden_product_names_are_case_insensitive(tmp_path, name):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/SeRvEr.ExE").write_bytes(b"server")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48" / name).write_bytes(b"forbidden")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     module.ROOT = source
     try:
@@ -269,17 +272,29 @@ def test_forbidden_product_names_are_case_insensitive(tmp_path):
     except ValueError:
         pass
     else:
-        raise AssertionError("case-variant server product name was accepted")
+        raise AssertionError("case-variant forbidden product name was accepted")
+
+
+@pytest.mark.parametrize("name", ["T7.Core.dll", "T7.NativeBridge.dll"])
+def test_managed_output_rejects_old_library_names(tmp_path, name):
+    module = load_package_module()
+    source, destination = tmp_path / "managed", tmp_path / "package"
+    source.mkdir()
+    destination.mkdir()
+    (source / name).write_bytes(b"old library")
+    with pytest.raises(ValueError, match="forbidden product file"):
+        module.copy_product_output(source, destination)
+    assert not list(destination.iterdir())
 
 
 def test_manifest_hashes_are_verified(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     module.ROOT = source
     output = module.package(tmp_path / "output")
@@ -297,10 +312,10 @@ def test_release_verification_requires_release_manifest(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     module.ROOT = source
     output = module.package(tmp_path / "output")
@@ -316,10 +331,10 @@ def test_release_packaging_requires_runtime_and_license(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48/T7-Rekindle.exe").write_bytes(b"desktop")
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     module.ROOT = source
     try:
@@ -345,13 +360,13 @@ def test_release_packaging_accepts_complete_fixture(tmp_path):
     module = load_package_module()
     source = tmp_path / "source"
     (source / "artifacts/native/bin/x64/Release").mkdir(parents=True)
-    (source / "artifacts/bin/T7.Desktop/x64/Release/net48").mkdir(parents=True)
+    (source / "artifacts/bin/T7R.Desktop/x64/Release/net48").mkdir(parents=True)
     (source / "src/Business").mkdir(parents=True)
-    (source / "artifacts/native/bin/x64/Release/T7.NativeBridge.dll").write_bytes(b"bridge")
+    (source / "artifacts/native/bin/x64/Release/T7R.NativeBridge.dll").write_bytes(b"bridge")
     for name in module.REQUIRED_RELEASE_FILES:
-        if name in {"T7.NativeBridge.dll", "THIRD-PARTY.txt"}:
+        if name in {"T7R.NativeBridge.dll", "THIRD-PARTY.txt"}:
             continue
-        (source / "artifacts/bin/T7.Desktop/x64/Release/net48" / name).write_bytes(name.encode("utf-8"))
+        (source / "artifacts/bin/T7R.Desktop/x64/Release/net48" / name).write_bytes(name.encode("utf-8"))
     (source / "THIRD-PARTY.txt").write_text("notice\n", encoding="utf-8")
     (source / "LICENSE").write_text("license\n", encoding="utf-8")
     archive = tmp_path / "python.zip"

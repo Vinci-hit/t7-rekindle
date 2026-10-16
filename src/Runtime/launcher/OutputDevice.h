@@ -1,7 +1,7 @@
 #pragma once
 #include "ClientAdaptation.h"
 
-namespace t7 {
+namespace t7r {
 struct OutputDevice {
     uint32_t ordinal = 0;
     GUID identifier{};

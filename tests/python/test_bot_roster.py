@@ -40,6 +40,8 @@ def test_invalid_spawn_resource_is_rejected(mutation):
 
 @pytest.fixture
 def multi(spawnPoints, monkeypatch):
+    from damage_fixture import install
+    install(monkeypatch)
     flow = flowAt()
     roster.assemble(flow)
     nav = NavMesh.fromPolygons([[(-100, -100, 0), (100, -100, 0), (100, 100, 0), (-100, 100, 0)]])

@@ -5,7 +5,7 @@ using System.Text;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public sealed class AccountSessionStore : IAccountSessionStore
     {

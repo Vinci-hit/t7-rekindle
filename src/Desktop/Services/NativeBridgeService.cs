@@ -6,9 +6,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using T7.Rekindle.Core;
+using T7R.Core;
 
-namespace T7.Rekindle.Desktop.Services
+namespace T7R.Desktop.Services
 {
     public interface INativeBridge
     {
@@ -402,7 +402,7 @@ namespace T7.Rekindle.Desktop.Services
                 _disposed = true;
                 _session?.Dispose();
                 _session = null;
-                // t7_native_release is deliberately non-blocking: the native
+                // t7r_native_release is deliberately non-blocking: the native
                 // worker may still execute code inside this DLL while it finishes
                 // client/Python/socket cleanup.  Keep the module loaded until the
                 // host process exits instead of unloading code out from under it.
@@ -654,25 +654,27 @@ namespace T7.Rekindle.Desktop.Services
 
             private NativeMethods(IntPtr module)
             {
-                SetLogLevel = Resolve<LogLevelDelegate>(module, "t7_native_set_log_level");
-                SetOutputDevice = Resolve<OutputDeviceDelegate>(module, "t7_native_set_output_device");
-                GetGraphics = Resolve<GraphicsDelegate>(module, "t7_native_get_graphics");
-                ApplyGraphics = Resolve<GraphicsDelegate>(module, "t7_native_apply_graphics");
-                GetAudio = Resolve<AudioDelegate>(module, "t7_native_get_audio");
-                ApplyAudio = Resolve<AudioDelegate>(module, "t7_native_apply_audio");
-                GetAbi = Resolve<GetAbiDelegate>(module, "t7_native_get_abi");
-                Create = Resolve<CreateDelegate>(module, "t7_native_create");
-                Release = Resolve<ReleaseDelegate>(module, "t7_native_release");
-                SubmitCheck = Resolve<SubmitPathDelegate>(module, "t7_native_submit_check");
-                SubmitStart = Resolve<SubmitPathDelegate>(module, "t7_native_submit_start");
-                SubmitStartNamed = Resolve<SubmitStartNamedDelegate>(module, "t7_native_submit_start_named");
-                SubmitStartOptions = Resolve<SubmitStartOptionsDelegate>(module, "t7_native_submit_start_options");
-                SubmitStop = Resolve<SubmitStopDelegate>(module, "t7_native_submit_stop");
-                Cancel = Resolve<CancelDelegate>(module, "t7_native_cancel");
-                GetSnapshot = Resolve<GetSnapshotDelegate>(module, "t7_native_get_snapshot");
-                GetOperation = Resolve<GetOperationDelegate>(module, "t7_native_get_operation");
-                GetError = Resolve<GetErrorDelegate>(module, "t7_native_get_error");
-                ReadLogs = Resolve<ReadLogsDelegate>(module, "t7_native_read_logs");
+                SetLogLevel = Resolve<LogLevelDelegate>(module, "t7r_native_set_log_level");
+                SetOutputDevice = Resolve<OutputDeviceDelegate>(module, "t7r_native_set_output_device");
+                GetGraphics = Resolve<GraphicsDelegate>(module, "t7r_native_get_graphics");
+                ApplyGraphics = Resolve<GraphicsDelegate>(module, "t7r_native_apply_graphics");
+                GetAudio = Resolve<AudioDelegate>(module, "t7r_native_get_audio");
+                ApplyAudio = Resolve<AudioDelegate>(module, "t7r_native_apply_audio");
+                GetAbi = Resolve<GetAbiDelegate>(module, "t7r_native_get_abi");
+                Create = Resolve<CreateDelegate>(module, "t7r_native_create");
+                Release = Resolve<ReleaseDelegate>(module, "t7r_native_release");
+                SubmitCheck = Resolve<SubmitPathDelegate>(module, "t7r_native_submit_check");
+                SubmitStart = Resolve<SubmitPathDelegate>(module, "t7r_native_submit_start");
+                SubmitStartNamed = Resolve<SubmitStartNamedDelegate>(module, "t7r_native_submit_start_named");
+                SubmitStartOptions = Resolve<SubmitStartOptionsDelegate>(module, "t7r_native_submit_start_options");
+                SubmitStop = Resolve<SubmitStopDelegate>(module, "t7r_native_submit_stop");
+                Cancel = Resolve<CancelDelegate>(module, "t7r_native_cancel");
+                GetSnapshot = Resolve<GetSnapshotDelegate>(module, "t7r_native_get_snapshot");
+                GetOperation = Resolve<GetOperationDelegate>(module, "t7r_native_get_operation");
+                GetError = Resolve<GetErrorDelegate>(module, "t7r_native_get_error");
+                ReadLogs = Resolve<ReadLogsDelegate>(module, "t7r_native_read_logs");
+                PublishTitles = Resolve<PublishTitlesDelegate>(module, "t7r_native_publish_titles");
+                GetTitleRequest = Resolve<GetTitleRequestDelegate>(module, "t7r_native_get_title_request");
             }
 
             internal static NativeMethods Load(IntPtr module)

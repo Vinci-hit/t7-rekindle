@@ -66,7 +66,7 @@ def script_bytes(directory):
 
 
 def test_desktop_imports_business_copy_rules():
-    project = ET.parse(ROOT / "src/Desktop/T7.Desktop.csproj").getroot()
+    project = ET.parse(ROOT / "src/Desktop/T7R.Desktop.csproj").getroot()
     assert len([item for item in project.findall("Import")
                 if item.get("Project") == "BusinessScripts.targets"]) == 1
 

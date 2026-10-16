@@ -6,10 +6,10 @@ using System.Windows;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using T7.Rekindle.Core;
-using T7.Rekindle.Desktop.Services;
+using T7R.Core;
+using T7R.Desktop.Services;
 
-namespace T7.Rekindle.Desktop.ViewModels
+namespace T7R.Desktop.ViewModels
 {
     public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
@@ -63,9 +63,11 @@ namespace T7.Rekindle.Desktop.ViewModels
             Func<DateTime> announcementUtcNow = null,
             PreviewAccessService previewAccess = null,
             Func<PreviewAccessViewModel, bool> requestPreviewAccess = null,
-            Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> loadUpdateHistory = null)
+            Func<UpdateChannel, CancellationToken, Task<IReadOnlyList<LauncherHistoryEntry>>> loadUpdateHistory = null,
+            AccountViewModel account = null)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
+            Account = account ?? AccountViewModel.CreateDefault();
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             GameServer = new GameServerViewModel(_settings.StorageDirectory);
             _inspectDirectory = inspectDirectory;
@@ -77,9 +79,6 @@ namespace T7.Rekindle.Desktop.ViewModels
             _readGraphicsResolutions = readOutputDeviceResolutions ?? (readGraphicsResolutions == null
                 ? new Func<Guid, IReadOnlyList<string>>(Direct3DEnvironment.ReadResolutions) : _ => readGraphicsResolutions());
             var loaded = initial ?? new UserSettings();
-            _selectedLogLevel = DiagnosticLogLevels.Parse(loaded.LogLevel);
-            _bridge.SetLogLevel(_selectedLogLevel);
-            LogService.SetMinimumLevel(_selectedLogLevel);
             _clientDirectory = loaded.ClientDirectory;
             _playerName = loaded.PlayerName;
             _savedDirectory = loaded.ClientDirectory;
@@ -95,6 +94,10 @@ namespace T7.Rekindle.Desktop.ViewModels
             _previewAccess = previewAccess ?? new PreviewAccessService(settings.DirectoryPath);
             _requestPreviewAccess = requestPreviewAccess ?? DesktopInteraction.RequestPreviewAccess;
             _updateChannel = _previewAccess.InitializeChannel(settings, out var channelWarning);
+            _selectedLogLevel = _updateChannel == UpdateChannel.Preview
+                ? DiagnosticLogLevel.Debug : DiagnosticLogLevels.Parse(loaded.LogLevel);
+            _bridge.SetLogLevel(_selectedLogLevel);
+            LogService.SetMinimumLevel(_selectedLogLevel);
             _previewAccessStatus = _previewAccess.StatusText;
             _preferenceError = channelWarning;
             _settingsFeedback = string.Empty;
@@ -218,7 +221,7 @@ namespace T7.Rekindle.Desktop.ViewModels
         public string CancelButtonText => _activeKind == OperationKind.Check ? "取消检查" : "取消启动";
         public AboutViewModel About { get; }
         public GameServerViewModel GameServer { get; }
-        public AccountViewModel Account { get; } = AccountViewModel.CreateDefault();
+        public AccountViewModel Account { get; }
         internal Task ValidationTask { get; private set; }
         public RelayCommand BrowseCommand { get; }
         public IAsyncRelayCommand CheckCommand { get; }

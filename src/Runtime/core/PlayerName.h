@@ -2,7 +2,7 @@
 #include "Common.h"
 #include <algorithm>
 
-namespace t7 {
+namespace t7r {
 inline bool validPlayerName(const std::string& value) {
     try {
         const auto text = wide(value);
