@@ -8,8 +8,8 @@ use crate::{
     motion::{Motion, Pose},
     round::{FinalRank, RoundResult},
 };
-use serde::{Deserialize, Serialize};
 use crate::{pve_ai, pve_brain, pve_steering};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub const FIRST_MONSTER_ID: u32 = 0x40000001;
@@ -563,7 +563,8 @@ impl Pve {
             } else if self.scenario.encounter_order == EncounterOrder::Sequential {
                 Some(self.wave)
             } else if self.scenario.encounter_order == EncounterOrder::Proximity {
-                (0..self.scenario.encounters.len()).find(|index| !self.visited_encounters.contains(index))
+                (0..self.scenario.encounters.len())
+                    .find(|index| !self.visited_encounters.contains(index))
             } else {
                 None
             };
@@ -822,9 +823,12 @@ impl Pve {
                 // Each reached region emits independently of kills in older regions.
                 self.remaining_to_spawn
             } else {
-                self.scenario.spawn_schedule.as_ref().map_or(self.remaining_to_spawn, |schedule| {
-                    schedule.batch_size.min(self.remaining_to_spawn)
-                })
+                self.scenario
+                    .spawn_schedule
+                    .as_ref()
+                    .map_or(self.remaining_to_spawn, |schedule| {
+                        schedule.batch_size.min(self.remaining_to_spawn)
+                    })
             };
             // A monster is only spawned into a free enemy slot; the rest of the wave waits for one.
             let free = (crate::limits::ENEMY_FIRST_RID..crate::limits::FRIENDLY_FIRST_RID)
@@ -866,7 +870,10 @@ impl Pve {
                     .scenario
                     .navigation
                     .as_ref()
-                    .and_then(|nav| nav.project(spread).or_else(|| nav.project(points[point_index])))
+                    .and_then(|nav| {
+                        nav.project(spread)
+                            .or_else(|| nav.project(points[point_index]))
+                    })
                     .unwrap_or(spread);
                 let birth = encounter
                     .and_then(|entry| entry.birth)
@@ -939,7 +946,8 @@ impl Pve {
             );
             changed |= count > 0;
         }
-        self.target_attack_deadlines.retain(|_, deadline| *deadline > now);
+        self.target_attack_deadlines
+            .retain(|_, deadline| *deadline > now);
         let mut routes_left = ROUTES_PER_TICK;
         // Positions at the start of the step: every monster steers against the same crowd snapshot.
         let crowd: Vec<(u32, [f32; 3])> = self
@@ -1081,7 +1089,8 @@ impl Pve {
                         routes_left -= 1;
                         monster.route = nav.route(monster.view.position, goal).into();
                         monster.next_route_at = now.saturating_add(
-                            ROUTE_REFRESH_MS + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
+                            ROUTE_REFRESH_MS
+                                + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
                         );
                     }
                     while monster
@@ -1119,7 +1128,10 @@ impl Pve {
                 }
                 let axes = command.axes;
                 let wants_to_move = idle && (length > ATTACK_RANGE + 0.15 || !same_floor);
-                match monster.stuck.observe(now, monster.view.position, wants_to_move) {
+                match monster
+                    .stuck
+                    .observe(now, monster.view.position, wants_to_move)
+                {
                     pve_ai::Stuck::Moving => {}
                     pve_ai::Stuck::Detour => {
                         monster.route.clear();
@@ -1168,7 +1180,8 @@ impl Pve {
                     }
                     monster.next_attack = now.saturating_add(ATTACK_COOLDOWN_MS);
                     monster.attack_target = Some(target_id);
-                    self.target_attack_deadlines.insert(target_id, now.saturating_add(TARGET_ATTACK_SPACING_MS));
+                    self.target_attack_deadlines
+                        .insert(target_id, now.saturating_add(TARGET_ATTACK_SPACING_MS));
                 }
                 if let Some(action) = state.filter(|s| {
                     s.state == 238
@@ -1226,7 +1239,10 @@ impl Pve {
                     running: false,
                     motion: None,
                 };
-                if motion.input(id, monster.input_seq, stationary, now).is_err() {
+                if motion
+                    .input(id, monster.input_seq, stationary, now)
+                    .is_err()
+                {
                     monster.route.clear();
                 }
             }
@@ -1293,7 +1309,6 @@ impl Pve {
 fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
-
 
 fn attack_reaches(source: [f32; 3], target: [f32; 3], heading: i16) -> bool {
     let delta = [target[0] - source[0], target[1] - source[1]];

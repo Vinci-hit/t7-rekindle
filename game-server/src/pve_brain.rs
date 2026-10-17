@@ -45,15 +45,15 @@ pub(crate) fn chasing(idle: bool, length: f32, same_floor: bool, range: f32) -> 
 }
 
 fn heading_to(from: [f32; 3], to: [f32; 3]) -> i16 {
-    (-(to[1] - from[1])).atan2(to[0] - from[0]).to_degrees().round() as i16
+    (-(to[1] - from[1]))
+        .atan2(to[0] - from[0])
+        .to_degrees()
+        .round() as i16
 }
 
 /// The zombie: face the target, walk the route while keeping spacing from the crowd, and once in
 /// range slide around the target to make room. Deliberately simple; it never flanks or retreats.
-pub(crate) fn think(
-    senses: &Senses,
-    project: &dyn Fn([f32; 3]) -> Option<[f32; 3]>,
-) -> Command {
+pub(crate) fn think(senses: &Senses, project: &dyn Fn([f32; 3]) -> Option<[f32; 3]>) -> Command {
     let mut command = Command {
         position: senses.position,
         heading: senses.heading,
@@ -100,14 +100,22 @@ fn walk(
     let travel = delta[0].hypot(delta[1]);
     let seek = [delta[0] / travel.max(1e-4), delta[1] / travel.max(1e-4)];
     // A detour sidesteps whatever blocked the straight way for a moment.
-    let seek = senses.detour.map_or(seek, |flip| crate::pve_ai::detour(seek, flip));
+    let seek = senses
+        .detour
+        .map_or(seek, |flip| crate::pve_ai::detour(seek, flip));
     // Crowd spacing on the target's floor only; stairs and ramps follow the route.
-    let push = if senses.same_floor { crowd_push(senses) } else { [0., 0.] };
-    let step = (senses.speed * senses.dt).min(travel).min(if senses.same_floor {
-        length - senses.attack_range
+    let push = if senses.same_floor {
+        crowd_push(senses)
     } else {
-        f32::INFINITY
-    });
+        [0., 0.]
+    };
+    let step = (senses.speed * senses.dt)
+        .min(travel)
+        .min(if senses.same_floor {
+            length - senses.attack_range
+        } else {
+            f32::INFINITY
+        });
     // Micro steps would toggle the gait walk/stop every tick; the one step that closes into attack
     // range is always taken, or the monster could never attack.
     let closes = senses.same_floor && step > 0. && step >= length - senses.attack_range - 1e-4;
@@ -139,11 +147,7 @@ fn walk(
 
 /// In attack range: slide around the target (never toward or away from it) to make room for the
 /// crowd, facing the target and strafing as a player would.
-fn slide(
-    senses: &Senses,
-    project: &dyn Fn([f32; 3]) -> Option<[f32; 3]>,
-    command: &mut Command,
-) {
+fn slide(senses: &Senses, project: &dyn Fn([f32; 3]) -> Option<[f32; 3]>, command: &mut Command) {
     let push = crowd_push(senses);
     let slide = steering::tangential(senses.position, senses.target, push);
     let amount = slide[0].hypot(slide[1]);
@@ -220,7 +224,10 @@ mod tests {
         s.idle = false;
         s.heading = 90;
         let command = think(&s, &flat);
-        assert_eq!((command.position, command.heading, command.axes), ([3., 0., 0.], 90, (0, 0)));
+        assert_eq!(
+            (command.position, command.heading, command.axes),
+            ([3., 0., 0.], 90, (0, 0))
+        );
     }
 
     #[test]

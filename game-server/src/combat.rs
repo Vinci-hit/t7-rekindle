@@ -458,7 +458,13 @@ impl Combat {
                     if guard == 4 {
                         facing(target.position, source.position, target.heading, 0.5)
                     } else {
-                        guard_matches(direction, guard, target.position, source.position, target.heading)
+                        guard_matches(
+                            direction,
+                            guard,
+                            target.position,
+                            source.position,
+                            target.heading,
+                        )
                     }
                 });
             }
@@ -571,10 +577,18 @@ impl Combat {
             }
             let (amount, part) = body_damage(
                 report.position[2] - target_pose.position[2],
-                if actor >= crate::pve::FIRST_MONSTER_ID { 0. } else { closing },
+                if actor >= crate::pve::FIRST_MONSTER_ID {
+                    0.
+                } else {
+                    closing
+                },
                 if actor >= crate::pve::FIRST_MONSTER_ID {
                     crate::pve::MONSTER_DAMAGE
-                } else if direction == 4 { 40 } else { DAMAGE },
+                } else if direction == 4 {
+                    40
+                } else {
+                    DAMAGE
+                },
             );
             hit_part = part;
             damage = amount.min(*hp);
@@ -761,34 +775,91 @@ fn facing(source: [f32; 3], target: [f32; 3], heading: i16, limit: f32) -> bool 
 #[cfg(test)]
 mod shield_tests {
     use super::*;
-    use crate::{battle::ActionIntent, loadout::{Equipment, Loadout}, motion::Pose};
+    use crate::{
+        battle::ActionIntent,
+        loadout::{Equipment, Loadout},
+        motion::Pose,
+    };
 
     #[test]
     fn shield_blocks_front_strikes_but_not_back_strikes() {
         for heading in [0, 180] {
             let mut battle = Battle::new("room".into(), "match".into(), [1, 2].into_iter());
-            battle.configure(2, Loadout { hero_id: 1001, equipment: vec![
-                Equipment { slot: 1, weapon_id: 1010811 },
-                Equipment { slot: 2, weapon_id: 1090211 },
-            ]});
+            battle.configure(
+                2,
+                Loadout {
+                    hero_id: 1001,
+                    equipment: vec![
+                        Equipment {
+                            slot: 1,
+                            weapon_id: 1010811,
+                        },
+                        Equipment {
+                            slot: 2,
+                            weapon_id: 1090211,
+                        },
+                    ],
+                },
+            );
             let mut motion = Motion::new("room".into(), "match".into(), [1, 2].into_iter());
             for (id, x, yaw) in [(1, 0., 0), (2, 1., heading)] {
-                motion.input(id, 1, Pose { position: [x, 0., 0.], heading: yaw,
-                    forward_back: 0, left_right: 0, running: false, motion: None }, 400).unwrap();
+                motion
+                    .input(
+                        id,
+                        1,
+                        Pose {
+                            position: [x, 0., 0.],
+                            heading: yaw,
+                            forward_back: 0,
+                            left_right: 0,
+                            running: false,
+                            motion: None,
+                        },
+                        400,
+                    )
+                    .unwrap();
             }
             battle.input(2, 1, ActionIntent::ShieldGuard, 0).unwrap();
             battle.input(1, 1, ActionIntent::AttackUp, 0).unwrap();
             battle.input(1, 2, ActionIntent::AttackRelease, 1).unwrap();
             battle.advance(400);
             let action = battle.current(1).unwrap();
-            let mut combat = Combat::new("room".into(), "match".into(), [(1, 1), (2, 2)].into_iter());
-            assert!(combat.input(1, 1, ContactReport { action_seq: action.seq,
-                action_id: action.action_id.unwrap(), state: 238, elapsed_ms: 40,
-                target_actor_id: 2, position: [1., 0., 1.], normal: [-1., 0., 0.],
-                direction: [1., 0., 0.], material: 0, weapon_contact: false, timing: None },
-                400, &mut battle, &motion).unwrap());
+            let mut combat =
+                Combat::new("room".into(), "match".into(), [(1, 1), (2, 2)].into_iter());
+            assert!(
+                combat
+                    .input(
+                        1,
+                        1,
+                        ContactReport {
+                            action_seq: action.seq,
+                            action_id: action.action_id.unwrap(),
+                            state: 238,
+                            elapsed_ms: 40,
+                            target_actor_id: 2,
+                            position: [1., 0., 1.],
+                            normal: [-1., 0., 0.],
+                            direction: [1., 0., 0.],
+                            material: 0,
+                            weapon_contact: false,
+                            timing: None
+                        },
+                        400,
+                        &mut battle,
+                        &motion
+                    )
+                    .unwrap()
+            );
             let events = combat.take_events();
-            let CombatEffect::Contact { parried, damage, target_weapon_id, .. } = events[0].effect else { panic!("contact") };
+            let CombatEffect::Contact {
+                parried,
+                damage,
+                target_weapon_id,
+                ..
+            } = events[0].effect
+            else {
+                panic!("contact")
+            };
             assert_eq!(parried, heading == 180);
             assert_eq!(damage == 0, heading == 180);
             if parried {

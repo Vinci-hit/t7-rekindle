@@ -73,7 +73,12 @@ impl Progress {
 
 /// `seek` rotated sideways; `flip` alternates the side between successive detours.
 pub(crate) fn detour(seek: [f32; 2], flip: bool) -> [f32; 2] {
-    let angle = (if flip { -DETOUR_ANGLE_DEG } else { DETOUR_ANGLE_DEG }).to_radians();
+    let angle = (if flip {
+        -DETOUR_ANGLE_DEG
+    } else {
+        DETOUR_ANGLE_DEG
+    })
+    .to_radians();
     let (sin, cos) = angle.sin_cos();
     [seek[0] * cos - seek[1] * sin, seek[0] * sin + seek[1] * cos]
 }
@@ -87,9 +92,17 @@ mod tests {
         assert_eq!(pick_target(None, &[(7, 5.), (3, 4.)]), Some(3));
         assert_eq!(pick_target(Some(7), &[(7, 5.), (3, 4.5)]), Some(7));
         assert_eq!(pick_target(Some(7), &[(7, 5.), (3, 3.)]), Some(3));
-        assert_eq!(pick_target(Some(9), &[(7, 5.)]), Some(7), "a lost target is dropped");
+        assert_eq!(
+            pick_target(Some(9), &[(7, 5.)]),
+            Some(7),
+            "a lost target is dropped"
+        );
         assert_eq!(pick_target(Some(7), &[]), None);
-        assert_eq!(pick_target(None, &[(5, 2.), (4, 2.)]), Some(4), "ties go to the lowest id");
+        assert_eq!(
+            pick_target(None, &[(5, 2.), (4, 2.)]),
+            Some(4),
+            "ties go to the lowest id"
+        );
     }
 
     #[test]
@@ -99,7 +112,11 @@ mod tests {
         assert_eq!(p.observe(1000, at, true), Stuck::Moving);
         assert_eq!(p.observe(1500, at, true), Stuck::Moving);
         assert_eq!(p.observe(2300, at, true), Stuck::Detour);
-        assert_eq!(p.observe(2400, at, true), Stuck::Moving, "one detour per window");
+        assert_eq!(
+            p.observe(2400, at, true),
+            Stuck::Moving,
+            "one detour per window"
+        );
         assert_eq!(p.observe(3600, at, true), Stuck::Detour);
         assert_eq!(p.observe(5100, at, true), Stuck::GiveUp);
         // Real progress clears the watch.

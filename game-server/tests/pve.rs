@@ -142,10 +142,7 @@ fn cleared_waves_use_fresh_ids_and_settle_then_reset_without_monster_respawns() 
     let first = kill(&mut lobby, &room, &match_id, 1, 3100);
     assert_eq!(first, FIRST_MONSTER_ID);
     let view = lobby.client_view("a", &match_id).unwrap();
-    assert_eq!(
-        view.to_local(&match_id, ActorId(first)),
-        Ok(LocalRid(2))
-    );
+    assert_eq!(view.to_local(&match_id, ActorId(first)), Ok(LocalRid(2)));
     lobby.advance(3600);
     assert!(!lobby.snapshot(&room).unwrap().pve.unwrap().monsters[0].alive);
     lobby.advance(4600);
@@ -157,7 +154,10 @@ fn cleared_waves_use_fresh_ids_and_settle_then_reset_without_monster_respawns() 
     let second = kill(&mut lobby, &room, &match_id, 102, 5200);
     assert_eq!(second, first + 1);
     let view = lobby.client_view("a", &match_id).unwrap();
-    assert_eq!(view.to_local(&match_id, ActorId(first)), Err(ErrorCode::UnknownActor));
+    assert_eq!(
+        view.to_local(&match_id, ActorId(first)),
+        Err(ErrorCode::UnknownActor)
+    );
     assert_eq!(view.to_actor(&match_id, LocalRid(2)), Ok(ActorId(second)));
     assert_eq!(
         lobby
@@ -1205,13 +1205,31 @@ fn proximity_regions_spawn_without_clearing_earlier_monsters_or_waiting_for_batc
     let mut lobby = lobby([3., 0., 0.], &[2, 2], 100, 60_000)
         .with_pve_catalog(Catalog::from_json(&serde_json::to_vec(&data).unwrap()).unwrap());
     let room = lobby.create_pve("a", "regions", 1).unwrap();
-    assert_eq!(room.pve.as_ref().unwrap().objective.as_ref().unwrap().task_id, Some(20002));
+    assert_eq!(
+        room.pve
+            .as_ref()
+            .unwrap()
+            .objective
+            .as_ref()
+            .unwrap()
+            .task_id,
+        Some(20002)
+    );
     let id = lobby.start("a", 0).unwrap().current_match.unwrap().match_id;
     lobby.loaded("a", &id, 0).unwrap();
     lobby.advance(3000);
     pose(&mut lobby, &id, 1, 3001);
     lobby.advance(3001);
-    assert_eq!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters.len(), 2);
+    assert_eq!(
+        lobby
+            .snapshot(&room.room_id)
+            .unwrap()
+            .pve
+            .unwrap()
+            .monsters
+            .len(),
+        2
+    );
     for seq in 2..=5 {
         let now = 3000 + seq as u64 * 100;
         pose(&mut lobby, &id, seq, now);
@@ -1237,19 +1255,28 @@ fn damage_during_birth_preserves_entry_until_its_original_deadline() {
     lobby.advance(3000);
     pose(&mut lobby, &id, 1, 3001);
     lobby.advance(3001);
-    assert!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0].birth.is_some());
+    assert!(
+        lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0]
+            .birth
+            .is_some()
+    );
     kill(&mut lobby, &room.room_id, &id, 2, 3200);
     lobby.advance(3700);
     let monster = lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0].clone();
     assert!(monster.alive);
     assert!(monster.health < 100);
-    let birth = monster.birth.expect("nonlethal damage must not interrupt birth");
+    let birth = monster
+        .birth
+        .expect("nonlethal damage must not interrupt birth");
     assert_eq!(monster.position, [1., 0., 0.]);
     pose(&mut lobby, &id, 3, birth.ends_at_ms);
     lobby.advance(birth.ends_at_ms);
-    assert!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0].birth.is_none());
+    assert!(
+        lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0]
+            .birth
+            .is_none()
+    );
 }
-
 
 #[test]
 fn crowd_attacks_are_spaced_and_cannot_instantly_kill_a_player() {
@@ -1266,7 +1293,13 @@ fn crowd_attacks_are_spaced_and_cannot_instantly_kill_a_player() {
             }
         }
         for event in lobby.take_combat_events() {
-            if let CombatEffect::Contact { attacker, action_seq, damage, .. } = event.effect {
+            if let CombatEffect::Contact {
+                attacker,
+                action_seq,
+                damage,
+                ..
+            } = event.effect
+            {
                 if attacker.0 >= FIRST_MONSTER_ID {
                     assert_eq!(damage, 8);
                     assert!(event.server_time_ms >= release_times[&(attacker.0, action_seq)] + 360);
@@ -1282,7 +1315,8 @@ fn crowd_attacks_are_spaced_and_cannot_instantly_kill_a_player() {
 
 #[test]
 fn proximity_trigger_does_not_require_the_ai_navigation_component() {
-    let mut data: serde_json::Value = serde_json::from_slice(&config([3., 0., 0.], &[1], 100)).unwrap();
+    let mut data: serde_json::Value =
+        serde_json::from_slice(&config([3., 0., 0.], &[1], 100)).unwrap();
     let scenario = &mut data["scenarios"][0];
     scenario["encounterOrder"] = serde_json::json!("proximity");
     scenario["navigation"] = serde_json::json!({"polygons":[
@@ -1299,7 +1333,16 @@ fn proximity_trigger_does_not_require_the_ai_navigation_component() {
     lobby.advance(3000);
     pose(&mut lobby, &id, 1, 3100);
     lobby.advance(3100);
-    assert_eq!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters.len(), 1);
+    assert_eq!(
+        lobby
+            .snapshot(&room.room_id)
+            .unwrap()
+            .pve
+            .unwrap()
+            .monsters
+            .len(),
+        1
+    );
 }
 
 #[test]

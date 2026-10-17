@@ -16,7 +16,10 @@ const GOLDEN_ANGLE: f32 = 2.399_963_2;
 const SPAWN_SPACING: f32 = 0.8;
 
 /// Sum of repulsion from nearby crowd members; each contributes (R - d) / R along the away vector.
-pub(crate) fn separation(position: [f32; 3], others: impl IntoIterator<Item = [f32; 3]>) -> [f32; 2] {
+pub(crate) fn separation(
+    position: [f32; 3],
+    others: impl IntoIterator<Item = [f32; 3]>,
+) -> [f32; 2] {
     let mut push = [0.0f32; 2];
     for other in others {
         if (other[2] - position[2]).abs() > SAME_FLOOR {
@@ -28,7 +31,11 @@ pub(crate) fn separation(position: [f32; 3], others: impl IntoIterator<Item = [f
             continue;
         }
         // Coincident members get a deterministic direction from their offset sign instead of NaN.
-        let unit = if d > 1e-4 { [away[0] / d, away[1] / d] } else { [1.0, 0.0] };
+        let unit = if d > 1e-4 {
+            [away[0] / d, away[1] / d]
+        } else {
+            [1.0, 0.0]
+        };
         let weight = (SEPARATION_RADIUS - d) / SEPARATION_RADIUS;
         push[0] += unit[0] * weight;
         push[1] += unit[1] * weight;
@@ -38,9 +45,16 @@ pub(crate) fn separation(position: [f32; 3], others: impl IntoIterator<Item = [f
 
 /// Unit travel direction: seek toward `toward` blended with the crowd push. Zero when there is none.
 pub(crate) fn blend(seek: [f32; 2], push: [f32; 2]) -> [f32; 2] {
-    let v = [seek[0] + push[0] * SEPARATION_WEIGHT, seek[1] + push[1] * SEPARATION_WEIGHT];
+    let v = [
+        seek[0] + push[0] * SEPARATION_WEIGHT,
+        seek[1] + push[1] * SEPARATION_WEIGHT,
+    ];
     let n = v[0].hypot(v[1]);
-    if n < 1e-4 { [0.0, 0.0] } else { [v[0] / n, v[1] / n] }
+    if n < 1e-4 {
+        [0.0, 0.0]
+    } else {
+        [v[0] / n, v[1] / n]
+    }
 }
 
 /// The part of `push` tangential to the circle around `target`, so a monster in attack range slides
@@ -70,7 +84,16 @@ pub(crate) fn spawn_offset(round: usize) -> [f32; 2] {
 /// Movement axes (forward_back, left_right) for travelling toward `travel` while facing `facing`
 /// (both degrees in the pose convention), matching the client's eight-way gait table and the bots.
 pub(crate) fn axes(facing: i16, travel: i16) -> (i8, i8) {
-    const TABLE: [(i8, i8); 8] = [(-1, 0), (-1, -1), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1)];
+    const TABLE: [(i8, i8); 8] = [
+        (-1, 0),
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+    ];
     let delta = (i32::from(travel) - i32::from(facing) + 180).rem_euclid(360) - 180;
     let index = ((delta as f32 + 22.5) / 45.).floor() as i32;
     TABLE[index.rem_euclid(8) as usize]
@@ -133,11 +156,17 @@ mod tests {
         let range = 1.1f32;
         let speed = 2.0f32;
         let dt = 0.1f32;
-        let mut crowd: Vec<[f32; 3]> = (0..8).map(|i| [8.0 + 0.05 * i as f32, 0.01 * i as f32, 0.0]).collect();
+        let mut crowd: Vec<[f32; 3]> = (0..8)
+            .map(|i| [8.0 + 0.05 * i as f32, 0.01 * i as f32, 0.0])
+            .collect();
         for _ in 0..200 {
             let snapshot = crowd.clone();
             for (i, p) in crowd.iter_mut().enumerate() {
-                let others = snapshot.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, o)| *o);
+                let others = snapshot
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, o)| *o);
                 let push = separation(*p, others);
                 let to = [target[0] - p[0], target[1] - p[1]];
                 let length = to[0].hypot(to[1]);
@@ -165,7 +194,10 @@ mod tests {
                 min_gap = min_gap.min((a[0] - b[0]).hypot(a[1] - b[1]));
             }
         }
-        let max_range = crowd.iter().map(|p| p[0].hypot(p[1])).fold(0.0f32, f32::max);
+        let max_range = crowd
+            .iter()
+            .map(|p| p[0].hypot(p[1]))
+            .fold(0.0f32, f32::max);
         // Without steering every monster ends at (1.1, ~0): gap ~0.
         assert!(min_gap > 0.45, "monsters still overlap: min gap {min_gap}");
         // Spreading may hold the back ranks outside melee range, but never far out.

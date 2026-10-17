@@ -195,9 +195,12 @@ impl Actor {
     fn has_shield(&self) -> bool {
         self.weapon_id != FIST_WEAPON
             && self.profile(self.weapon_id).is_some_and(|p| p["hand"] == 2)
-            && self.loadout.as_ref().is_some_and(|l| l.equipment.iter().any(|e| {
-                self.profile(e.weapon_id).is_some_and(|p| p["shield"] == true)
-            }))
+            && self.loadout.as_ref().is_some_and(|l| {
+                l.equipment.iter().any(|e| {
+                    self.profile(e.weapon_id)
+                        .is_some_and(|p| p["shield"] == true)
+                })
+            })
     }
 
     fn dash_available(&self) -> bool {
@@ -229,8 +232,15 @@ impl Actor {
     }
     fn state_duration(&self, state: u16) -> u64 {
         if matches!(state, 95 | 111) {
-            let field = if state == 95 { "prepareMs" } else { "successMs" };
-            return self.profile(self.weapon_id).and_then(|p| p["guard"][field].as_u64()).unwrap_or(0);
+            let field = if state == 95 {
+                "prepareMs"
+            } else {
+                "successMs"
+            };
+            return self
+                .profile(self.weapon_id)
+                .and_then(|p| p["guard"][field].as_u64())
+                .unwrap_or(0);
         }
         {
             for direction in 0..4 {
@@ -293,9 +303,15 @@ impl Battle {
 
     pub(crate) fn shield_weapon(&self, actor: u32) -> Option<i32> {
         let actor = self.actors.iter().find(|a| a.id.0 == actor)?;
-        if !actor.has_shield() { return None; }
-        actor.loadout.as_ref()?.equipment.iter().find_map(|e|
-            actor.profile(e.weapon_id).is_some_and(|p| p["shield"] == true).then_some(e.weapon_id))
+        if !actor.has_shield() {
+            return None;
+        }
+        actor.loadout.as_ref()?.equipment.iter().find_map(|e| {
+            actor
+                .profile(e.weapon_id)
+                .is_some_and(|p| p["shield"] == true)
+                .then_some(e.weapon_id)
+        })
     }
 
     pub(crate) fn profile(&self, actor: u32, weapon: i32) -> Option<&'static serde_json::Value> {
@@ -1157,25 +1173,36 @@ mod catalogue_tests {
     #[test]
     fn shield_uses_native_chain_and_release_without_directional_guard() {
         let mut b = Battle::new("room".into(), "match".into(), [1, 2].into_iter());
-        b.configure(1, crate::loadout::Loadout {
-            hero_id: 1001,
-            equipment: vec![
-                crate::loadout::Equipment { slot: 1, weapon_id: 1010811 },
-                crate::loadout::Equipment { slot: 2, weapon_id: 1090211 },
-            ],
-        });
+        b.configure(
+            1,
+            crate::loadout::Loadout {
+                hero_id: 1001,
+                equipment: vec![
+                    crate::loadout::Equipment {
+                        slot: 1,
+                        weapon_id: 1010811,
+                    },
+                    crate::loadout::Equipment {
+                        slot: 2,
+                        weapon_id: 1090211,
+                    },
+                ],
+            },
+        );
         b.input(2, 1, ActionIntent::ShieldGuard, 0).unwrap();
         assert!(b.current(2).is_none_or(|s| s.state == 2));
         b.input(1, 1, ActionIntent::ShieldGuard, 0).unwrap();
         assert_eq!(b.current(1).unwrap().state, 95);
-        let delay = b.profile(1, 1010811).unwrap()["guard"]["prepareMs"].as_u64().unwrap();
+        let delay = b.profile(1, 1010811).unwrap()["guard"]["prepareMs"]
+            .as_u64()
+            .unwrap();
         b.advance(delay);
         assert_eq!(b.current(1).unwrap().state, 309);
         b.react(1, 111, delay + 1, 10, false, Some(2));
         b.advance(delay + 11);
         assert_eq!(b.current(1).unwrap().state, 309);
-        b.input(1, 2, ActionIntent::BlockRelease, delay + 12).unwrap();
+        b.input(1, 2, ActionIntent::BlockRelease, delay + 12)
+            .unwrap();
         assert_eq!(b.current(1).unwrap().state, 2);
     }
-
 }
