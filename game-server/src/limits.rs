@@ -14,6 +14,9 @@ pub const GUARD_FACING_COS: f32 = 0.5;
 pub const GUARD_SIDE_COS: f32 = -0.5;
 /// Supported client state 35 finishes after 550 ms.
 pub const HURT_RECOVERY_MS: u64 = 550;
+/// After a hurt reaction a monster ignores further staggers for this long (counted from the
+/// reaction start plus its recovery), so a combo cannot hold it in place indefinitely.
+pub const MONSTER_STAGGER_IMMUNITY_MS: u64 = 800;
 pub const LOGIN_WINDOW_SECS: u64 = 60;
 pub const LOGIN_ATTEMPTS_PER_SOURCE: usize = 30;
 

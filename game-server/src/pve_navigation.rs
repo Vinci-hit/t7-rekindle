@@ -9,6 +9,11 @@ use std::{
 const CELL: f32 = 8.;
 const MAX_FACES: usize = 16_384;
 const HEIGHT_TOLERANCE: f32 = 1.5;
+/// How far off the mesh (horizontally) and how far above or below it a target may be and still
+/// be chased to the nearest walkable point.
+const SNAP_RADIUS: f32 = 3.;
+const SNAP_HEIGHT: f32 = 6.;
+const SNAP_INSET: f32 = 0.05;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -142,6 +147,65 @@ impl Navigation {
                     .then(a.0.cmp(&b.0))
             })
     }
+    /// The walkable point a monster should path to for a target that may be off the mesh:
+    /// jumping or standing on something too high, or pressed against a wall. `None` only when the
+    /// target is genuinely far from every surface.
+    pub(crate) fn anchor(&self, point: [f32; 3]) -> Option<[f32; 3]> {
+        if let Some((_, z)) = self.locate(point) {
+            return Some([point[0], point[1], z]);
+        }
+        let key = |v: f32| (v / CELL).floor() as i32;
+        let (cx, cy) = (key(point[0]), key(point[1]));
+        let mut best: Option<(f32, [f32; 3])> = None;
+        for x in cx - 1..=cx + 1 {
+            for y in cy - 1..=cy + 1 {
+                for &id in self.cells.get(&(x, y)).into_iter().flatten() {
+                    let polygon = &self.polygons[id];
+                    // Directly above or below a face: its surface point, at any height within range.
+                    let contained = !polygon
+                        .iter()
+                        .zip(polygon.iter().cycle().skip(1))
+                        .any(|(&a, &b)| cross(a, b, point) < -0.0001);
+                    if contained {
+                        if let Some(z) = height(polygon, point) {
+                            let gap = (z - point[2]).abs();
+                            if gap <= SNAP_HEIGHT && best.is_none_or(|(d, _)| gap * 0.001 < d) {
+                                best = Some((gap * 0.001, [point[0], point[1], z]));
+                            }
+                        }
+                        continue;
+                    }
+                    // Beside a face: the nearest boundary point, nudged inside so it locates.
+                    for (&a, &b) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
+                        let edge = [b[0] - a[0], b[1] - a[1]];
+                        let length_sq = edge[0] * edge[0] + edge[1] * edge[1];
+                        let t = (((point[0] - a[0]) * edge[0] + (point[1] - a[1]) * edge[1])
+                            / length_sq.max(1e-9))
+                        .clamp(0., 1.);
+                        let on_edge: [f32; 3] = std::array::from_fn(|d| a[d] + (b[d] - a[d]) * t);
+                        let d = (on_edge[0] - point[0]).hypot(on_edge[1] - point[1]);
+                        if d > SNAP_RADIUS
+                            || (on_edge[2] - point[2]).abs() > SNAP_HEIGHT
+                            || best.is_some_and(|(best_d, _)| d + 0.01 >= best_d)
+                        {
+                            continue;
+                        }
+                        let center = self.centers[id];
+                        let inward = [center[0] - on_edge[0], center[1] - on_edge[1]];
+                        let inward_len = inward[0].hypot(inward[1]);
+                        let mut inside = on_edge;
+                        if inward_len > SNAP_INSET {
+                            inside[0] += inward[0] / inward_len * SNAP_INSET;
+                            inside[1] += inward[1] / inward_len * SNAP_INSET;
+                        }
+                        inside[2] = height(polygon, inside).unwrap_or(on_edge[2]);
+                        best = Some((d + 0.01, inside));
+                    }
+                }
+            }
+        }
+        best.map(|(_, anchor)| anchor)
+    }
     pub(crate) fn project(&self, point: [f32; 3]) -> Option<[f32; 3]> {
         self.locate(point).map(|(_, z)| [point[0], point[1], z])
     }
@@ -256,6 +320,24 @@ mod tests {
         assert!(nav.route([1., 1., 0.5], [9., 1., 0.]).is_empty());
         assert!(nav.project([1., 1., 5.]).is_none());
     }
+    #[test]
+    fn off_mesh_targets_anchor_to_the_nearest_walkable_point() {
+        let nav = mesh();
+        // On the surface: unchanged.
+        assert_eq!(nav.anchor([1., 1., 0.5]), Some([1., 1., 0.5]));
+        // Jumping above the mesh: the surface below.
+        assert_eq!(nav.anchor([1., 1., 4.]), Some([1., 1., 0.5]));
+        // Beside the mesh (against a wall): a point inside, on the same component.
+        let beside = nav.anchor([-0.4, 1., 0.5]).unwrap();
+        assert!(beside[0] > 0. && beside[0] < 0.2, "{beside:?}");
+        assert!(nav.connected([1., 1., 0.5], beside));
+        let route = nav.route([3., 1., 0.5], beside);
+        assert!(!route.is_empty());
+        // Far from every surface, or hopelessly high: no anchor.
+        assert!(nav.anchor([50., 50., 0.]).is_none());
+        assert!(nav.anchor([1., 1., 40.]).is_none());
+    }
+
     #[test]
     fn invalid_geometry_and_links_are_rejected() {
         let mut nav = mesh();

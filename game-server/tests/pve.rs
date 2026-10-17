@@ -778,7 +778,7 @@ fn unreachable_target_stops_then_reacquires_without_waiting_for_route_cache() {
     lobby.advance(3000);
     for (sequence, now, position, expected_axis) in [
         (1, 3101, [0., 0., 0.], -1),
-        (2, 3201, [0., 0., 2.], 0),
+        (2, 3201, [0., 10., 0.], 0),
         (3, 3301, [5.5, 0., 0.], -1),
     ] {
         lobby
@@ -826,6 +826,47 @@ fn unreachable_target_stops_then_reacquires_without_waiting_for_route_cache() {
             .len(),
         1
     );
+}
+
+#[test]
+fn a_jumping_target_above_the_mesh_is_still_chased() {
+    let mut data: serde_json::Value =
+        serde_json::from_slice(&config([3., 0., 0.], &[1], 100)).unwrap();
+    data["scenarios"][0]["navigation"] = serde_json::json!({"polygons":[
+        [[-1,-2,0],[8,-2,0],[8,2,0],[-1,2,0]]],"links":[[]]});
+    let mut lobby = lobby([3., 0., 0.], &[1], 100, 60_000)
+        .with_pve_catalog(Catalog::from_json(&serde_json::to_vec(&data).unwrap()).unwrap());
+    lobby.create_pve("a", "pursuit", 1).unwrap();
+    let id = lobby.start("a", 0).unwrap().current_match.unwrap().match_id;
+    lobby.loaded("a", &id, 0).unwrap();
+    lobby.advance(3000);
+    // Two metres over the surface is beyond the walking tolerance, yet the monster must keep closing
+    // in on the point below rather than freeze until the player lands.
+    lobby
+        .pose_input(
+            "a",
+            &id,
+            1,
+            Pose {
+                position: [0., 0., 2.],
+                heading: 0,
+                forward_back: 0,
+                left_right: 0,
+                running: false,
+                motion: None,
+            },
+            3101,
+        )
+        .unwrap();
+    lobby.advance(3101);
+    let movement = lobby
+        .take_pose_events()
+        .into_iter()
+        .filter(|event| event.actor_id.0 == FIRST_MONSTER_ID)
+        .last()
+        .unwrap();
+    assert_eq!(movement.pose.forward_back, -1);
+    assert!(movement.pose.position[0] < 3.);
 }
 
 #[test]

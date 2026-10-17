@@ -9,7 +9,7 @@ use crate::{
     round::{FinalRank, RoundResult},
 };
 use serde::{Deserialize, Serialize};
-use crate::pve_steering;
+use crate::{pve_ai, pve_steering};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub const FIRST_MONSTER_ID: u32 = 0x40000001;
@@ -490,6 +490,11 @@ struct Monster {
     route: std::collections::VecDeque<[f32; 3]>,
     next_route_at: u64,
     route_target: Option<u32>,
+    stuck: pve_ai::Progress,
+    detour_until: u64,
+    detour_flip: bool,
+    /// Targets given up on as unreachable, until the stored time.
+    ignored: Vec<(u32, u64)>,
 }
 
 #[derive(Debug)]
@@ -918,6 +923,10 @@ impl Pve {
                     route: std::collections::VecDeque::new(),
                     next_route_at: now,
                     route_target: None,
+                    stuck: pve_ai::Progress::default(),
+                    detour_until: 0,
+                    detour_flip: false,
+                    ignored: Vec::new(),
                 });
             }
             self.remaining_to_spawn -= count as u16;
@@ -1009,24 +1018,45 @@ impl Pve {
                 .as_ref()
                 .and_then(GoalRuntime::protected_position)
                 .map(|position| (FIRST_MONSTER_ID - 1, position));
-            let target = players
+            monster.ignored.retain(|(_, until)| *until > now);
+            // Reachability is judged on the walkable point nearest the target, so a player who is
+            // jumping or pressed against a wall is still chased. Targets given up on are skipped
+            // unless nothing else is left, so a monster never just stands still.
+            let mut candidates: Vec<(u32, [f32; 3], [f32; 3], bool)> = players
                 .iter()
                 .filter(|id| combat.alive(**id))
                 .filter_map(|id| motion.latest(*id, now).map(|pose| (*id, pose.position)))
                 .chain(protected)
-                .filter(|(_, position)| {
-                    self.scenario
-                        .navigation
-                        .as_ref()
-                        .is_none_or(|nav| nav.connected(monster.view.position, *position))
+                .filter_map(|(id, position)| {
+                    let goal = match &self.scenario.navigation {
+                        Some(nav) => nav
+                            .anchor(position)
+                            .filter(|goal| nav.connected(monster.view.position, *goal))?,
+                        None => position,
+                    };
+                    let ignored = monster.ignored.iter().any(|(other, _)| *other == id);
+                    Some((id, position, goal, ignored))
                 })
-                .min_by(|a, b| {
-                    distance(monster.view.position, a.1)
-                        .total_cmp(&distance(monster.view.position, b.1))
-                });
+                .collect();
+            if candidates.iter().any(|candidate| !candidate.3) {
+                candidates.retain(|candidate| !candidate.3);
+            }
+            let distances: Vec<(u32, f32)> = candidates
+                .iter()
+                .map(|candidate| (candidate.0, distance(monster.view.position, candidate.1)))
+                .collect();
+            let target = pve_ai::pick_target(monster.route_target, &distances)
+                .and_then(|id| candidates.iter().find(|candidate| candidate.0 == id))
+                .map(|candidate| (candidate.0, candidate.1, candidate.2));
+            // Safety net: an action state that never ends must not freeze the monster for good.
+            if battle.current(id).is_some_and(|sample| {
+                sample.state != 2 && now.saturating_sub(sample.at) > pve_ai::ACTION_WATCHDOG_MS
+            }) {
+                battle.pause_input(id, now);
+            }
             let state = battle.current(id);
             let idle = state.is_none_or(|s| s.state == 2);
-            if let Some((target_id, position)) = target {
+            if let Some((target_id, position, goal)) = target {
                 if monster.route_target != Some(target_id) {
                     monster.route.clear();
                     monster.next_route_at = now;
@@ -1034,7 +1064,7 @@ impl Pve {
                 }
                 let length = distance(monster.view.position, position);
                 let mut axes: (i8, i8) = (0, 0);
-                let same_floor = (monster.view.position[2] - position[2]).abs() <= 1.5;
+                let same_floor = (monster.view.position[2] - goal[2]).abs() <= 1.5;
                 if idle && length > 0.01 {
                     monster.view.heading = (-(position[1] - monster.view.position[1]))
                         .atan2(position[0] - monster.view.position[0])
@@ -1048,7 +1078,7 @@ impl Pve {
                             // retry next tick. Refresh is staggered per actor to avoid a herd.
                             if now >= monster.next_route_at && routes_left > 0 {
                                 routes_left -= 1;
-                                monster.route = nav.route(monster.view.position, position).into();
+                                monster.route = nav.route(monster.view.position, goal).into();
                                 monster.next_route_at = now.saturating_add(
                                     ROUTE_REFRESH_MS + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
                                 );
@@ -1060,7 +1090,7 @@ impl Pve {
                             }
                             monster.route.front().copied()
                         } else {
-                            Some(position)
+                            Some(goal)
                         };
                     if let Some(destination) = destination {
                         let delta = [
@@ -1069,6 +1099,12 @@ impl Pve {
                         ];
                         let travel = delta[0].hypot(delta[1]);
                         let seek = [delta[0] / travel.max(1e-4), delta[1] / travel.max(1e-4)];
+                        // A detour sidesteps whatever blocked the straight way for a moment.
+                        let seek = if now < monster.detour_until {
+                            pve_ai::detour(seek, monster.detour_flip)
+                        } else {
+                            seek
+                        };
                         // Crowd spacing on the target's floor only; stairs and ramps follow the route.
                         let push = if same_floor {
                             pve_steering::separation(
@@ -1140,6 +1176,25 @@ impl Pve {
                             let travel = (-slide[1]).atan2(slide[0]).to_degrees().round() as i16;
                             axes = pve_steering::axes(monster.view.heading, travel);
                         }
+                    }
+                }
+                let wants_to_move = idle && (length > ATTACK_RANGE + 0.15 || !same_floor);
+                match monster.stuck.observe(now, monster.view.position, wants_to_move) {
+                    pve_ai::Stuck::Moving => {}
+                    pve_ai::Stuck::Detour => {
+                        monster.route.clear();
+                        monster.next_route_at = now;
+                        monster.detour_until = now.saturating_add(pve_ai::DETOUR_MS);
+                        monster.detour_flip = !monster.detour_flip;
+                    }
+                    pve_ai::Stuck::GiveUp => {
+                        monster.route.clear();
+                        monster.next_route_at = now;
+                        monster.route_target = None;
+                        monster.ignored.retain(|(other, _)| *other != target_id);
+                        monster
+                            .ignored
+                            .push((target_id, now.saturating_add(pve_ai::UNREACHABLE_MS)));
                     }
                 }
                 monster.input_seq += 1;
@@ -1223,21 +1278,17 @@ impl Pve {
                 monster.route.clear();
                 monster.next_route_at = now;
                 monster.input_seq += 1;
-                motion
-                    .input(
-                        id,
-                        monster.input_seq,
-                        Pose {
-                            position: monster.view.position,
-                            heading: monster.view.heading,
-                            forward_back: 0,
-                            left_right: 0,
-                            running: false,
-                            motion: None,
-                        },
-                        now,
-                    )
-                    .expect("stationary AI pose");
+                let stationary = Pose {
+                    position: monster.view.position,
+                    heading: monster.view.heading,
+                    forward_back: 0,
+                    left_right: 0,
+                    running: false,
+                    motion: None,
+                };
+                if motion.input(id, monster.input_seq, stationary, now).is_err() {
+                    monster.route.clear();
+                }
             }
         }
         // Player hits come from sampled blade contacts. A proximity fallback

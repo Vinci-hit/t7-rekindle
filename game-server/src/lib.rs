@@ -18,6 +18,7 @@ pub mod transport;
 pub mod pve;
 pub mod pve_goal;
 mod pve_navigation;
+mod pve_ai;
 mod pve_steering;
 pub mod round;
 

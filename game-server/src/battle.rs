@@ -175,6 +175,8 @@ struct Actor {
     buffered_reaction: Option<BufferedAction>,
     loadout: Option<crate::loadout::Loadout>,
     main_weapon: i32,
+    /// Monsters only: no new hurt reaction starts before this time.
+    stagger_immune_until: u64,
 }
 
 #[derive(Debug)]
@@ -260,6 +262,7 @@ impl Actor {
             buffered_reaction: None,
             loadout: None,
             main_weapon: weapon_id,
+            stagger_immune_until: 0,
         }
     }
 }
@@ -676,6 +679,15 @@ impl Battle {
             .iter_mut()
             .find(|a| a.id.0 == actor_id)
             .expect("known actor");
+        if state == 35 && actor_id >= crate::pve::FIRST_MONSTER_ID {
+            // Staggers are rationed for monsters; damage itself is unaffected.
+            if now < actor.stagger_immune_until {
+                return;
+            }
+            actor.stagger_immune_until = now
+                .saturating_add(duration)
+                .saturating_add(crate::limits::MONSTER_STAGGER_IMMUNITY_MS);
+        }
         // Historical parry feedback must not re-press a guard already released
         // while the verdict was pending, or replace a newer guard direction.
         actor.active = if [231, 232, 233, 234, 111].contains(&state) {
@@ -904,6 +916,30 @@ mod tests {
             b.input_at(1, 3, ActionIntent::BlockUp, 3390, 3450).unwrap();
             assert_eq!(b.at(1, 3400).unwrap().state, 35);
         }
+    }
+
+    #[test]
+    fn a_monster_cannot_be_stunlocked_by_repeated_hits() {
+        let id = crate::pve::FIRST_MONSTER_ID;
+        let mut b = Battle::new("r".into(), "m".into(), std::iter::empty());
+        b.spawn(id, MAIN_WEAPON);
+        b.react(id, 35, 1000, 550, false, None);
+        b.react(id, 35, 1300, 550, false, None);
+        // The second hit neither restarts the reaction nor extends it.
+        assert_eq!(b.actors[0].reaction_until, Some(1550));
+        b.advance(1560);
+        assert_eq!(b.current(id).unwrap().state, 2);
+        // Still inside the immunity window after recovery.
+        b.react(id, 35, 1700, 550, false, None);
+        assert_eq!(b.current(id).unwrap().state, 2);
+        // Immunity ends 800 ms after the reaction finished.
+        b.react(id, 35, 2400, 550, false, None);
+        assert_eq!(b.current(id).unwrap().state, 35);
+        // Players are never rationed.
+        let mut p = Battle::new("r".into(), "m".into(), [1].into_iter());
+        p.react(1, 35, 1000, 550, false, None);
+        p.react(1, 35, 1300, 550, false, None);
+        assert_eq!(p.actors[0].reaction_until, Some(1850));
     }
 
     #[test]
