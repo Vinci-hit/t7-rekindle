@@ -9,7 +9,7 @@ use crate::{
     round::{FinalRank, RoundResult},
 };
 use serde::{Deserialize, Serialize};
-use crate::{pve_ai, pve_steering};
+use crate::{pve_ai, pve_brain, pve_steering};
 use std::{collections::BTreeMap, sync::Arc};
 
 pub const FIRST_MONSTER_ID: u32 = 0x40000001;
@@ -948,6 +948,13 @@ impl Pve {
             .filter(|m| m.view.alive)
             .map(|m| (m.view.actor_id, m.view.position))
             .collect();
+        let scenario = Arc::clone(&self.scenario);
+        let project = |point: [f32; 3]| {
+            scenario
+                .navigation
+                .as_ref()
+                .map_or(Some(point), |nav| nav.project(point))
+        };
         for monster in self.monsters.iter_mut().filter(|m| m.view.alive) {
             let id = monster.view.actor_id;
             if let MonsterLocomotion::Spawning { until } = monster.locomotion {
@@ -1063,121 +1070,54 @@ impl Pve {
                     monster.route_target = Some(target_id);
                 }
                 let length = distance(monster.view.position, position);
-                let mut axes: (i8, i8) = (0, 0);
                 let same_floor = (monster.view.position[2] - goal[2]).abs() <= 1.5;
-                if idle && length > 0.01 {
-                    monster.view.heading = (-(position[1] - monster.view.position[1]))
-                        .atan2(position[0] - monster.view.position[0])
-                        .to_degrees()
-                        .round() as i16;
-                }
-                if idle && (length > ATTACK_RANGE || !same_floor) {
-                    let destination =
-                        if let Some(nav) = &self.scenario.navigation {
-                            // Bounded per tick; monsters over budget keep their old route and
-                            // retry next tick. Refresh is staggered per actor to avoid a herd.
-                            if now >= monster.next_route_at && routes_left > 0 {
-                                routes_left -= 1;
-                                monster.route = nav.route(monster.view.position, goal).into();
-                                monster.next_route_at = now.saturating_add(
-                                    ROUTE_REFRESH_MS + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
-                                );
-                            }
-                            while monster.route.front().is_some_and(|point| {
-                                distance(monster.view.position, *point) < 0.001
-                            }) {
-                                monster.route.pop_front();
-                            }
-                            monster.route.front().copied()
-                        } else {
-                            Some(goal)
-                        };
-                    if let Some(destination) = destination {
-                        let delta = [
-                            destination[0] - monster.view.position[0],
-                            destination[1] - monster.view.position[1],
-                        ];
-                        let travel = delta[0].hypot(delta[1]);
-                        let seek = [delta[0] / travel.max(1e-4), delta[1] / travel.max(1e-4)];
-                        // A detour sidesteps whatever blocked the straight way for a moment.
-                        let seek = if now < monster.detour_until {
-                            pve_ai::detour(seek, monster.detour_flip)
-                        } else {
-                            seek
-                        };
-                        // Crowd spacing on the target's floor only; stairs and ramps follow the route.
-                        let push = if same_floor {
-                            pve_steering::separation(
-                                monster.view.position,
-                                crowd.iter().filter(|(other, _)| *other != id).map(|(_, p)| *p),
-                            )
-                        } else {
-                            [0., 0.]
-                        };
-                        let step = (monster.view.kind.speed * dt).min(travel).min(if same_floor {
-                            length - ATTACK_RANGE
-                        } else {
-                            f32::INFINITY
-                        });
-                        // Micro steps would toggle the gait walk/stop every tick; the one step that
-                        // closes into attack range is always taken, or the monster could never attack.
-                        let closes = same_floor && step > 0. && step >= length - ATTACK_RANGE - 1e-4;
-                        if travel > 0.001 && (step >= pve_steering::MIN_STEP || closes) {
-                            // Prefer the spaced direction; if the push leaves the walkable mesh (walls,
-                            // edges) fall back to the plain route step before giving up on the route.
-                            let grounded = [pve_steering::blend(seek, push), seek]
-                                .into_iter()
-                                .filter(|direction| *direction != [0., 0.])
-                                .find_map(|direction| {
-                                    let candidate = [
-                                        monster.view.position[0] + direction[0] * step,
-                                        monster.view.position[1] + direction[1] * step,
-                                        monster.view.position[2],
-                                    ];
-                                    self.scenario
-                                        .navigation
-                                        .as_ref()
-                                        .map_or(Some(candidate), |nav| nav.project(candidate))
-                                        .map(|point| (direction, point))
-                                });
-                            if let Some((direction, point)) = grounded {
-                                monster.view.heading =
-                                    (-direction[1]).atan2(direction[0]).to_degrees().round() as i16;
-                                monster.view.position = point;
-                                axes = (-1, 0);
-                            } else {
-                                monster.route.clear();
-                            }
-                        }
+                // The router supplies a waypoint only while the monster is closing in.
+                let destination = if !pve_brain::chasing(idle, length, same_floor, ATTACK_RANGE) {
+                    None
+                } else if let Some(nav) = &self.scenario.navigation {
+                    // Bounded per tick; monsters over budget keep their old route and retry next
+                    // tick. Refresh is staggered per actor to avoid a herd.
+                    if now >= monster.next_route_at && routes_left > 0 {
+                        routes_left -= 1;
+                        monster.route = nav.route(monster.view.position, goal).into();
+                        monster.next_route_at = now.saturating_add(
+                            ROUTE_REFRESH_MS + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
+                        );
                     }
-                } else if idle && same_floor {
-                    // In attack range: slide around the target (never toward or away from it) to make
-                    // room for the crowd, facing the target and strafing as a player would.
-                    let push = pve_steering::separation(
-                        monster.view.position,
-                        crowd.iter().filter(|(other, _)| *other != id).map(|(_, p)| *p),
-                    );
-                    let slide = pve_steering::tangential(monster.view.position, position, push);
-                    let amount = slide[0].hypot(slide[1]);
-                    let step = (monster.view.kind.speed * dt * pve_steering::RING_SLIDE_FRACTION).min(amount);
-                    if amount > 0.05 && step >= pve_steering::MIN_STEP {
-                        let candidate = [
-                            monster.view.position[0] + slide[0] / amount * step,
-                            monster.view.position[1] + slide[1] / amount * step,
-                            monster.view.position[2],
-                        ];
-                        let grounded = self
-                            .scenario
-                            .navigation
-                            .as_ref()
-                            .map_or(Some(candidate), |nav| nav.project(candidate));
-                        if let Some(point) = grounded {
-                            monster.view.position = point;
-                            let travel = (-slide[1]).atan2(slide[0]).to_degrees().round() as i16;
-                            axes = pve_steering::axes(monster.view.heading, travel);
-                        }
+                    while monster
+                        .route
+                        .front()
+                        .is_some_and(|point| distance(monster.view.position, *point) < 0.001)
+                    {
+                        monster.route.pop_front();
                     }
+                    monster.route.front().copied()
+                } else {
+                    Some(goal)
+                };
+                let command = pve_brain::think(
+                    &pve_brain::Senses {
+                        id,
+                        position: monster.view.position,
+                        heading: monster.view.heading,
+                        speed: monster.view.kind.speed,
+                        dt,
+                        idle,
+                        target: position,
+                        same_floor,
+                        destination,
+                        crowd: &crowd,
+                        detour: (now < monster.detour_until).then_some(monster.detour_flip),
+                        attack_range: ATTACK_RANGE,
+                    },
+                    &project,
+                );
+                monster.view.position = command.position;
+                monster.view.heading = command.heading;
+                if command.blocked {
+                    monster.route.clear();
                 }
+                let axes = command.axes;
                 let wants_to_move = idle && (length > ATTACK_RANGE + 0.15 || !same_floor);
                 match monster.stuck.observe(now, monster.view.position, wants_to_move) {
                     pve_ai::Stuck::Moving => {}
