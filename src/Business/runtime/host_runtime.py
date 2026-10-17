@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import base64
 import hashlib
+from copy import deepcopy
 import importlib.util
 import json
 import math
@@ -35,24 +36,45 @@ for _name in ("stdout", "stderr"):
         atexit.register(_closeOutput, _name, _stream)
 
 
+_INT_MIN, _INT_LIMIT = -(1 << 63), 1 << 64
+
+
 def _pack(value, depth=0):
-    if depth > 32:
-        raise ValueError("state nesting exceeds 32")
-    if value is None or type(value) in (bool, str):
-        return [type(value).__name__, value]
-    if type(value) is int:
-        if not -(1 << 63) <= value < (1 << 64):
+    # Hot path: runs over the whole state on every dispatch. Same tags, limits and errors as the
+    # straightforward version, ordered by frequency with one type() lookup per node.
+    kind = type(value)
+    if kind is str:
+        return ["str", value]
+    if kind is dict:
+        if value and depth >= 32:
+            raise ValueError("state nesting exceeds 32")
+        child = depth + 1
+        packed = {}
+        for key, item in value.items():
+            if type(key) is not str:
+                raise TypeError("unsupported state type: dict")
+            packed[key] = _pack(item, child)
+        return ["dict", packed]
+    if kind is int:
+        if not _INT_MIN <= value < _INT_LIMIT:
             raise ValueError("integer outside signed/unsigned 64-bit range")
         return ["int", value]
-    if type(value) is float and math.isfinite(value):
+    if kind is float:
+        if not math.isfinite(value):
+            raise TypeError("unsupported state type: float")
         return ["float", value]
-    if type(value) is bytes:
+    if kind is list:
+        if value and depth >= 32:
+            raise ValueError("state nesting exceeds 32")
+        child = depth + 1
+        return ["list", [_pack(item, child) for item in value]]
+    if kind is bool:
+        return ["bool", value]
+    if value is None:
+        return ["NoneType", None]
+    if kind is bytes:
         return ["bytes", base64.b64encode(value).decode("ascii")]
-    if type(value) is list:
-        return ["list", [_pack(item, depth + 1) for item in value]]
-    if type(value) is dict and all(type(key) is str for key in value):
-        return ["dict", {key: _pack(item, depth + 1) for key, item in value.items()}]
-    raise TypeError(f"unsupported state type: {type(value).__name__}")
+    raise TypeError(f"unsupported state type: {kind.__name__}")
 
 
 def _unpack(value):
@@ -397,8 +419,14 @@ class Runtime:
         if (event.get('type') == 'timer' and event.get('scope') == 'match'
                 and event.get('matchId') != stateValue.get('matchId')):
             result = dict(state=stateValue, send=[], timers=[], logs=[])
+            previous = stateValue.get('playerProfile')
         else:
-            result = self.active.module.handleEvent(event, stateValue, context)
+            # The decoded state belongs to this dispatch (C++ keeps the text, the cache was cleared
+            # above), so a revision that offers it may mutate in place instead of copying everything.
+            previous = deepcopy(stateValue.get('playerProfile'))
+            owned = getattr(self.active.module, 'handleOwnedEvent', None)
+            handle = owned or self.active.module.handleEvent
+            result = handle(event, stateValue, context)
         handled = perf_counter_ns()
         _validateTransition(result, context)
         if self.active.module.validateState(result["state"]) is not True:
@@ -410,13 +438,13 @@ class Runtime:
         logs = [dict(level='INFO', message=log) if type(log) is str else log for log in result['logs']]
         phase = _phase(result['state'])
         profile = result['state'].get('playerProfile')
-        previous = stateValue.get('playerProfile')
         if context.get('playerProfilePath') and profile is not None and profile != previous:
             try:
                 self.profileStore().save(context['playerProfilePath'], profile, previous)
             except (OSError, ValueError) as error:
                 handler = importlib.import_module(self.active.name + '.loadouts')
-                result = handler.saveFailed(event, stateValue, context, error)
+                # The input object may have been mutated by an owned dispatch; roll back from the text.
+                result = handler.saveFailed(event, decode(state), context, error)
                 validateTransition(result, context)
                 if self.active.module.validateState(result['state']) is not True:
                     raise ValueError('profile rollback state rejected')

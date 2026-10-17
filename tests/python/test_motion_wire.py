@@ -62,3 +62,20 @@ def test_binary_snapshot_enters_existing_motion_playback(monkeypatch, spawnPoint
     assert motion_wire.OUTPUT.size == len(frame) == 107
     assert result['remoteMotion'][0]['airborne']
     assert result['remoteMotion'][0]['jumping']
+
+
+def test_coalesced_snapshot_batch_matches_separate_events(monkeypatch, spawnPoints):
+    from test_online_actions import running
+    frames = [motion_wire.OUTPUT.pack(b'T7S1', uuid.UUID(MATCH).bytes, uuid.UUID(MATCH).bytes,
+        2, seq, seq, 100 * seq, 1. + seq, 2., .5, 45, -1, 0, 0, 0, 0, 0, 0., 0., 0.) for seq in (1, 2, 3)]
+    separate = running(monkeypatch, spawnPoints, peer=True)
+    batched = running(monkeypatch, spawnPoints, peer=True)
+    for client in (separate, batched):
+        client.state['sessions']['1']['customLobby']['room']['roomId'] = MATCH
+    for frame in frames:
+        separate.event('gateway', body=frame)
+    batched.event('gateway', body=b''.join(frames))
+    assert batched.state == separate.state
+    import pytest
+    with pytest.raises(ValueError):
+        batched.event('gateway', body=b''.join(frames)[:-1])

@@ -348,7 +348,11 @@ def copyState(value):
 
 
 def handleEvent(event, state, context):
-    state = copyState(state)
+    return handleOwnedEvent(event, copyState(state), context)
+
+
+def handleOwnedEvent(event, state, context):
+    """Handle an event on a state object the caller hands over (it may be mutated in place)."""
     flow = Flow(event, state, context)
     eventType, key = event["type"], str(event["connection"])
     # Remove a closed target before authority can produce any scene messages for it.

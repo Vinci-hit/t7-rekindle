@@ -7,6 +7,9 @@ from .codec import move_flow
 
 INTERVAL_MS = 50
 RENDER_INTERVAL_MS = 16
+# Monster-only playback: the native gait animates between samples and position corrections are
+# limited to 20 Hz, so a 30 Hz render halves the dispatches without reducing what is sent.
+MONSTER_RENDER_INTERVAL_MS = 33
 INTERPOLATION_MS = 100
 MAX_SAMPLES = 32
 STALE_MS = 500
@@ -76,13 +79,21 @@ def ledger(session):
         'sentAt': -INTERVAL_MS, 'actors': {}, 'buffers': {}})
 
 
+def render_interval(session):
+    """16 ms while any player peer is being played back, otherwise the monster cadence."""
+    from . import online_pve
+    buffers = session.get('onlineMotion', {}).get('buffers', {})
+    peers = any(buffer.get('samples') and not online_pve.monster_id(int(key)) for key, buffer in buffers.items())
+    return RENDER_INTERVAL_MS if peers else MONSTER_RENDER_INTERVAL_MS
+
+
 def schedule_render(flow, connection, session):
     """Arm the shared playback timer from any module's receive path."""
     previous_connection, previous_session = flow.connection, flow.session
     try:
         flow.connection, flow.session = connection, session
         if RENDER_TIMER not in session['pending']:
-            flow.later(RENDER_TIMER, RENDER_INTERVAL_MS)
+            flow.later(RENDER_TIMER, render_interval(session))
     finally:
         flow.connection, flow.session = previous_connection, previous_session
 
@@ -248,7 +259,7 @@ def timer(flow, name):
             or flow.now - buffer['clockOffset'] - buffer['samples'][-1]['at'] <= STALE_MS + INTERPOLATION_MS
                 and (buffer['samples'][-1]['pose']['forwardBack'] or buffer['samples'][-1]['pose']['leftRight'])
             or flow.now <= buffer.get('verticalUntil', -1)) for buffer in buffers):
-        flow.later(RENDER_TIMER, RENDER_INTERVAL_MS)
+        flow.later(RENDER_TIMER, render_interval(flow.session))
     return True
 
 

@@ -436,11 +436,23 @@ def closed(flow, role):
     flow.connection, flow.session = connection, session
 
 
+MOTION_FRAME_BYTES = 107
+MOTION_BATCH_FRAMES = 64
+
+
 def receive(flow, body):
     if type(body) is not bytes or len(body) > 256 * 1024:
         raise ValueError("invalid room service body")
     if body.startswith(b'T7S1'):
         from .codec import motion_wire
+        if len(body) > MOTION_FRAME_BYTES:
+            # Runtime coalesces consecutive motion snapshots of one gateway into a single dispatch;
+            # each fixed-size frame is applied in arrival order exactly as a separate event would be.
+            if len(body) % MOTION_FRAME_BYTES or len(body) > MOTION_BATCH_FRAMES * MOTION_FRAME_BYTES:
+                raise ValueError("invalid motion snapshot batch")
+            for offset in range(0, len(body), MOTION_FRAME_BYTES):
+                receive(flow, body[offset:offset + MOTION_FRAME_BYTES])
+            return
         envelope = motion_wire.decode_output(body)
     else:
         envelope = json.loads(body.decode("utf-8"), object_pairs_hook=_pairs,

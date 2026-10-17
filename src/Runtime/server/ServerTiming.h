@@ -21,6 +21,13 @@ inline bool decisionTimer(const std::string& id) {
     return name == "actors-pulse" || name == "actors-decision"
         || name == "bot-think" || name.rfind("bot-think-", 0) == 0;
 }
+// Binary room motion snapshots are fixed-size frames (game-server motion_wire OUTPUT_BYTES).
+inline constexpr size_t MOTION_SNAPSHOT_BYTES = 107;
+// Upper bound for one coalesced motion batch (64 frames ~= one publish of every monster).
+inline constexpr size_t MOTION_BATCH_BYTES = 64 * MOTION_SNAPSHOT_BYTES;
+inline bool motionSnapshot(const Bytes& body) {
+    return body.size() == MOTION_SNAPSHOT_BYTES && body[0] == 'T' && body[1] == '7' && body[2] == 'S' && body[3] == '1';
+}
 inline TimePoint timerDeadline(const std::string& id, TimePoint dispatched, TimePoint committed, int64_t delay) {
     return (animationTimer(id) ? committed : dispatched) + std::chrono::milliseconds(delay);
 }

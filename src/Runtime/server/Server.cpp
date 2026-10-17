@@ -370,6 +370,20 @@ bool Server::nextEvent(Timers& timers, QueuedEvent& event, std::vector<uint64_t>
                 if (next == events_.end() || !detail::animationTimer(next->timerId)) next = events_.begin();
                 event = std::move(*next); events_.erase(next);
                 eventBytes_ -= event.body.size() + event.serialized.size() + 256;
+                // Each binary motion snapshot carries one actor pose, so N monsters produced 10N business
+                // dispatches per second, each copying, validating and serialising the whole state.
+                // Consecutive snapshots of one gateway are delivered as one event (concatenated 107-byte
+                // frames, processed in order by Business); anything else in between stays a barrier.
+                if (event.type == "gateway" && detail::motionSnapshot(event.body)) {
+                    while (!events_.empty() && event.body.size() < detail::MOTION_BATCH_BYTES) {
+                        auto& following = events_.front();
+                        if (following.type != "gateway" || following.connection != event.connection
+                                || !detail::motionSnapshot(following.body)) break;
+                        eventBytes_ -= following.body.size() + following.serialized.size() + 256;
+                        event.body.insert(event.body.end(), following.body.begin(), following.body.end());
+                        events_.pop_front();
+                    }
+                }
                 for (const auto& pair : sessions_) live.push_back(pair.first);
                 if (pressured) signals_->io();
                 return true;
