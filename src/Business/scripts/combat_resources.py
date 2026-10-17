@@ -11,6 +11,9 @@ PARAM_PATH = 'data/table/s_battle_param_cli.bin'
 STATE_PATH = 'data/table/s_act_state_cli.bin'
 CHARACTER_PATH = 'data/table/s_res_havok_character_create_clt.bin'
 DIRECTIONS = {300560: 1, 300550: 4, 300570: 2, 300540: 3}
+# Multiplies the table-driven attack timing (prepare, process, finish and the contact window).
+# Parry and rebound reaction durations are unchanged.
+ATTACK_SPEED_SCALE = 0.9
 
 
 def validProfile(value):
@@ -178,6 +181,12 @@ def loadCombatProfiles(directory, heroId):
     result = {}
     for tid, index in HERO_WEAPONS[heroId].items():
         profile = deepcopy(PROFILES[index]) | {'weaponId': tid}
+        for attack in profile['attacks'].values():
+            phases = attack['phases']
+            attack['phases'] = [max(1, round(phases[0] * ATTACK_SPEED_SCALE)), 0,
+                                max(1, round(phases[2] * ATTACK_SPEED_SCALE)), max(1, round(phases[3] * ATTACK_SPEED_SCALE))]
+            attack['contactStartMs'] = round(attack['contactStartMs'] * ATTACK_SPEED_SCALE)
+            attack['contactEndMs'] = round(attack['contactEndMs'] * ATTACK_SPEED_SCALE)
         # State snapshots use lists; retain the exporter's evidence tuples in the static table.
         for key in ('timingSources', 'windowAdjustments'):
             if key in profile:

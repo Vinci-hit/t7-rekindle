@@ -56,7 +56,7 @@ def test_all_static_hero_weapon_profiles_are_valid_isolated_and_use_no_client_re
                 assert (animationMs is not None and not reason) or (animationMs is None and reason)
     first = combat.loadCombatProfiles('', 1101)
     first[1030411]['attacks']['300560']['phases'][0] = 999
-    assert combat.loadCombatProfiles('', 1101)[1030411]['attacks']['300560']['phases'] == [300, 0, 600, 533]
+    assert combat.loadCombatProfiles('', 1101)[1030411]['attacks']['300560']['phases'] == [270, 0, 540, 480]
 
 
 def test_static_animation_timings_preserve_crops_and_gender_bindings():
@@ -65,7 +65,7 @@ def test_static_animation_timings_preserve_crops_and_gender_bindings():
     assert male[1030411]['dashAttack']['reboundMs'] == 800
     assert male[1030411]['dashAttack']['durationSource'] == 'animation'
     female = combat.loadCombatProfiles('', 2102)
-    assert female[1030121]['attacks']['300560']['phases'] == [333, 0, 867, 567]
+    assert female[1030121]['attacks']['300560']['phases'] == [300, 0, 780, 510]
 
 
 def test_static_combat_profiles_round_trip_through_runtime_state():
