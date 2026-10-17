@@ -441,9 +441,12 @@ def emit(flow, connection, session, actor, pose, state, reason):
     # What the player sees: hit sampling uses this, whether or not a correction packet was needed.
     source['presented'] = transform
     idle = source.get('battleState', 2) == 2
-    if idle and source.get('nativeMovement') != movement:
+    if idle and gait_due(source.get('nativeMovement'), movement, pose['heading']):
+        # The composite carries direction and position: re-issuing it when the travel direction turns
+        # is what peers do. Without it the native gait kept walking along the old heading while
+        # corrections pulled it back, which read as side-to-side wobble.
         body = movement_body(source, pose, flow.now-session['instanceStartedAt'])
-        source['nativeMovement'] = movement
+        source['nativeMovement'] = movement + [pose['heading']]
     elif (source.get('nativeTransform') != transform and correction_due(source, pose, transform, flow.now)) \
             or pin_due(source, flow.now):
         body = move_flow.encode_move_direct_bc(
@@ -465,6 +468,14 @@ def trace(flow, source, what, **fields):
         flow.log('DEBUG', 'pve-trace ' + ' '.join([f"t={flow.now}", f"actor={source['actorId']}", what,
             f"state={source.get('battleState', 2)}", f"server={[round(v, 2) for v in source['position']]}/{source['heading']}",
             f"shown={source.get('presented')}"] + [f"{k}={v}" for k, v in fields.items()]))
+
+
+def gait_due(previous, movement, heading):
+    if previous is None or previous[:3] != movement:
+        return True
+    moving = movement[0] != 0 or movement[1] != 0
+    return moving and (len(previous) < 4
+        or abs((heading - previous[3] + 180) % 360 - 180) > HEADING_CORRECTION_DEGREES)
 
 
 def pin_due(source, now):

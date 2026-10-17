@@ -480,7 +480,7 @@ def test_attack_cancels_the_walking_gait_before_the_action_and_stops_hold_positi
     client.context['nowMs'] = 220
     instance(client, kind='timer', name='online-motion-render')
     source = client.state['sessions']['2']['onlinePve']['monsters'][str(rid)]
-    assert source['nativeMovement'] == [-1, 0, False]
+    assert source['nativeMovement'][:3] == [-1, 0, False]
     # Attacks are queued behind playback; once due, the first packet must stop the gait before the state sync.
     client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 235, 'serverTimeMs': 3450})
     client.context['nowMs'] = 700
@@ -497,3 +497,12 @@ def test_stationary_monster_is_re_anchored_so_animations_cannot_walk_it_off_the_
     assert online_pve.pin_due(dict(alive=True, nativeSentAt=1000), 1100)
     assert online_pve.pin_due(dict(alive=True), 5)
     assert not online_pve.pin_due(dict(alive=False, nativeSentAt=0), 9999)
+
+
+def test_walking_gait_is_reissued_when_the_travel_direction_turns():
+    assert online_pve.gait_due(None, [-1, 0, False], 0)
+    assert not online_pve.gait_due([-1, 0, False, 0], [-1, 0, False], 5)
+    assert online_pve.gait_due([-1, 0, False, 0], [-1, 0, False], 12)
+    assert online_pve.gait_due([-1, 0, False, 175], [-1, 0, False], -170)  # wraps: 15 degrees
+    assert not online_pve.gait_due([0, 0, False, 0], [0, 0, False], 90)   # standing turns use corrections
+    assert online_pve.gait_due([-1, 0, False, 0], [0, 0, False], 0)       # stop
