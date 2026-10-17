@@ -102,6 +102,9 @@ def test_start_enters_the_same_client_then_real_loading_starts_authority(peer, s
     result = client.reply(5, 'room', room=countdown)
     assert result['send'][0]['reason'] == 'online-authority-countdown'
     assert all(item['connection'] == 2 for item in result['send'])
+    # The native movement controller stays paused until Running enables ground.
+    paused = [item for item in result['send'] if item['reason'] == 'instance-move-notify-active-after-in-scene']
+    assert paused and paused[-1]['body'][-1:] == b'\0'
     running = {**countdown, 'phase': 'running', 'revision': 4}
     result = client.reply(None, 'roomChanged', room=running)
     assert result['send'][0]['reason'] == 'online-authority-running'

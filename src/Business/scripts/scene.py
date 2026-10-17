@@ -73,6 +73,9 @@ def battleEntry(flow):
     guard_state.publish(flow, wire.ACTOR_ID)
     if not controls.groundEnabled(flow):
         flow.send(0x36, wire.actorState(flow.now, 8, userId=flow.userId), "actor-ready-play-after-battle-confirm")
+        if online_scene.enabled(flow):
+            # READY_PLAY alone leaves the native controller live; pause it until Running enables ground.
+            controls.activate(flow)
     if flow.session.get("controlBaseline") == wire.BASELINE_ID:
         if not controls.runtimeMovement(flow):
             ground = controls.groundState(flow)

@@ -151,6 +151,7 @@ def applyAuthority(flow):
         if phase == 2:
             flow.send(0xA, wire.roundState(flow.now, 3, 3000), 'online-authority-countdown')
             peerState(flow, 8)
+            controls.activate(flow)
             flow.phase('online-countdown')
         elif phase == 3:
             room = room_rules(flow)

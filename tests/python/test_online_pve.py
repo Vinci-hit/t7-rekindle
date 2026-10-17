@@ -68,6 +68,8 @@ def test_pve_damage_does_not_insert_monsters_into_player_scoreboard(entering):
     assert set(client.state['sessions']['2']['onlineCombat']['scores'])=={'1'}
     feedback = next(item for item in result['send'] if item['reason'] == 'online-contact-effect')
     assert feedback['body'][87] == int(entering)
+    # Monster bodies carry no native material; the flesh effect needs the body material.
+    assert struct.unpack_from('>i', feedback['body'], 47)[0] == 4
 
 
 def test_pve_failure_is_explicit_and_non_pve_selection_does_not_start_a_room():

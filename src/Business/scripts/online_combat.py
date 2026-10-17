@@ -5,6 +5,7 @@ from . import actors, contact_journal, contracts as wire, controls, online_scene
 from .codec import attr_flow, battle_flow, kill_flow, room_flow, vision_flow
 
 STRIKES = frozenset((238, 244, 250, 256, 439))
+BODY_MATERIAL = 4
 
 
 def ledger(session):
@@ -332,6 +333,10 @@ def contact(flow, effect):
     if not effect['parried']:
         from . import online_pve
         birth_active = bool(target) and online_pve.in_birth(flow.session, target) and values.get(target, 0) > 0
+        # Monster contacts are server-synthesised or sampled on a non-player body; the native flesh
+        # effects key on the body material, so present every damaging monster contact as flesh.
+        if target and damage and (online_pve.monster_id(effect['attacker']) or online_pve.monster_id(effect['target'])):
+            material = BODY_MATERIAL
         # Native HurtType also gates blood and flesh effects. Enable the normal
         # hit path only for an authoritative damaging body contact.
         flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),
