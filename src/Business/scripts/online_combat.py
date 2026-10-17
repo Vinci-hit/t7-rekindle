@@ -6,6 +6,7 @@ from .codec import attr_flow, battle_flow, kill_flow, room_flow, vision_flow
 
 STRIKES = frozenset((238, 244, 250, 256, 439))
 BODY_MATERIAL = 4
+MAX_PREDICTED = 32
 
 
 def ledger(session):
@@ -19,6 +20,8 @@ def valid(session):
             ('inputSeq', 0xffffffff), ('eventSeq', 0xffffffffffffffff), ('health', 100)))
         and type(value.get('ready')) is bool and type(value.get('seen')) is list and len(value['seen']) <= 64
         and all(type(key) is str and len(key) <= 64 for key in value['seen'])
+        and type(value.get('predicted', [])) is list and len(value.get('predicted', [])) <= MAX_PREDICTED
+        and all(type(key) is str and len(key) <= 64 for key in value.get('predicted', []))
         and valid_scores(value.get('scores', {})))
 
 
@@ -107,9 +110,42 @@ def world_updated(flow):
             return
         state['inputSeq'] = sequence
         state['seen'] = [*state['seen'], key][-64:]
+        if not weapon_contact:
+            predict(flow, event, target)
         age = int(flow.now - event['occurredAt'])
         flow.log('INFO', f'online-contact-report input={sequence} action={event["seq"]} state={event["state"]} target={target} weapon={weapon_contact} targetState={event["targetState"]} sampleAgeMs={age}')
     state['cursor'] = identity
+
+
+def hit_part(height):
+    """Rust's body region rule (combat.rs `body_damage`) for a contact this high above the feet."""
+    if not 0 <= height <= 1.8:
+        return 'body'
+    return 'head' if height >= 1.5 else 'legs' if height < .6 else 'body'
+
+
+def predict(flow, event, target):
+    """Show the local swing's hit on a monster the moment the native blade lands.
+
+    Blood and impact are the attacker's own feedback and should not wait a round trip; the verdict
+    later adds damage, the reaction and any kill without repeating the effect. Monsters never guard,
+    so a body contact on one cannot turn into a parry. Players are left to the verdict: their guard
+    may already be up on their own screen before this one shows it.
+    """
+    from . import online_pve, weapons
+    rid = event['targetId']
+    if (not online_pve.monster_id(target) or online_pve.in_birth(flow.session, rid)
+            or not online_scene.peer_data(flow.session, rid).get('health', 100)):
+        return
+    parts = {'head': battle_flow.HIT_PART_HEAD, 'body': battle_flow.HIT_PART_BODY,
+             'legs': battle_flow.HIT_PART_LEGS}
+    flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(event['position']),
+        hit_direction=tuple(event['direction']), hit_normal=tuple(event['normal']), material_id=BODY_MATERIAL,
+        hit_part=parts[hit_part(event['position'][2] - event['targetPosition'][2])], ignore_hurt=False,
+        attacker_mid=1, target_mid=rid, attacker_weapon_id=weapons.equipped(flow.session),
+        target_weapon_id=0, server_time_ms=flow.now), 'online-contact-predicted')
+    state = ledger(flow.session)
+    state['predicted'] = [*state.get('predicted', []), f"{event['seq']}:{target}"][-MAX_PREDICTED:]
 
 
 def trace_reactions(flow, snapshot):
@@ -342,7 +378,12 @@ def contact(flow, effect):
     flow.log('DEBUG', f'online-contact-verdict event={ledger(flow.session)["eventSeq"]} attacker={attacker} target={target} swing={sequence} parried={effect["parried"]} damage={damage}')
     # Parry reaction states already play the native effects on both weapons.
     # Body and scene contacts still need their contact-point feedback.
-    if not effect['parried']:
+    predicted = ledger(flow.session).get('predicted', [])
+    key = f"{sequence}:{effect['target']}"
+    shown = attacker == 1 and key in predicted
+    if shown:
+        predicted.remove(key)
+    if not effect['parried'] and not (shown and target and damage):
         from . import online_pve
         target_health = next((life['health'] for life in effect['lives']
                               if life['actorId'] == effect['target']), 0)

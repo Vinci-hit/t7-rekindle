@@ -454,3 +454,43 @@ def test_snapshot_rejects_monsters_outside_enemy_slots_or_sharing_one():
     twin = {**monster(), 'actorId': online_pve.FIRST_MONSTER_ID + 1}
     assert not online_pve.valid_snapshot(snapshot([monster(), twin]))
     assert online_pve.valid_snapshot(snapshot([monster(), {**twin, 'localRid': 11}]))
+
+
+def test_own_hit_on_a_monster_shows_at_once_and_the_verdict_does_not_repeat_it():
+    from Business.scripts import online_prediction
+    client, _ = running()
+    m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    session = client.state['sessions']['2']
+    online_prediction.remember(session, 235, 1)
+    online_prediction.remember(session, 238, 1)
+    client.context['nowMs'] = 1000
+    hit = dict(ready=True, hit=True, actorId=1, targetId=2, entity=101, targetEntity=102,
+        state=238, seq=3, targetState=2, targetSeq=1, phaseAt=700, targetPhaseAt=600,
+        occurredAt=950., along=.5, sourcePosition=[2., 0., .2], targetPosition=[3., 0., .2],
+        sourceHeading=0., targetHeading=180., position=[2.9, 0., 1.9], normal=[-1., 0., 0.],
+        direction=[1., 0., 0.], material=0, defenceWeaponId=0, bodyIndex=0, region='head',
+        sourceVelocity=[0., 0., 0.], targetVelocity=[0., 0., 0.], weaponVelocity=[0., 0., 0.],
+        velocityReady=False, airborne=False, targetAirborne=False)
+    client.context['botWorld'] = dict(ready=True, sampledAt=1000, instanceStartedAt=session['instanceStartedAt'],
+        actors={'1': dict(ready=True, entity=101, position=[2., 0., .2], heading=0.)},
+        contactJournal=dict(throughAt=1000, batchId=1, frames=10, dropped=0, events=[hit]))
+    result = client.event('world')
+    assert any('contactInput' in v['request'] for v in result['gateway'])
+    shown = [p for p in result['send'] if p['reason'] == 'online-contact-predicted']
+    assert len(shown) == 1
+    notify = battle_flow.decode_battle_hit_point_notify(shown[0]['body'])
+    assert (notify.target_mid, notify.hit_part) == (2, battle_flow.HIT_PART_HEAD)
+    assert shown[0]['body'][87] == 0
+    assert struct.unpack_from('>i', shown[0]['body'], 47)[0] == 4
+    lives = [dict(actorId=1, health=100, kills=0, deaths=0, streak=0),
+             dict(actorId=m['actorId'], health=30, kills=0, deaths=0, streak=0)]
+    effect = dict(type='contact', attacker=1, target=m['actorId'], actionSeq=3, weaponId=1030411,
+        targetWeaponId=11000002, parried=False, damage=30, hitPart='head', position=[2.9, 0., 1.9],
+        normal=[-1., 0., 0.], direction=[1., 0., 0.], material=0, lives=lives)
+    verdict = client.reply(None, 'combatChanged', update=dict(roomId='room-test', matchId=MATCH, eventSeq=1,
+        serverTimeMs=3500, effect=effect))
+    reasons = [p['reason'] for p in verdict['send']]
+    assert 'online-contact-effect' not in reasons
+    assert 'online-health-monster' in reasons and 'online-damage' in reasons
+    assert not client.state['sessions']['2']['onlineCombat']['predicted']
