@@ -56,6 +56,17 @@ pub struct ActionEvent {
     pub server_time_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_actor_id: Option<ActorId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<Cause>,
+}
+
+/// The swing that caused a combat consequence. Clients present the consequence when that actor's
+/// swing, as their screen shows it, reaches `at` (server time on the actor's action timeline).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cause {
+    pub actor_id: ActorId,
+    pub at: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -563,7 +574,20 @@ impl Battle {
                 },
                 server_time_ms,
                 target_actor_id: None,
+                cause: None,
             });
+        }
+    }
+
+    /// Position in the pending event list, for `stamp_cause`.
+    pub(crate) fn mark(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Every event published since `mark` is a consequence of `cause`.
+    pub(crate) fn stamp_cause(&mut self, mark: usize, cause: Cause) {
+        for event in self.pending.iter_mut().skip(mark) {
+            event.cause = Some(cause);
         }
     }
 
@@ -604,6 +628,7 @@ impl Battle {
                         duration_ms: actor.reaction_until.map_or(0, |t| t.saturating_sub(now)),
                         server_time_ms: now,
                         target_actor_id: None,
+                        cause: None,
                     }
                 })
                 .collect(),

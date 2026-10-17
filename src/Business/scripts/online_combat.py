@@ -185,23 +185,40 @@ def receive(flow, value):
         if sequence != state['eventSeq'] + 1:
             raise ValueError('online combat event gap or replay')
         integer(value['serverTimeMs'], 0, 0xffffffffffffffff)
-        state['eventSeq'] = sequence
         effect = value['effect']
-        kind = effect['type']
-        if kind == 'contact':
-            contact(flow, effect)
-        elif kind == 'respawnReady':
-            if rid(flow, effect['actorId']) == 1:
-                if state['health']:
-                    raise ValueError('alive actor cannot select a respawn')
-                state['ready'] = True
-                flow.send(0x36, wire.actorState(flow.now, 7, userId=flow.userId), 'online-respawn-select-hero')
-        elif kind == 'respawned':
-            respawn(flow, rid(flow, effect['actorId']), effect['lives'])
-        else:
-            raise ValueError('unsupported combat effect')
+        cause = None
+        if effect['type'] == 'contact':
+            if 'causeAt' in effect:
+                cause = (effect['attacker'], integer(effect['causeAt'], 0, 0xffffffffffffffff))
+            if online_scene.actor_rid(match, effect['attacker']) == 1:
+                # The body and weapon probes may overlap on successive native frames. Once
+                # adjudicated, this swing/target cannot report another outcome, even while held.
+                swing = integer(effect['actionSeq'], 1, 0xffff)
+                state['seen'] = [*state['seen'], *(f"{swing}:{effect['target'] or 0}:{kind}" for kind in (0, 1))][-64:]
+        state['eventSeq'] = sequence
+        from . import online_presentation
+        if not online_presentation.submit(flow, flow.connection, flow.session, 'combat', None, cause, value):
+            present(flow, effect)
     finally:
         flow.connection, flow.session = connection, session
+
+
+def present(flow, effect):
+    """Apply a sequenced combat effect once its causing swing, if any, is visible."""
+    state = ledger(flow.session)
+    kind = effect['type']
+    if kind == 'contact':
+        contact(flow, effect)
+    elif kind == 'respawnReady':
+        if rid(flow, effect['actorId']) == 1:
+            if state['health']:
+                raise ValueError('alive actor cannot select a respawn')
+            state['ready'] = True
+            flow.send(0x36, wire.actorState(flow.now, 7, userId=flow.userId), 'online-respawn-select-hero')
+    elif kind == 'respawned':
+        respawn(flow, rid(flow, effect['actorId']), effect['lives'])
+    else:
+        raise ValueError('unsupported combat effect')
 
 
 def rid(flow, actor):
@@ -323,12 +340,6 @@ def contact(flow, effect):
     if any(not .9 <= math.hypot(*effect[key]) <= 1.1 for key in ('normal', 'direction')):
         raise ValueError('invalid combat contact normal')
     flow.log('DEBUG', f'online-contact-verdict event={ledger(flow.session)["eventSeq"]} attacker={attacker} target={target} swing={sequence} parried={effect["parried"]} damage={damage}')
-    if attacker == 1:
-        # The body and weapon probes may overlap on successive native frames.
-        # Once adjudicated, this swing/target cannot report another outcome.
-        seen = ledger(flow.session)['seen']
-        seen.extend(f'{sequence}:{effect["target"] or 0}:{kind}' for kind in (0, 1))
-        del seen[:-64]
     # Parry reaction states already play the native effects on both weapons.
     # Body and scene contacts still need their contact-point feedback.
     if not effect['parried']:

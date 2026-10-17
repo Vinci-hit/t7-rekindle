@@ -1,5 +1,5 @@
 """Pause a disconnected transport and restore current authority without event replay."""
-from . import controls, online_actions, online_combat, online_motion, online_prediction, online_scene
+from . import controls, online_actions, online_combat, online_motion, online_prediction, online_presentation, online_scene
 from .codec import battle_flow, custom_room as codec, move_flow
 
 
@@ -22,6 +22,8 @@ def pause(flow, payload):
     try:
         for flow.connection, flow.session in instances(flow):
             online_prediction.clear(flow.session)
+            # Recovery restores current authority; consequences still held are superseded by it.
+            online_presentation.clear(flow.session)
             flow.session['groundEnabled'] = False
             controls.activate(flow)
             motion = online_motion.ledger(flow.session)
@@ -109,6 +111,7 @@ def restore_battle(flow, room, recovery):
     try:
         flow.connection, flow.session = target_connection, target_session
         online_prediction.clear(flow.session, blocked=False)
+        online_presentation.clear(flow.session)
         combat = online_combat.ledger(flow.session)
         combat.update(eventSeq=sequences['combatSeq'], seen=[], resumeAt=flow.now)
         previous_health = {1: combat['health'], **{rid: online_scene.peer_data(flow.session, rid).get('health', 100)

@@ -141,10 +141,32 @@ def receive(flow, value):
         actions['eventSeq'] = event_sequence
         return
     validate_event(match, value)
+    caused_by = cause(value)
     if event_sequence != actions['eventSeq'] + 1 or sequence != actions['actors'].get(str(rid), 1) % 0xffff + 1:
         raise ValueError('online action event sequence has a gap or replay')
     actions['eventSeq'] = event_sequence
     actions['actors'][str(rid)] = sequence
+    from . import online_presentation
+    if not online_presentation.submit(flow, connection, session, 'action', rid, caused_by, value):
+        deliver(flow, connection, session, rid, value)
+
+
+def cause(value):
+    """`(actorId, serverTimeMs)` of the swing that caused this action, if any."""
+    from .custom_lobby import integer
+    if 'cause' not in value:
+        return None
+    source = value['cause']
+    if type(source) is not dict or set(source) != {'actorId', 'at'}:
+        raise ValueError('invalid online action cause')
+    return integer(source['actorId'], 1, 0xffffffff), integer(source['at'], 0, 0xffffffffffffffff)
+
+
+def deliver(flow, connection, session, rid, value):
+    """Present a sequenced action event once its cause, if any, is visible."""
+    from . import online_pve
+    state, sequence, action_id = value['state'], value['actionSeq'], value['actionId']
+    actions = ledger(session)
     if online_pve.held(session, rid):
         # Emergence owns the native graph until it ends (death, 42, still interrupts it); a corpse
         # is never re-animated by a late action.
@@ -159,8 +181,9 @@ def receive(flow, value):
     if rid == 1 and online_prediction.reconcile(flow, session, sequence, state, action_id):
         return
     buffer = session.get('onlineMotion', {}).get('buffers', {}).get(str(rid), {})
-    # Contact reactions must not wait behind the deliberate movement playback delay.
-    # Their recovery follows the same immediate clock so recoil does not linger.
+    # Reactions interrupt whatever this actor's playback still has queued. When they happen is set
+    # by their cause (online_presentation), not by this actor's movement delay, and their recovery
+    # follows the same clock so recoil does not linger.
     if rid != 1 and (state in REACTION_STATES or state in GUARD_STATES or buffer.get('guardPresented', False) or str(rid) in actions.get('reacting', [])):
         buffer.pop('actions', None)
         present(flow, connection, session, rid, value)

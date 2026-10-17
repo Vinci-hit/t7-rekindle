@@ -167,7 +167,7 @@ Running 阶段支持龙牙刀和拳头的四向攻击与格挡：按下和松开
 
 每连接 `requestId` 是递增正整数的十进制字符串，不允许前导零。最近 32 条请求缓存原回复；相同 ID 的不同内容报 `requestConflict`，已淘汰的旧 ID 报 `staleRequest`，不会再次执行。错误使用 `event.type=error` 与稳定的 `payload.code`，完整枚举见 [protocol.rs](src/protocol.rs)。
 
-动作 intent 为 `attackUp/Right/Down/Left`、`blockUp/Right/Down/Left`（以完整驼峰名称传输）、`attackRelease`、`blockRelease`、`dashAttack`、`equipMain`、`toggleFists`。`actionAccepted` 确认对应 matchId、inputSeq 与当前 weaponId；实际阶段由无 requestId 的 `actionChanged` 推送，其中 action 包含 roomId、matchId、actorId、eventSeq、actionSeq、state、serverTimeMs、weaponId、durationMs。eventSeq 在本局递增，actionSeq 在每角色范围 1–65535 循环。重复输入拒绝为 staleInput，重放已缓存请求只返回确认，不重复广播动作。
+动作 intent 为 `attackUp/Right/Down/Left`、`blockUp/Right/Down/Left`（以完整驼峰名称传输）、`attackRelease`、`blockRelease`、`dashAttack`、`equipMain`、`toggleFists`。`actionAccepted` 确认对应 matchId、inputSeq 与当前 weaponId；实际阶段由无 requestId 的 `actionChanged` 推送，其中 action 包含 roomId、matchId、actorId、eventSeq、actionSeq、state、serverTimeMs、weaponId、durationMs；由接触引起的受击、弹刀、反弹与死亡另带 `cause: {actorId, at}`，表示引起它的出刀在攻击者动作时间线上碰到目标的服务端时刻。eventSeq 在本局递增，actionSeq 在每角色范围 1–65535 循环。重复输入拒绝为 staleInput，重放已缓存请求只返回确认，不重复广播动作。
 
 ### 装备与冲刺
 
@@ -187,7 +187,7 @@ Running 阶段支持龙牙刀和拳头的四向攻击与格挡：按下和松开
 
 服务端校验本局 Running、角色存活、动作历史与出手窗口、接触向量、双方接触时刻的位置、距离与朝向；位置从该时刻及之前一秒内的历史样本选取，不使用接触后的坐标。同一出手对同一目标最多结算一次；动作结束后最多接受 600ms 的报告延迟。原生适配额外检测双方真实武器线段的相交：连续样本间隔不超过 100ms，最多细分 32 次，接触容差 6cm。武器接触独立标记为 weaponContact，只能在历史格挡有效且面向攻击者时触发弹刀，不能直接授予人物伤害；被拒绝的武器接触不吞掉后续身体接触。按接触发生时间和刀刃扫掠位置先后处理；先接触身体就受伤，不因格挡方向匹配改判弹刀。先接触武器且历史格挡有效时产生反弹与短暂格挡反馈；击中地面仅播放接触效果，击中墙面反弹。当前龙牙刀基础伤害为 20，头部倍率 1.5、腿部倍率 0.75、身体倍率 1；按双方接近速度每米/秒增伤 5%，最多增加 50%。速度取自接触时刻及之前的服务端位置历史，仅使用间隔和年龄不超过 100ms、角色速度不超过 25m/s 的有效样本；缺失或异常样本不增伤。初始血量 100。
 
-`combatChanged.payload.update` 包含 roomId、matchId、eventSeq、serverTimeMs 和 effect。effect 为 contact（判定和完整血量/击杀/死亡/连杀快照）、respawnReady（死亡后 8 秒开放选择）或 respawned（恢复血量）。死亡后原版选角与参战按钮通过 `respawn` 请求服务器；服务器确认后网关重建对象并恢复操作。重新生成对象先于其待机动作，防止动作作用于旧对象。
+`combatChanged.payload.update` 包含 roomId、matchId、eventSeq、serverTimeMs 和 effect。effect 为 contact（判定和完整血量/击杀/死亡/连杀快照，`causeAt` 为攻击者出刀碰到目标的时刻，客户端据此与画面对齐呈现，见 [战斗手感](../docs/combat-feel.md#呈现时钟)）、respawnReady（死亡后 8 秒开放选择）或 respawned（恢复血量）。死亡后原版选角与参战按钮通过 `respawn` 请求服务器；服务器确认后网关重建对象并恢复操作。重新生成对象先于其待机动作，防止动作作用于旧对象。
 
 Business 只把权威结果映射为原版消息：接触特效、专用格挡音效、血量、伤害飘字、受击和死亡状态、击杀播报、个人及阵营计分、连杀提示。计分显示按权威击杀数换算每次 100 分，不在网关计算命中或授予击杀。近战结果携带服务器判定的头部、身体或腿部，网关同时转换接触消息和伤害结果中的部位字段，显示对应命中图标；受击动画仍使用统一动作。
 

@@ -4,7 +4,7 @@ import os
 import struct
 
 from . import actors, contracts as wire, scene, roster, controls, battle, bot, bot_life, combat, player_life
-from . import battle_clock, settlement, online_scene, online_actions, online_prediction, online_motion, custom_lobby, weapons, online_combat, pve, online_pve
+from . import battle_clock, settlement, online_scene, online_actions, online_prediction, online_motion, custom_lobby, weapons, online_combat, online_presentation, pve, online_pve
 from . import loadouts, player_profile, hero_resources
 from . import titles
 from .codec import kill_flow, login_flow, protocol, room_flow
@@ -68,6 +68,7 @@ def validateState(state):
                and online_prediction.valid(session)
                and online_motion.valid(session)
                and online_combat.valid(session)
+               and online_presentation.valid(session)
                and online_pve.valid(session)
                and ('killTarget' not in session or kill_flow.valid_kill_target(session['killTarget']))
                and ("bot" not in session or combat.validState(session["bot"]))

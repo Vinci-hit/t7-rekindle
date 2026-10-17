@@ -2,7 +2,7 @@
 from . import online_limits
 import math
 
-from . import actors, controls, online_playback
+from . import actors, controls, online_playback, online_presentation
 from .codec import move_flow
 
 INTERVAL_MS = 50
@@ -243,7 +243,7 @@ def timer(flow, name):
     render(flow)
     value = ledger(flow.session)
     buffers = value.get('buffers', {}).values()
-    if any(buffer.get('samples') and (buffer.get('catchUp') or buffer.get('actions') or buffer.get('renderAt', 0) < buffer['samples'][-1]['at']
+    if online_presentation.pending(flow.session) or any(buffer.get('samples') and (buffer.get('catchUp') or buffer.get('actions') or buffer.get('renderAt', 0) < buffer['samples'][-1]['at']
             or flow.now - buffer['clockOffset'] - buffer['samples'][-1]['at'] <= STALE_MS + INTERPOLATION_MS
                 and (buffer['samples'][-1]['pose']['forwardBack'] or buffer['samples'][-1]['pose']['leftRight'])
             or flow.now <= buffer.get('verticalUntil', -1)) for buffer in buffers):
@@ -255,6 +255,7 @@ def render(flow):
     value = ledger(flow.session)
     for key, buffer in value.get('buffers', {}).items():
         render_actor(flow, int(key), buffer)
+    online_presentation.release(flow)
 
 
 def render_actor(flow, rid, state):

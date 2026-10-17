@@ -116,6 +116,8 @@ pub enum CombatEffect {
         direction: [f32; 3],
         material: i8,
         lives: Vec<Health>,
+        /// When the attacker's swing, as clients show it, meets the target (see `battle::Cause`).
+        cause_at: u64,
     },
     RespawnReady {
         actor_id: ActorId,
@@ -495,6 +497,17 @@ impl Combat {
             return Ok(false);
         }
         hits.targets.push(target_id);
+        // Monster contacts are adjudicated PRESENTATION_DELAY_MS into the swing the victim sees;
+        // the blade itself meets the target that much earlier on the monster's timeline.
+        let cause = crate::battle::Cause {
+            actor_id: ActorId(actor),
+            at: if actor >= crate::pve::FIRST_MONSTER_ID {
+                contact_at.saturating_sub(crate::limits::PRESENTATION_DELAY_MS)
+            } else {
+                contact_at
+            },
+        };
+        let mark = battle.mark();
         tracing::debug!(
             actor,
             action_id = report.action_id,
@@ -619,6 +632,7 @@ impl Combat {
                 );
             }
         }
+        battle.stamp_cause(mark, cause);
         self.publish(
             CombatEffect::Contact {
                 attacker: ActorId(actor),
@@ -638,6 +652,7 @@ impl Combat {
                 direction: report.direction,
                 material: report.material,
                 lives: self.health(),
+                cause_at: cause.at,
             },
             now,
         );
@@ -867,5 +882,66 @@ mod shield_tests {
                 assert_eq!(target_weapon_id, 1090211);
             }
         }
+    }
+
+    #[test]
+    fn contact_consequences_carry_the_swing_that_caused_them() {
+        let mut battle = Battle::new("room".into(), "match".into(), [1, 2].into_iter());
+        let mut motion = Motion::new("room".into(), "match".into(), [1, 2].into_iter());
+        for (id, x, yaw) in [(1, 0., 0), (2, 1., 0)] {
+            let pose = Pose {
+                position: [x, 0., 0.],
+                heading: yaw,
+                forward_back: 0,
+                left_right: 0,
+                running: false,
+                motion: None,
+            };
+            motion.input(id, 1, pose, 0).unwrap();
+        }
+        battle.input(1, 1, ActionIntent::AttackUp, 0).unwrap();
+        battle.input(1, 2, ActionIntent::AttackRelease, 1).unwrap();
+        battle.advance(400);
+        let action = battle.current(1).unwrap();
+        battle.take_events();
+        let mut combat = Combat::new("room".into(), "match".into(), [(1, 1), (2, 2)].into_iter());
+        let report = ContactReport {
+            action_seq: action.seq,
+            action_id: action.action_id.unwrap(),
+            state: 238,
+            elapsed_ms: 20,
+            target_actor_id: 2,
+            position: [1., 0., 1.],
+            normal: [-1., 0., 0.],
+            direction: [1., 0., 0.],
+            material: 0,
+            weapon_contact: false,
+            timing: None,
+        };
+        // Received 60 ms after the swing met the target.
+        let contact_at = action.at + 20;
+        assert!(
+            combat
+                .input(1, 1, report, contact_at + 60, &mut battle, &motion)
+                .unwrap()
+        );
+        let events = combat.take_events();
+        let CombatEffect::Contact {
+            cause_at, damage, ..
+        } = events[0].effect
+        else {
+            panic!("contact")
+        };
+        assert!(damage > 0);
+        assert_eq!(cause_at, contact_at);
+        let hurt = battle.take_events().pop().expect("hurt reaction");
+        assert_eq!(hurt.state, 35);
+        assert_eq!(
+            hurt.cause,
+            Some(crate::battle::Cause {
+                actor_id: ActorId(1),
+                at: contact_at
+            })
+        );
     }
 }
