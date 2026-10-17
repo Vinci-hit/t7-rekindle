@@ -314,11 +314,13 @@ def contact(flow, effect):
     # Parry reaction states already play the native effects on both weapons.
     # Body and scene contacts still need their contact-point feedback.
     if not effect['parried']:
+        monster = flow.session.get('onlinePve', {}).get('monsters', {}).get(str(target))
+        birth_active = monster is not None and monster.get('birth') is not None and values[target] > 0
         # Native HurtType also gates blood and flesh effects. Enable the normal
         # hit path only for an authoritative damaging body contact.
         flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),
             hit_direction=tuple(effect['direction']), hit_normal=tuple(effect['normal']), material_id=material,
-            hit_part=hit_part, ignore_hurt=not (target and damage), attacker_mid=attacker, target_mid=target,
+            hit_part=hit_part, ignore_hurt=birth_active or not (target and damage), attacker_mid=attacker, target_mid=target,
             attacker_weapon_id=weapon, target_weapon_id=0,
             server_time_ms=flow.now), 'online-contact-effect')
     if effect['parried']:

@@ -344,12 +344,16 @@ def present_action(flow, connection, session, actor, value):
     source = ledger(session)['monsters'].get(str(actor))
     if source is None or source.get('removed', False):
         return
+    # Birth owns the native graph until completion. Keep consuming authoritative
+    # action sequences, but do not replace a living monster's emergence with hurt/idle.
+    if source.get('birth') is not None and value['state'] != 42:
+        return
     seq = value['actionSeq']
     source['battleState'] = value['state']
     # An action can change the native locomotion graph independently of poses.
     source.pop('nativeMovement', None)
     source.pop('nativeTransform', None)
-    if value['state'] in (35, 42):
+    if value['state'] == 42:
         finish_birth(flow, source, connection, session)
     body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
         state=value['state'],state_change_ms=flow.now-session['instanceStartedAt'],state_time_ms=value['durationMs'])

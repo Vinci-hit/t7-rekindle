@@ -14,7 +14,7 @@ use std::{collections::BTreeMap, sync::Arc};
 pub const FIRST_MONSTER_ID: u32 = 0x40000001;
 pub const FIRST_OBJECT_ID: u32 = 0x50000001;
 pub const AI_INTERVAL_MS: u64 = 100;
-const MAX_AI_STEP_MS: u64 = 250;
+const MAX_AI_STEP_MS: u64 = AI_INTERVAL_MS;
 const GOAL_PUBLISH_INTERVAL_MS: u64 = 500;
 const ROUTES_PER_TICK: usize = 8;
 const ROUTE_REFRESH_MS: u64 = 1000;
@@ -912,8 +912,9 @@ impl Pve {
         for monster in self.monsters.iter_mut().filter(|m| m.view.alive) {
             let id = monster.view.actor_id;
             if let MonsterLocomotion::Spawning { until } = monster.locomotion {
-                let interrupted = battle.current(id).is_some_and(|a| matches!(a.state, 35 | 42));
-                if now >= until || interrupted {
+                // Damage does not transfer locomotion ownership away from the birth clip.
+                // Death is handled before this loop and removes the birth state separately.
+                if now >= until {
                     monster.view.birth = None;
                     monster.locomotion = MonsterLocomotion::Hunting;
                     changed = true;

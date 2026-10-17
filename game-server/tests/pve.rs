@@ -1181,7 +1181,7 @@ fn proximity_regions_spawn_without_clearing_earlier_monsters_or_waiting_for_batc
 }
 
 #[test]
-fn damage_during_birth_interrupts_the_entry_instead_of_restoring_it() {
+fn damage_during_birth_preserves_entry_until_its_original_deadline() {
     let mut data: serde_json::Value =
         serde_json::from_slice(&config([1., 0., 0.], &[1], 100)).unwrap();
     data["scenarios"][0]["birth"] = serde_json::json!("emerge1");
@@ -1199,7 +1199,11 @@ fn damage_during_birth_interrupts_the_entry_instead_of_restoring_it() {
     let monster = lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0].clone();
     assert!(monster.alive);
     assert!(monster.health < 100);
-    assert!(monster.birth.is_none());
+    let birth = monster.birth.expect("nonlethal damage must not interrupt birth");
+    assert_eq!(monster.position, [1., 0., 0.]);
+    pose(&mut lobby, &id, 3, birth.ends_at_ms);
+    lobby.advance(birth.ends_at_ms);
+    assert!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters[0].birth.is_none());
 }
 
 

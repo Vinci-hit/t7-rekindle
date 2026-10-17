@@ -99,8 +99,11 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     assert not client.state['sessions']['2']['onlinePve']['monsters']
 
 
-def test_pve_damage_does_not_insert_monsters_into_player_scoreboard():
+@pytest.mark.parametrize('entering', [False, True])
+def test_pve_damage_does_not_insert_monsters_into_player_scoreboard(entering):
     client,_=running();m=monster()
+    if entering:
+        m['birth'] = birth()
     client.reply(None,'pveChanged',update=update({**snapshot([m]),'phase':'active','wave':1}))
     lives=[dict(actorId=1,health=100,kills=0,deaths=0,streak=0),dict(actorId=m['actorId'],health=40,kills=0,deaths=0,streak=0)]
     effect=dict(type='contact',attacker=1,target=m['actorId'],actionSeq=3,weaponId=1030411,targetWeaponId=11000002,
@@ -109,6 +112,8 @@ def test_pve_damage_does_not_insert_monsters_into_player_scoreboard():
     assert any(v['reason']=='online-health-monster' for v in result['send'])
     assert client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]['health']==40
     assert set(client.state['sessions']['2']['onlineCombat']['scores'])=={'1'}
+    feedback = next(item for item in result['send'] if item['reason'] == 'online-contact-effect')
+    assert feedback['body'][87] == int(entering)
 
 
 def test_pve_failure_is_explicit_and_non_pve_selection_does_not_start_a_room():
@@ -276,18 +281,21 @@ def test_invalid_birth_snapshot_is_rejected(bad):
     assert not online_pve.valid_snapshot(snapshot([{**monster(),'birth':bad}]))
 
 
-def test_hurt_interrupts_birth_once_before_native_reaction():
+def test_hurt_and_recovery_leave_living_birth_animation_untouched():
     client,_=running();m={**monster(),'birth':birth()}
     value={**snapshot([m]),'phase':'active','wave':1}
     client.reply(None,'pveChanged',update=update(value))
     action=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],eventSeq=1,actionSeq=2,
         actionId=None,state=35,weaponId=m['kind']['weaponId'],durationMs=550,serverTimeMs=3600)
     result=client.reply(None,'actionChanged',action=action)
-    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-action']
-    assert battle_flow.decode_battle_state_sync_simple(result['send'][2]['body']).state==35
+    assert not result['send']
+    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
+    assert source['birth'] == m['birth'] and source['actionSeq'] == 2
+    result=client.reply(None,'actionChanged',action={**action,'eventSeq':2,'actionSeq':3,'state':2})
+    assert not result['send']
     dead={k:v for k,v in m.items() if k!='birth'};dead.update(health=0,alive=False)
     result=client.reply(None,'pveChanged',update=update({**value,'monsters':[dead]},2))
-    assert [s['reason'] for s in result['send']]==['online-pve-monster-remove']
+    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-remove']
 
 
 def test_objective_snapshot_validation_and_transition_logging():
