@@ -28,6 +28,7 @@ class AuthServiceTest {
         when(db.account("account")).thenReturn(account);
         when(db.lockAccount("account")).thenReturn(account);
         when(db.lockByName("sample")).thenReturn(account);
+        when(db.byName("sample")).thenReturn(account);
         when(db.sessionByHash(anyString())).thenReturn(session(0, now.plusSeconds(100), null, "account"));
         when(db.lockSession("session")).thenReturn(session(0, now.plusSeconds(100), null, "account"));
         when(secrets.randomToken()).thenReturn(token);
@@ -39,14 +40,27 @@ class AuthServiceTest {
         verify(db, never()).savePresence(any());
         verify(limiter).check("account", "sample", "IP");
     }
+    @Test void loginClearsAccountCounterAfterSuccess() {
+        service.login("sample", "PASSWORD", "IP");
+        verify(limiter).reset("account", "sample");
+    }
+    @Test void loginRejectsPasswordChangedBetweenVerificationAndLock() {
+        when(db.lockByName("sample")).thenReturn(new Account("account", "sample", "other-hash", "ACTIVE", 0, now));
+        failsLogin();
+        verify(db, never()).createSession(any());
+        verify(limiter, never()).reset(anyString(), anyString());
+    }
     @Test void loginHasUniformFailuresAndRecordsThem() {
         when(db.lockByName("sample")).thenReturn(null);
+        when(db.byName("sample")).thenReturn(null);
         failsLogin();
         when(db.lockByName("sample")).thenReturn(account);
+        when(db.byName("sample")).thenReturn(account);
         when(secrets.matches("PASSWORD", "hash")).thenReturn(false);
         failsLogin();
         when(secrets.matches("PASSWORD", "hash")).thenReturn(true);
         when(db.lockByName("sample")).thenReturn(new Account("account", "sample", "hash", "DISABLED", 0, now));
+        when(db.byName("sample")).thenReturn(new Account("account", "sample", "hash", "DISABLED", 0, now));
         failsLogin();
         verify(audit, times(3)).audit("anonymous", "ACCOUNT_LOGIN_FAILED", "sample");
     }
@@ -95,6 +109,7 @@ class AuthServiceTest {
     }
     @Test void qqAccountHasNoPasswordLoginAndLogoutNotifiesOnlyItsConnection() {
         when(db.lockByName("sample")).thenReturn(new Account("account", "sample", "hash", "ACTIVE", 0, now, "12345", "nick", "url"));
+        when(db.byName("sample")).thenReturn(new Account("account", "sample", "hash", "ACTIVE", 0, now, "12345", "nick", "url"));
         failsLogin();
         var events = mock(SessionEvents.class);
         service = new AuthService(db, audit, secrets, limiter, TestTransactions.immediate(), events);

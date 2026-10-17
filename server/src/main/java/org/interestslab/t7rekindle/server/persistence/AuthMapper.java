@@ -10,6 +10,9 @@ public interface AuthMapper {
     @Select("SELECT UTC_TIMESTAMP(3)")
     Instant now();
 
+    @Select("SELECT * FROM account WHERE login_name = #{name}")
+    Account byName(String name);
+
     @Select("SELECT * FROM account WHERE login_name = #{name} FOR UPDATE")
     Account lockByName(String name);
 

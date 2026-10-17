@@ -32,10 +32,15 @@ public class AuthService {
         Inputs.loginName(name);
         Inputs.password(password);
         limiter.check("account", name, address);
+        // Argon2 is deliberately expensive: verify before opening the transaction so the account row lock
+        // and a pooled connection are not held for the hash duration, then re-validate under the lock.
+        Account probe = db.byName(name);
+        boolean passwordMatches = secrets.matches(password, probe == null ? null : probe.passwordHash());
         SessionCredentials result = tx.execute(status -> {
             Account account = db.lockByName(name);
-            boolean passwordMatches = secrets.matches(password, account == null ? null : account.passwordHash());
-            if (account == null || !passwordMatches || account.qqNumber() != null || !account.status().equals("ACTIVE")) {
+            if (account == null || !passwordMatches || probe == null
+                    || !account.passwordHash().equals(probe.passwordHash())
+                    || account.qqNumber() != null || !account.status().equals("ACTIVE")) {
                 audit.audit("anonymous", "ACCOUNT_LOGIN_FAILED", name);
                 return null;
             }
@@ -48,6 +53,7 @@ public class AuthService {
             return new SessionCredentials(session.sessionId(), token, session.expiresAt());
         });
         if (result == null) throw Problem.unauthorized();
+        limiter.reset("account", name);
         return result;
     }
 

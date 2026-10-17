@@ -42,4 +42,13 @@ public class LoginLimiter {
         if (allowed == null) throw Problem.unavailable();
         if (allowed != 1) throw new Problem(429, "LOGIN_RATE_LIMITED", "登录过于频繁，请在 5 分钟后重试");
     }
+
+    /** A successful login clears the account counter so valid logins do not keep the name rate limited. */
+    public void reset(String realm, String name) {
+        try {
+            redis.delete("login:" + realm + ":account:" + Secrets.hash(name));
+        } catch (DataAccessException error) {
+            // best effort: the counter expires on its own
+        }
+    }
 }
