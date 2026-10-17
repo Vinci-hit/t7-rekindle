@@ -99,3 +99,9 @@ def test_distant_monsters_do_not_consume_precise_sweep_tests(monkeypatch):
         lambda *args: pytest.fail('distant body reached precise collision test'))
     online_pve_contacts.world_updated(f, raw())
     assert not online_combat.ledger(f.session)['seen']
+
+
+def test_hit_cylinder_follows_presented_monster_position():
+    from Business.scripts import online_pve_contacts as contacts
+    assert contacts.presented_position(dict(position=[2., 0., 0.])) == [2., 0., 0.]
+    assert contacts.presented_position(dict(position=[2., 0., 0.], nativeTransform=[[1.6, 0., 0.], 0])) == [1.6, 0., 0.]

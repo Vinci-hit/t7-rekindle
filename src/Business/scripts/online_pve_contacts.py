@@ -13,6 +13,14 @@ SWEEP_STEP = 0.08
 MAX_SWEEP_STEPS = 64
 
 
+def presented_position(monster):
+    # The blade is tested against the pose last sent to the native client (the delayed playback the
+    # player actually sees), not the newest server pose, which can lead the drawn model by the
+    # playback delay. Monsters not yet presented fall back to the server position.
+    native = monster.get('nativeTransform')
+    return native[0] if native else monster['position']
+
+
 def body_contact(base, tip, feet):
     """First intersection along a blade segment with an upright body cylinder."""
     delta = [tip[i] - base[i] for i in range(3)]
@@ -91,7 +99,7 @@ def world_updated(flow, raw):
         identity = f"{current['seq']}:{key}:0"
         if not monster['alive'] or identity in state['seen']:
             continue
-        feet = monster['position']
+        feet = presented_position(monster)
         if (any(high[i] < feet[i] - BODY_RADIUS or low[i] > feet[i] + BODY_RADIUS for i in (0, 1))
                 or high[2] < feet[2] or low[2] > feet[2] + BODY_HEIGHT):
             continue
@@ -99,7 +107,7 @@ def world_updated(flow, raw):
             alpha = step / steps
             base, tip = ([previous[k][i] + (current[k][i] - previous[k][i]) * alpha
                           for i in range(3)] for k in ('base', 'tip'))
-            point = body_contact(base, tip, monster['position'])
+            point = body_contact(base, tip, feet)
             if point is None:
                 continue
             direction = [tip[i] - base[i] for i in range(3)]
