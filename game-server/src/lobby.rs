@@ -436,6 +436,17 @@ impl Lobby {
         changed
     }
 
+    pub(crate) fn select_loadout(
+        &mut self,
+        account: &str,
+        match_id: &str,
+        loadout: crate::loadout::Loadout,
+    ) -> Result<RoomSnapshot, ErrorCode> {
+        let room = self.member_room(account)?;
+        room.select_loadout(account, match_id, loadout)?;
+        Ok(room.snapshot())
+    }
+
     pub fn weapon(&mut self, account: &str) -> Result<i32, ErrorCode> {
         self.member_room(account)?.weapon(account)
     }

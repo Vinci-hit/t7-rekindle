@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Common.h"
+#include <array>
 
 namespace t7r {
 struct AudioValues {

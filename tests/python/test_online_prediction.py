@@ -63,7 +63,8 @@ def test_authority_reaction_discards_speculation_and_cancels_timer(monkeypatch, 
     client = running(monkeypatch, spawnPoints)
     input(client, 300560)
     response = client.reply(None, 'actionChanged', action=action_event(state=35))
-    assert not response['send']
+    updates = [battle_flow.decode_battle_state_sync_simple(p['body']) for p in response['send'] if p['command'] == 4]
+    assert [update.state for update in updates] == [35]
     session = client.state['sessions']['2']
     assert session['onlinePrediction']['active'] is None and prediction.TIMER not in session['pending']
     assert not states(input(client, 300550))
@@ -111,7 +112,7 @@ def test_scene_exit_cannot_emit_later_predicted_attack(monkeypatch, spawnPoints)
 def test_contact_outcome_is_server_gated_and_duplicate_cannot_replay(monkeypatch, spawnPoints, parried):
     client = running(monkeypatch, spawnPoints, peer=True)
     result = client.reply(None, 'combatChanged', update=combat_event(effect(parried=parried)))
-    assert sum(p['reason'] == 'online-contact-effect' for p in result['send']) == 1
+    assert sum(p['reason'] == 'online-contact-effect' for p in result['send']) == int(not parried)
     assert sum(p['reason'] == 'online-parry-sound' for p in result['send']) == int(parried)
     assert any(p['reason'] == 'online-damage' for p in result['send']) == (not parried)
     from copy import deepcopy

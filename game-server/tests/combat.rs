@@ -66,6 +66,42 @@ fn report(seq: u32) -> ContactReport {
     }
 }
 #[test]
+fn downward_thrust_only_damages_inside_its_active_window() {
+    for elapsed in [0, 149, 150, 600, 601] {
+        let (mut l, m) = scene();
+        pose(&mut l, &m, 1, 3000);
+        l.action_input("a", &m, 1, A::AttackDown, 3000).unwrap();
+        l.action_input("a", &m, 2, A::AttackRelease, 3001).unwrap();
+        l.advance(3400);
+        let action = l
+            .take_action_events()
+            .into_iter()
+            .find(|e| e.actor_id.0 == 1 && e.state == 250)
+            .unwrap();
+        let at = 3400 + u64::from(elapsed);
+        pose(&mut l, &m, 2, at);
+        let mut contact = report(action.action_id.unwrap());
+        contact.state = 250;
+        contact.elapsed_ms = elapsed;
+        let accepted = l.contact_input("a", &m, 1, contact, at).unwrap();
+        assert_eq!(
+            accepted,
+            (150..=600).contains(&elapsed),
+            "elapsed={elapsed}"
+        );
+        assert_eq!(l.take_combat_events().len(), usize::from(accepted));
+        if elapsed < 150 {
+            // An early overlap must not consume this swing's later valid hit.
+            pose(&mut l, &m, 3, 3550);
+            let mut valid = report(action.action_id.unwrap());
+            valid.state = 250;
+            valid.elapsed_ms = 150;
+            assert!(l.contact_input("a", &m, 2, valid, 3550).unwrap());
+        }
+    }
+}
+
+#[test]
 fn contacts_are_authorized_once_and_interrupt_the_victim() {
     let (mut l, m) = scene();
     pose(&mut l, &m, 1, 3000);
@@ -189,7 +225,30 @@ fn directional_guard_resolves_body_contact_once_for_every_guard_and_facing() {
                     .unwrap();
                 let mut contact = report(action_id);
                 contact.state = state;
-                assert!(l.contact_input("a", &m, 1, contact, 3450).unwrap());
+                let now = if state == 250 {
+                    contact.elapsed_ms = 150;
+                    pose(&mut l, &m, 3, 3550);
+                    // Preserve the defender heading used by this direction test.
+                    l.pose_input(
+                        "b",
+                        &m,
+                        4,
+                        Pose {
+                            position: [1.2, 0., 0.5],
+                            heading,
+                            forward_back: 0,
+                            left_right: 0,
+                            running: false,
+                            motion: None,
+                        },
+                        3550,
+                    )
+                    .unwrap();
+                    3550
+                } else {
+                    3450
+                };
+                assert!(l.contact_input("a", &m, 1, contact, now).unwrap());
                 match l.take_combat_events().pop().unwrap().effect {
                     CombatEffect::Contact {
                         parried,
@@ -221,7 +280,7 @@ fn directional_guard_resolves_body_contact_once_for_every_guard_and_facing() {
                         later.state = state;
                         later.weapon_contact = true;
                         later.elapsed_ms += 1;
-                        assert!(!l.contact_input("a", &m, 2, later, 3451).unwrap());
+                        assert!(!l.contact_input("a", &m, 2, later, now + 1).unwrap());
                         assert!(l.take_combat_events().is_empty());
                     }
                     _ => panic!("expected contact"),

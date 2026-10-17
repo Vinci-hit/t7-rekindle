@@ -29,7 +29,7 @@ def test_inputs_predict_immediately_and_matching_authority_does_not_restart_anim
     client = running(monkeypatch, spawnPoints)
     result = instance(client, command=4, body=struct.pack('>HIib', 1, (1 << 26) | (1 << 21) if intent == 700250 else 0, intent, 0))
     predicted = result['send']
-    assert bool(predicted) == (intent not in (700250, 300020, 300620))
+    assert bool(predicted) == (intent not in (700250, 300020, 300620, 300130, 300140))
     request = result['gateway'][0]
     assert request['connection'] == 1
     assert json.loads(request['request'])['command'] == {'type': 'actionInput', 'payload': {

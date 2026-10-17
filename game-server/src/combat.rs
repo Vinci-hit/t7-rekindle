@@ -328,6 +328,11 @@ impl Combat {
         } else {
             duration - 100
         };
+        let contact_start = if direction == 2 && action.weapon_id != crate::battle::FIST_WEAPON {
+            crate::battle::THRUST_CONTACT_START_MS
+        } else {
+            0
+        };
         let rebound = if direction == 4 {
             crate::battle::DASH_REBOUND_MS
         } else if action.weapon_id == crate::battle::FIST_WEAPON {
@@ -335,7 +340,48 @@ impl Combat {
         } else {
             [500, 500, 400, 530][direction]
         };
+        let profile = battle.profile(actor, action.weapon_id);
+        let attack = profile.and_then(|p| {
+            p["attacks"].get(["300560", "300550", "300570", "300540", "700250"][direction])
+        });
+        let dash = profile.map(|p| &p["dashAttack"]);
+        let duration = if direction == 4 {
+            dash.and_then(|p| p["durationMs"].as_u64())
+                .unwrap_or(duration)
+        } else {
+            attack
+                .and_then(|p| p["phases"][2].as_u64())
+                .unwrap_or(duration)
+        };
+        let contact_start = if direction == 4 {
+            dash.and_then(|p| p["contactStartMs"].as_u64())
+                .unwrap_or(contact_start)
+        } else {
+            attack
+                .and_then(|p| p["contactStartMs"].as_u64())
+                .unwrap_or(contact_start)
+        };
+        let contact_end = if direction == 4 {
+            dash.and_then(|p| p["contactEndMs"].as_u64())
+                .unwrap_or(contact_end)
+        } else {
+            attack
+                .and_then(|p| p["contactEndMs"].as_u64())
+                .unwrap_or(contact_end)
+        };
+        let terrain_rebound = if direction == 4 {
+            dash.and_then(|p| p["reboundMs"].as_u64())
+                .unwrap_or(rebound)
+        } else {
+            attack
+                .and_then(|p| p["rebound"].as_u64())
+                .unwrap_or(rebound)
+        };
+        let parried_duration = attack
+            .and_then(|p| p["parried"].as_u64())
+            .unwrap_or(rebound);
         if action.state != report.state
+            || u64::from(report.elapsed_ms) < contact_start
             || u64::from(report.elapsed_ms) > contact_end
             || now < action.at
             || now - action.at > duration + REPORT_GRACE_MS
@@ -385,8 +431,9 @@ impl Combat {
             };
             // The two endpoints may render a 100ms-old pose. These coarse bounds
             // supplement the native blade report; map geometry is not yet authoritative.
-            if distance(&source.position, &target.position) > 4.0
-                || (source.position[2] - target.position[2]).abs() > 2.0
+            // Native blade contact determines reach. Bound each endpoint against
+            // the reported contact instead of imposing one sword-length root cap.
+            if (source.position[2] - target.position[2]).abs() > 2.0
                 || distance(&target.position, &report.position) > 3.0
                 || !facing(source.position, target.position, source.heading, 0.0)
             {
@@ -397,17 +444,15 @@ impl Combat {
                 |deadline| battle.at_before_receipt(target_id, contact_at, deadline),
             );
             if let Some(guard) = guard {
-                guard_direction = [223, 224, 225, 226]
+                guard_direction = [223, 224, 225, 226, 309]
                     .iter()
                     .position(|state| *state == guard.state);
                 parried = guard_direction.is_some_and(|guard| {
-                    guard_matches(
-                        direction,
-                        guard,
-                        target.position,
-                        source.position,
-                        target.heading,
-                    )
+                    if guard == 4 {
+                        facing(target.position, source.position, target.heading, 0.5)
+                    } else {
+                        guard_matches(direction, guard, target.position, source.position, target.heading)
+                    }
                 });
             }
         }
@@ -460,9 +505,13 @@ impl Combat {
                     [466, 468, 467, 469, 443][direction],
                     now,
                     if action.weapon_id == crate::battle::FIST_WEAPON {
-                        rebound - 100
+                        if profile.is_some() {
+                            terrain_rebound
+                        } else {
+                            rebound - 100
+                        }
                     } else {
-                        rebound
+                        terrain_rebound
                     },
                     false,
                     Some(target_id),
@@ -474,13 +523,13 @@ impl Combat {
                 actor,
                 [240, 246, 252, 258, 443][direction],
                 now,
-                rebound,
+                parried_duration,
                 false,
                 Some(target_id),
             );
             battle.react(
                 target_id,
-                [231, 232, 233, 234][guard_direction.expect("matched guard")],
+                [231, 232, 233, 234, 111][guard_direction.expect("matched guard")],
                 now,
                 1,
                 false,
@@ -515,8 +564,10 @@ impl Combat {
             }
             let (amount, part) = body_damage(
                 report.position[2] - target_pose.position[2],
-                closing,
-                if direction == 4 { 40 } else { DAMAGE },
+                if actor >= crate::pve::FIRST_MONSTER_ID { 0. } else { closing },
+                if actor >= crate::pve::FIRST_MONSTER_ID {
+                    crate::pve::MONSTER_DAMAGE
+                } else if direction == 4 { 40 } else { DAMAGE },
             );
             hit_part = part;
             damage = amount.min(*hp);
@@ -553,7 +604,11 @@ impl Combat {
                 target: (target_id != 0).then_some(ActorId(target_id)),
                 action_seq: report.action_seq,
                 weapon_id: action.weapon_id,
-                target_weapon_id: battle.weapon(target_id).unwrap_or(0),
+                target_weapon_id: if parried && guard_direction == Some(4) {
+                    battle.shield_weapon(target_id).unwrap_or(0)
+                } else {
+                    battle.weapon(target_id).unwrap_or(0)
+                },
                 parried,
                 damage,
                 hit_part,
@@ -694,4 +749,45 @@ fn facing(source: [f32; 3], target: [f32; 3], heading: i16, limit: f32) -> bool 
     let len = dx.hypot(dy);
     let yaw = f32::from(heading).to_radians();
     len < 0.01 || (dx * yaw.cos() - dy * yaw.sin()) / len >= limit
+}
+
+#[cfg(test)]
+mod shield_tests {
+    use super::*;
+    use crate::{battle::ActionIntent, loadout::{Equipment, Loadout}, motion::Pose};
+
+    #[test]
+    fn shield_blocks_front_strikes_but_not_back_strikes() {
+        for heading in [0, 180] {
+            let mut battle = Battle::new("room".into(), "match".into(), [1, 2].into_iter());
+            battle.configure(2, Loadout { hero_id: 1001, equipment: vec![
+                Equipment { slot: 1, weapon_id: 1010811 },
+                Equipment { slot: 2, weapon_id: 1090211 },
+            ]});
+            let mut motion = Motion::new("room".into(), "match".into(), [1, 2].into_iter());
+            for (id, x, yaw) in [(1, 0., 0), (2, 1., heading)] {
+                motion.input(id, 1, Pose { position: [x, 0., 0.], heading: yaw,
+                    forward_back: 0, left_right: 0, running: false, motion: None }, 400).unwrap();
+            }
+            battle.input(2, 1, ActionIntent::ShieldGuard, 0).unwrap();
+            battle.input(1, 1, ActionIntent::AttackUp, 0).unwrap();
+            battle.input(1, 2, ActionIntent::AttackRelease, 1).unwrap();
+            battle.advance(400);
+            let action = battle.current(1).unwrap();
+            let mut combat = Combat::new("room".into(), "match".into(), [(1, 1), (2, 2)].into_iter());
+            assert!(combat.input(1, 1, ContactReport { action_seq: action.seq,
+                action_id: action.action_id.unwrap(), state: 238, elapsed_ms: 40,
+                target_actor_id: 2, position: [1., 0., 1.], normal: [-1., 0., 0.],
+                direction: [1., 0., 0.], material: 0, weapon_contact: false, timing: None },
+                400, &mut battle, &motion).unwrap());
+            let events = combat.take_events();
+            let CombatEffect::Contact { parried, damage, target_weapon_id, .. } = events[0].effect else { panic!("contact") };
+            assert_eq!(parried, heading == 180);
+            assert_eq!(damage == 0, heading == 180);
+            if parried {
+                assert_eq!(battle.current(2).unwrap().state, 111);
+                assert_eq!(target_weapon_id, 1090211);
+            }
+        }
+    }
 }

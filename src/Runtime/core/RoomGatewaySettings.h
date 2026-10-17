@@ -2,7 +2,7 @@
 #include <string>
 #include <cstddef>
 
-namespace t7 {
+namespace t7r {
 inline constexpr size_t RoomGatewayFramesPerSecond = 1024;
 inline constexpr size_t RoomGatewayMessageBytes = 256 * 1024;
 inline constexpr int RoomGatewayReconnectSeconds = 60;

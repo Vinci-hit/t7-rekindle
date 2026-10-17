@@ -13,7 +13,15 @@ STALE_MS = 500
 RENDER_TIMER = 'online-motion-render'
 
 
+def actor_key(value):
+    """Peer RID or a high-range cooperative monster identity."""
+    from . import online_pve
+    return type(value) is str and (value in online_limits.ALL_RIDS - {"1"}
+        or value.isdecimal() and online_pve.monster_id(int(value)))
+
+
 def valid(session):
+    from . import online_pve
     value = session.get('onlineMotion')
     return value is None or (session['role'] == 'instance' and type(value) is dict
         and {'inputSeq', 'eventSeq', 'sentAt', 'actors', 'buffers'} <= set(value)
@@ -24,8 +32,9 @@ def valid(session):
         and type(value.get('actors')) is dict and len(value['actors']) <= online_limits.ROOM_CAPACITY
         and all(key in online_limits.ALL_RIDS and type(seq) is int and 0 < seq <= 0xffffffff
                 for key, seq in value['actors'].items())
-        and (type(value["buffers"]) is dict and len(value["buffers"]) <= online_limits.ROOM_CAPACITY - 1
-            and all(key in online_limits.ALL_RIDS - {"1"} and type(buffer) is dict and valid_buffer(buffer)
+        and (type(value["buffers"]) is dict
+            and len(value["buffers"]) <= online_limits.ROOM_CAPACITY - 1 + online_pve.MAX_MONSTERS
+            and all(actor_key(key) and type(buffer) is dict and valid_buffer(buffer)
                 for key, buffer in value["buffers"].items())))
 
 
@@ -65,6 +74,17 @@ def valid_buffer(value):
 def ledger(session):
     return session.setdefault('onlineMotion', {'inputSeq': 0, 'eventSeq': 0,
         'sentAt': -INTERVAL_MS, 'actors': {}, 'buffers': {}})
+
+
+def schedule_render(flow, connection, session):
+    """Arm the shared playback timer from any module's receive path."""
+    previous_connection, previous_session = flow.connection, flow.session
+    try:
+        flow.connection, flow.session = connection, session
+        if RENDER_TIMER not in session['pending']:
+            flow.later(RENDER_TIMER, RENDER_INTERVAL_MS)
+    finally:
+        flow.connection, flow.session = previous_connection, previous_session
 
 
 def world_updated(flow):
@@ -107,8 +127,12 @@ def world_updated(flow):
             if all(abs(v) <= 40 for v in candidate):
                 velocity = candidate
         tick = max(0, sampled_at - flow.session['instanceStartedAt'])
+        action_id = pose.get('state', 0)
+        # Native state is u32; transient sentinels cannot identify a wire animation.
+        if type(action_id) is not int or not 0 <= action_id <= 0xffff:
+            action_id = 0
         value['motion'] = dict(tick=tick, velocity=velocity, airborne=pose['airborne'],
-            jumping=pose['airborne'] and pose['jumping'], actionId=pose.get('state', 0),
+            jumping=pose['airborne'] and pose['jumping'], actionId=action_id,
             actionTick=min(tick, max(0, pose.get('phaseAt', sampled_at) - flow.session['instanceStartedAt'])))
     if state.get('lastSent') == value and flow.now - state['sentAt'] < 500:
         return
@@ -169,13 +193,17 @@ def receive(flow, value):
     if len(instances) != 1:
         raise ValueError('online pose requires one live instance')
     connection, session = instances[0]
-    if event_sequence <= ledger(session)['eventSeq']:
+    state = ledger(session)
+    if event_sequence <= state['eventSeq']:
         return
     if online_pve.monster_id(actor):
-        online_pve.pose(flow,value,connection,session)
+        # Cooperative monster poses stay replaceable like peer poses. Room and
+        # transport coalescing drop intermediate sequences, so gaps are normal
+        # and the newest sample is the only one that matters.
+        state['eventSeq'] = event_sequence
+        online_pve.pose(flow, actor, pose, connection, session, server_time, sequence)
         return
-    state = ledger(session)
-    if event_sequence <= state['eventSeq'] or sequence <= state['actors'].get(str(rid), 0):
+    if sequence <= state['actors'].get(str(rid), 0):
         return  # Replaceable snapshots can arrive behind another socket's phase/event.
     state['eventSeq'], state['actors'][str(rid)] = event_sequence, sequence
     if rid == 1:
@@ -204,13 +232,7 @@ def receive(flow, value):
     else:
         samples.append(sample)
         del samples[:-MAX_SAMPLES]
-    current_connection, current_session = flow.connection, flow.session
-    try:
-        flow.connection, flow.session = connection, session
-        if RENDER_TIMER not in session['pending']:
-            flow.later(RENDER_TIMER, RENDER_INTERVAL_MS)
-    finally:
-        flow.connection, flow.session = current_connection, current_session
+    schedule_render(flow, connection, session)
 
 
 def timer(flow, name):
@@ -231,12 +253,15 @@ def timer(flow, name):
 
 
 def render(flow):
+    from . import online_pve
     value = ledger(flow.session)
     for key, buffer in value.get('buffers', {}).items():
-        render_peer(flow, int(key), buffer)
+        actor = int(key)
+        render_actor(flow, actor, buffer, online_pve.monster_id(actor))
 
 
-def render_peer(flow, rid, state):
+def render_actor(flow, rid, state, monster):
+    from . import online_pve
     samples = state.get('samples', [])
     if not samples or flow.now - state.get('renderedAt', -RENDER_INTERVAL_MS) < RENDER_INTERVAL_MS:
         return
@@ -247,14 +272,21 @@ def render_peer(flow, rid, state):
     while queued and queued[0]['serverTimeMs'] - state.get('serverTickOffset', 0) <= at:
         due = queued.pop(0)
     if due is not None:
-        online_actions.present(flow, flow.connection, flow.session, rid, due)
+        if monster:
+            online_pve.present_action(flow, flow.connection, flow.session, rid, due)
+        else:
+            online_actions.present(flow, flow.connection, flow.session, rid, due)
     while len(samples) > 2 and samples[1]['at'] <= at:
         samples.pop(0)
     before, after = samples[0], samples[1] if len(samples) > 1 else samples[0]
     if at >= after['at']:
         motion = after['pose'].get('motion')
         reacting = str(rid) in flow.session.get('onlineActions', {}).get('reacting', [])
-        if motion is not None and not reacting:
+        if monster and not reacting:
+            # Cooperative monsters carry no authored velocity, so an exhausted
+            # buffer extends the newest sample instead of holding still.
+            pose = online_playback.extrapolate(before, after, at)
+        elif motion is not None and not reacting:
             pose = online_playback.extrapolate(before, after, at, airborne=motion['airborne'])
         else:
             pose = dict(after['pose'])
@@ -274,7 +306,10 @@ def render_peer(flow, rid, state):
         pose.update(forwardBack=0, leftRight=0, running=False)
         if pose.get('motion') is not None:
             pose['motion'] = dict(pose['motion'], airborne=False, jumping=False, velocity=[0., 0., 0.])
-    emit(flow, flow.connection, flow.session, pose, 'online-pose-interpolated', rid, state)
+    if monster:
+        online_pve.emit(flow, flow.connection, flow.session, rid, pose, state, 'online-pve-monster-pose')
+    else:
+        emit(flow, flow.connection, flow.session, pose, 'online-pose-interpolated', rid, state)
 
 
 def emit(flow, connection, session, pose, reason, rid, state):

@@ -9,7 +9,7 @@ def receive(flow, room):
         raise ValueError('settlement requires the running frozen match')
     result = room['result']
     winner = integer(result['result'], 1, 3)
-    if result['reason'] not in ('timeout', 'kill-target', 'pve-cleared', 'pve-wipe'):
+    if result['reason'] not in ('timeout', 'kill-target', 'pve-cleared', 'pve-wipe', 'pve-objective-destroyed'):
         raise ValueError('invalid server settlement reason')
     lives = result['lives']
     members = {m['actorId']: m for m in room['members']}
@@ -30,7 +30,7 @@ def receive(flow, room):
             deaths = integer(life['deaths'], 0, 0x7fffffff)
             camp_kills[str(camp)] += kills
             team.append(dict(rid=online_scene.actor_rid(match, life['actorId']), userId=member['userId'],
-                name=member['displayName'], camp=camp, heroId=wire.HERO_ID, kills=kills, deaths=deaths,
+                name=member['displayName'], camp=camp, heroId=member.get('loadout', {}).get('heroId', wire.HERO_ID), kills=kills, deaths=deaths,
                 points=min(0x7fffffff, kills * 100), rank=ranks[life['actorId']], result=winner if winner == 3 else 1 if winner == camp else 2))
         team.sort(key=lambda m: m['rank'])
         ranked.extend(team)

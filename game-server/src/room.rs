@@ -78,6 +78,8 @@ pub struct Member {
     pub camp: u8,
     pub ready: bool,
     pub loaded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loadout: Option<crate::loadout::Loadout>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -275,6 +277,7 @@ impl Room<Waiting> {
                     camp: 1,
                     ready: false,
                     loaded: false,
+                    loadout: None,
                 }],
                 next_actor_id: 2,
                 last_abort_reason: None,
@@ -315,6 +318,7 @@ impl Room<Waiting> {
             camp,
             ready: false,
             loaded: false,
+            loadout: None,
         });
         self.data.next_actor_id = next;
         self.clear_ready();
@@ -449,11 +453,16 @@ impl Room<Countdown> {
             return Err(self);
         }
         self.data.revision += 1;
-        let battle = crate::battle::Battle::new(
+        let mut battle = crate::battle::Battle::new(
             self.data.room_id.clone(),
             self.state.current_match.match_id.clone(),
             self.data.members.iter().map(|m| m.actor_id),
         );
+        for member in &self.data.members {
+            if let Some(loadout) = &member.loadout {
+                battle.configure(member.actor_id, loadout.clone());
+            }
+        }
         let combat = crate::combat::Combat::new(
             self.data.room_id.clone(),
             self.state.current_match.match_id.clone(),
@@ -786,6 +795,51 @@ impl RoomState {
             lives,
             respawn_ready,
         })
+    }
+
+    pub(crate) fn select_loadout(
+        &mut self,
+        account: &str,
+        match_id: &str,
+        loadout: crate::loadout::Loadout,
+    ) -> Result<(), ErrorCode> {
+        loadout.validate()?;
+        let (data, current) = match self {
+            Self::Loading(r) => (&mut r.data, &r.state.current_match),
+            Self::Running(r) => {
+                if r.state.current_match.match_id != match_id {
+                    return Err(ErrorCode::StaleMatch);
+                }
+                let member = r
+                    .data
+                    .members
+                    .iter_mut()
+                    .find(|m| m.account_id == account)
+                    .ok_or(ErrorCode::NotInRoom)?;
+                if r.state.combat.alive(member.actor_id) {
+                    return Err(ErrorCode::WrongPhase);
+                }
+                r.state.battle.configure(member.actor_id, loadout.clone());
+                member.loadout = Some(loadout);
+                r.data.revision += 1;
+                return Ok(());
+            }
+            _ => return Err(ErrorCode::WrongPhase),
+        };
+        if current.match_id != match_id {
+            return Err(ErrorCode::StaleMatch);
+        }
+        let member = data
+            .members
+            .iter_mut()
+            .find(|m| m.account_id == account)
+            .ok_or(ErrorCode::NotInRoom)?;
+        if member.loaded {
+            return Err(ErrorCode::WrongPhase);
+        }
+        member.loadout = Some(loadout);
+        data.revision += 1;
+        Ok(())
     }
 
     pub fn take_action_events(&mut self) -> Vec<crate::battle::ActionEvent> {

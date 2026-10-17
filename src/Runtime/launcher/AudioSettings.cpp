@@ -7,6 +7,17 @@
 #include <sstream>
 
 namespace t7r {
+Bytes buildAudioRoot(const fs::path& directory) {
+    if (directory.empty()) return {};
+    if (!directory.is_absolute()) throw std::runtime_error("audio directory must be absolute");
+    auto value = directory.lexically_normal().make_preferred().wstring();
+    if (value.find(L'\0') != value.npos || value.size() > MAX_PATH - 32)
+        throw std::runtime_error("audio directory exceeds legacy engine path limit");
+    if (value.back() != L'\\') value.push_back(L'\\');
+    value.push_back(L'\0');
+    const auto begin = reinterpret_cast<const unsigned char*>(value.data());
+    return Bytes(begin, begin + value.size() * sizeof(wchar_t));
+}
 bool validAudioValues(const AudioValues& v) {
     return v.musicMuted <= 1 && v.effectsMuted <= 1
         && std::isfinite(v.musicVolume) && v.musicVolume >= 0 && v.musicVolume <= 1

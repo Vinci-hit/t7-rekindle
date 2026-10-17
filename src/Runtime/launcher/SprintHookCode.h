@@ -19,6 +19,4 @@ Bytes buildSprintHook(uint32_t address, uint32_t imageBase, const DashAttackProf
 Bytes buildJumpPhysicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId);
 Bytes jumpPhysicsJump(uint32_t address, uint32_t imageBase);
 void writeSprintDirections(Bytes& page);
-Bytes jumpPhysicsJump(uint32_t address, uint32_t imageBase);
-Bytes buildJumpPhysicsHook(uint32_t address, uint32_t imageBase, uint32_t threadId);
 }

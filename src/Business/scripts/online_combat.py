@@ -50,6 +50,9 @@ def world_updated(flow):
     if match['phase'] != 3 or flow.session.get('leaving') or not ledger(flow.session)['health']:
         return
     raw = flow.context.get('botWorld', {})
+    if 'pve' in match:
+        from . import online_pve_contacts
+        online_pve_contacts.world_updated(flow, raw)
     trace_reactions(flow, actors.world(flow))
     journal = raw.get('contactJournal')
     if type(journal) is not dict or raw.get('instanceStartedAt') != flow.session['instanceStartedAt']:
@@ -66,9 +69,13 @@ def world_updated(flow):
         return
     local = raw.get('actors', {}).get('1', {})
     for event in sorted(journal['events'], key=lambda e: (e['occurredAt'], e['along'])):
+        contact_start, contact_end = contact_window(flow.session, event['state'])
+        # Ignore windup overlaps before deduplication so a later valid hit can be sent.
+        if event['occurredAt'] - event['phaseAt'] < contact_start:
+            continue
         if (event['occurredAt'] < state.get('resumeAt', 0) or event['actorId'] != 1 or event['state'] not in STRIKES or event['entity'] != local.get('entity')
                 or event['targetId'] not in (0, *online_scene.ids(flow)[1:], *(m['actorId'] for m in match.get('pve', {}).get('monsters', []))) or event['occurredAt'] < event['phaseAt']
-                or event['occurredAt'] - event['phaseAt'] > (1133 if event['state'] == 439 else 600)):
+                or event['occurredAt'] - event['phaseAt'] > contact_end):
             continue
         target = 0 if event['targetId'] == 0 else online_scene.rid_actor(match, event['targetId'])
         if target is None:
@@ -121,6 +128,21 @@ def trace_reactions(flow, snapshot):
             if sample[0] == 35 or old is not None and old[0] == 35:
                 flow.log('DEBUG', f'online-native-reaction rid={rid} state={sample[0]} seq={sample[1]} phaseAt={sample[2]} previous={old}')
             previous[str(rid)] = sample
+
+
+def contact_window(session, state):
+    from . import weapons
+    profile = weapons.profile(session)
+    if profile:
+        if state == 439:
+            dash = profile.get('dashAttack') or {}
+            return dash.get('contactStartMs', 0), dash.get('contactEndMs', 0)
+        intent = {238: 300560, 244: 300550, 250: 300570, 256: 300540}.get(state)
+        attack = profile['attacks'].get(str(intent))
+        if attack:
+            return attack['contactStartMs'], attack['contactEndMs']
+    start = online_limits.THRUST_CONTACT_START_MS if state == 250 and weapons.equipped(session) != weapons.FIST_ID else 0
+    return start, 1133 if state == 439 else 600
 
 
 def can_choose(flow):
@@ -354,7 +376,7 @@ def respawn(flow, actor, lives):
     if weapon != wire.WEAPON_ID:
         from .codec import weapon_flow
         from . import weapons
-        flow.send(5, weapon_flow.encode_use_update(actor_id=actor, main_weapon_id=wire.WEAPON_ID,
-            fist_weapon_id=weapons.FIST_ID, equipped_weapon_id=weapon, now_ms=flow.now), 'online-respawn-equipment')
+        flow.send(5, weapon_flow.encode_equipment_update(actor_id=actor, items=weapons.inventory(source),
+            equipped_weapon_id=weapon, offhand_id=source.get('offhandId', 0), now_ms=flow.now), 'online-respawn-equipment')
     if actor == 1:
         controls.enableGround(flow)

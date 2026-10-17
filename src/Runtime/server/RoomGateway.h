@@ -9,7 +9,7 @@
 #include <thread>
 #include <atomic>
 
-namespace t7 {
+namespace t7r {
 struct GatewayEffect {
     uint64_t connection = 0;
     std::string op, requestId, request;

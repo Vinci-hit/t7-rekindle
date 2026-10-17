@@ -126,7 +126,7 @@ void GraphicsSettings::install(HANDLE process, uint32_t imageBase, DWORD threadI
         process_ = process; remote_ = base; imageBase_ = imageBase;
         customLobby_ = customLobby; playerId_ = 0;
         serverLatencyMs_ = UINT32_MAX;
-        audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase, !audioRoot.empty());
+        audio_.attach(process, base + GRAPHICS_PAGE_SIZE, imageBase);
         world_.attach(process, base + worldOffset);
         titles_.attach(process, base + titleOffset);
     } catch (...) {

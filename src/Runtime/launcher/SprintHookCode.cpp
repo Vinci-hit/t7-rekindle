@@ -8,7 +8,6 @@ namespace t7r {
 namespace {
 constexpr uint32_t DIRECTIONS_OFFSET = 0x200, STATES_OFFSET = SPRINT_STATES_OFFSET;
 constexpr uint32_t STATE_KEYS_OFFSET = SPRINT_STATES_OFFSET + 0x40;
-constexpr uint32_t JUMP_EVENT_OFFSET = 0x180, END_JUMP_EVENT_OFFSET = 0x198;
 constexpr uint32_t SPEED_RVA = 0x3D2550, RUNNING_RVA = 0x3D2E20, STATE_RVA = 0x3D2570;
 constexpr uint32_t LINE_MOVE_RVA = 0x75D140, STOP_MOVE_RVA = 0x75D3B0;
 uint32_t floatBits(float value) {

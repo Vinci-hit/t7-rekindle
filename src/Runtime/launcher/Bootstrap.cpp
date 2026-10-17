@@ -240,8 +240,7 @@ void Bootstrap::launch(const fs::path& directory, const Config& config, const Di
             movementOverlay_.install(process, base, log, config.skipStartupAnimation);
             graphicsSettings_.install(process, static_cast<uint32_t>(base), GetThreadId(thread),
                                       config.dashAttack, config.movementAnimation, config.combatProfiles,
-                                      config.roomGateway != nullptr, audioRoot);
-            if (log && !audioRoot.empty()) log(DiagnosticLogLevel::Debug, "Audio directory initialized from the selected game directory");
+                                      config.roomGateway != nullptr, {});
             if (log) log(DiagnosticLogLevel::Debug, "Client code, imports, TP paths and movement adapted before first ResumeThread; disk binaries unchanged");
         }, log, cancelled, {{fs::absolute(directory / "TieJiWebHelper.exe"), WEB_HELPER_HASH,
             [this](HANDLE process, uint32_t base) { lobbyNews_.installHelper(process, base); }}},

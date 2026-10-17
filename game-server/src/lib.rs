@@ -16,4 +16,8 @@ pub mod room;
 pub mod transport;
 
 pub mod pve;
+pub mod pve_goal;
+mod pve_navigation;
 pub mod round;
+
+pub mod loadout;

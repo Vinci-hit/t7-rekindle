@@ -61,6 +61,27 @@ def load(client):
     return instance(client, command=0x36, body=struct.pack('>HHb', 0x64, 1, 0))
 
 
+def test_online_entry_batches_initialization_and_imports_models_once(spawnPoints, monkeypatch):
+    monkeypatch.setattr(online_scene, 'loadSpawns', lambda _: spawnPoints)
+    client, loading, view = start(peer=True)
+    client.reply(4, 'clientView', view=view)
+    client.context['connections'] = [1, 2]
+    instance(client, 'connected')
+    instance(client, 'authenticated')
+    client.context['nowMs'] = 20
+    result = instance(client, 'timer', name='instance-init')
+    reasons = [item['reason'] for item in result['send']]
+    assert reasons[-5:] == [
+        'instance-game-info', 'instance-round-info', 'instance-round-state-after-auth',
+        'instance-start-pattern-data-ntf-after-auth', 'instance-spawn-area-state-after-auth']
+    assert not any(name.startswith('instance-') for name in client.state['sessions']['2']['pending'])
+    first = instance(client, command=0x23, body=b'\0\3\0')
+    assert any(item['reason'] == 'online-peer-vision-add' for item in first['send'])
+    for _ in range(10):
+        repeated = instance(client, command=0x23, body=b'\0\3\0')
+        assert [item['reason'] for item in repeated['send']] == ['instance-camp-choose-ok-result-zero']
+
+
 @pytest.mark.parametrize('peer', (False, True))
 def test_start_enters_the_same_client_then_real_loading_starts_authority(peer, spawnPoints, monkeypatch):
     monkeypatch.setattr(online_scene, 'loadSpawns', lambda _: spawnPoints)

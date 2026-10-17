@@ -213,7 +213,7 @@ def test_periodic_instance_sync_keeps_measured_server_latency():
 
 def test_state_migration_preserves_pending_requests_without_issuing_effects():
     client = Client()
-    assert app.STATE_VERSION == 23
+    assert app.STATE_VERSION == 24
     restored = app.migrateState(17, client.state)
     assert restored == client.state and restored is not client.state
     restored["sessions"]["1"]["customLobby"]["nextId"] = 1
@@ -229,3 +229,16 @@ def test_rejected_action_is_acknowledged_without_closing_the_session():
     assert result['state']['sessions']['1']['customLobby']['identified']
     assert '2' not in result['state']['sessions']['1']['customLobby']['pending']
     assert result['gateway'] == [{'op': 'ack', 'connection': 1, 'requestId': '2', 'request': ''}]
+
+
+@pytest.mark.parametrize('kind', ('action', 'pose', 'contact', 'respawn'))
+@pytest.mark.parametrize('code', ('invalidPose', 'badRequest', 'wrongPhase', 'staleMatch', 'notInRoom'))
+def test_gameplay_rejection_preserves_authenticated_session(kind, code):
+    client = Client()
+    client.identify()
+    gateway = client.state['sessions']['1']['customLobby']
+    gateway['pending']['2'] = {'kind': kind}
+    result = client.reply(2, 'error', code=code)
+    assert result['state']['sessions']['1']['customLobby']['identified']
+    assert '2' not in result['state']['sessions']['1']['customLobby']['pending']
+    assert result['gateway'][0]['op'] == 'ack'

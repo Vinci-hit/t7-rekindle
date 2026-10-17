@@ -6,6 +6,9 @@ use crate::{client_view::ActorId, protocol::ErrorCode};
 
 pub const MAIN_WEAPON: i32 = 1030411;
 pub const FIST_WEAPON: i32 = 100000;
+// Provisional tuning: the downward thrust winds up inside its release clip.
+// Original melee collision rows contain 0/0, not a verified active-frame marker.
+pub const THRUST_CONTACT_START_MS: u64 = 150;
 pub const DASH_DURATION_MS: u64 = 2033;
 pub const DASH_CONTACT_END_MS: u64 = 1133;
 pub const DASH_REBOUND_MS: u64 = 933;
@@ -27,8 +30,12 @@ pub enum ActionIntent {
     BlockRight,
     BlockDown,
     BlockLeft,
+    ShieldGuard,
     DashAttack,
     EquipMain,
+    EquipSlot2,
+    EquipSlot3,
+    EquipSlot4,
     ToggleFists,
     AttackRelease,
     BlockRelease,
@@ -70,8 +77,10 @@ impl Gesture {
             BlockRight => Self::Block(1),
             BlockDown => Self::Block(2),
             BlockLeft => Self::Block(3),
+            ShieldGuard => Self::Block(4),
             DashAttack => Self::Dash,
-            EquipMain | ToggleFists | AttackRelease | BlockRelease => return None,
+            EquipMain | EquipSlot2 | EquipSlot3 | EquipSlot4 | ToggleFists | AttackRelease
+            | BlockRelease => return None,
         })
     }
 
@@ -84,6 +93,7 @@ impl Gesture {
                 [247, 249, 250, 251],
                 [253, 255, 256, 257],
             ][direction],
+            Self::Block(4) => [95, 309, 2, 2],
             Self::Block(direction) => [
                 [305, 223, 227, 2],
                 [308, 224, 228, 2],
@@ -163,6 +173,8 @@ struct Actor {
     disabled: bool,
     weapon_id: i32,
     buffered_reaction: Option<BufferedAction>,
+    loadout: Option<crate::loadout::Loadout>,
+    main_weapon: i32,
 }
 
 #[derive(Debug)]
@@ -175,6 +187,65 @@ pub(crate) struct Battle {
 }
 
 impl Actor {
+    fn profile(&self, weapon: i32) -> Option<&'static serde_json::Value> {
+        crate::loadout::profile(self.loadout.as_ref()?.hero_id, weapon)
+    }
+    fn has_shield(&self) -> bool {
+        self.weapon_id != FIST_WEAPON
+            && self.profile(self.weapon_id).is_some_and(|p| p["hand"] == 2)
+            && self.loadout.as_ref().is_some_and(|l| l.equipment.iter().any(|e| {
+                self.profile(e.weapon_id).is_some_and(|p| p["shield"] == true)
+            }))
+    }
+
+    fn dash_available(&self) -> bool {
+        self.profile(self.weapon_id)
+            .map_or(self.weapon_id == MAIN_WEAPON, |p| {
+                p["dashAttack"]["enabled"] == true
+            })
+    }
+    fn duration(&self, gesture: Gesture, phase: usize) -> u64 {
+        let Some(profile) = self.profile(self.weapon_id) else {
+            return gesture.duration(phase, self.weapon_id);
+        };
+        match gesture {
+            Gesture::Attack(d) => {
+                profile["attacks"][["300560", "300550", "300570", "300540"][d]]["phases"][phase]
+                    .as_u64()
+                    .expect("attack phase")
+            }
+            Gesture::Dash => {
+                if phase == 2 {
+                    profile["dashAttack"]["durationMs"].as_u64().unwrap_or(0)
+                } else {
+                    0
+                }
+            }
+            Gesture::Block(4) if phase == 0 => profile["guard"]["prepareMs"].as_u64().unwrap_or(0),
+            Gesture::Block(_) => 0,
+        }
+    }
+    fn state_duration(&self, state: u16) -> u64 {
+        if matches!(state, 95 | 111) {
+            let field = if state == 95 { "prepareMs" } else { "successMs" };
+            return self.profile(self.weapon_id).and_then(|p| p["guard"][field].as_u64()).unwrap_or(0);
+        }
+        if self.loadout.is_some() {
+            for direction in 0..4 {
+                let gesture = Gesture::Attack(direction);
+                if let Some(phase) = gesture.states().iter().position(|s| *s == state) {
+                    return self.duration(gesture, phase);
+                }
+            }
+            if state == 1 {
+                return self
+                    .profile(self.weapon_id)
+                    .and_then(|p| p["changeMs"].as_u64())
+                    .unwrap_or(0);
+            }
+        }
+        0
+    }
     fn new(id: u32, weapon_id: i32) -> Self {
         Self {
             id: ActorId(id),
@@ -187,6 +258,8 @@ impl Actor {
             disabled: false,
             weapon_id,
             buffered_reaction: None,
+            loadout: None,
+            main_weapon: weapon_id,
         }
     }
 }
@@ -204,6 +277,27 @@ impl Battle {
 
     pub(crate) fn spawn(&mut self, id: u32, weapon: i32) {
         self.actors.push(Actor::new(id, weapon));
+    }
+
+    pub(crate) fn configure(&mut self, id: u32, loadout: crate::loadout::Loadout) {
+        if let Some(actor) = self.actors.iter_mut().find(|a| a.id.0 == id) {
+            actor.weapon_id = loadout.initial_weapon();
+            actor.main_weapon = actor.weapon_id;
+            actor.loadout = Some(loadout);
+            actor.active = None;
+        }
+    }
+
+    pub(crate) fn shield_weapon(&self, actor: u32) -> Option<i32> {
+        let actor = self.actors.iter().find(|a| a.id.0 == actor)?;
+        if !actor.has_shield() { return None; }
+        actor.loadout.as_ref()?.equipment.iter().find_map(|e|
+            actor.profile(e.weapon_id).is_some_and(|p| p["shield"] == true).then_some(e.weapon_id))
+    }
+
+    pub(crate) fn profile(&self, actor: u32, weapon: i32) -> Option<&'static serde_json::Value> {
+        let a = self.actors.iter().find(|a| a.id.0 == actor)?;
+        crate::loadout::profile(a.loadout.as_ref()?.hero_id, weapon)
     }
 
     pub(crate) fn remove(&mut self, id: u32) {
@@ -237,20 +331,77 @@ impl Battle {
             return Err(ErrorCode::StaleInput);
         }
         actor.input_seq = input_seq;
+        if intent == ActionIntent::ShieldGuard && !actor.has_shield() {
+            return Ok(());
+        }
         if actor.disabled {
             return Ok(());
         }
-        if matches!(intent, ActionIntent::EquipMain | ActionIntent::ToggleFists) {
+        if matches!(
+            intent,
+            ActionIntent::EquipMain
+                | ActionIntent::EquipSlot2
+                | ActionIntent::EquipSlot3
+                | ActionIntent::EquipSlot4
+                | ActionIntent::ToggleFists
+        ) {
             if actor.active.is_none() && actor.reaction_until.is_none() {
                 let weapon =
                     if intent == ActionIntent::ToggleFists && actor.weapon_id != FIST_WEAPON {
                         FIST_WEAPON
                     } else {
-                        MAIN_WEAPON
+                        actor.main_weapon
                     };
+                let weapon = if intent == ActionIntent::ToggleFists {
+                    Some(weapon)
+                } else if let Some(loadout) = &actor.loadout {
+                    let slot = match intent {
+                        ActionIntent::EquipSlot2 => 2,
+                        ActionIntent::EquipSlot3 => 3,
+                        ActionIntent::EquipSlot4 => 4,
+                        _ => 1,
+                    };
+                    loadout
+                        .equipment
+                        .iter()
+                        .find(|i| i.slot == slot)
+                        .map(|i| i.weapon_id)
+                } else {
+                    Some(weapon)
+                };
+                let Some(mut weapon) = weapon else {
+                    return Ok(());
+                };
+                if actor.profile(weapon).is_some_and(|p| p["shield"] == true) {
+                    let Some(loadout) = &actor.loadout else {
+                        return Ok(());
+                    };
+                    let Some(item) = loadout
+                        .equipment
+                        .iter()
+                        .filter(|i| actor.profile(i.weapon_id).is_some_and(|p| p["hand"] == 2))
+                        .min_by_key(|i| {
+                            (
+                                i.weapon_id != actor.weapon_id,
+                                i.weapon_id != actor.main_weapon,
+                                i.slot,
+                            )
+                        })
+                    else {
+                        return Ok(());
+                    };
+                    weapon = item.weapon_id;
+                }
                 if weapon != actor.weapon_id {
                     actor.weapon_id = weapon;
-                    actor.reaction_until = Some(now + 100);
+                    if weapon != FIST_WEAPON {
+                        actor.main_weapon = weapon;
+                    }
+                    let change = actor
+                        .profile(weapon)
+                        .and_then(|p| p["changeMs"].as_u64())
+                        .unwrap_or(100);
+                    actor.reaction_until = Some(now + change);
                     let mut states = Vec::new();
                     actor.emitted_action_id = Some(input_seq);
                     actor.emit(1, now, &mut states);
@@ -260,9 +411,7 @@ impl Battle {
             return Ok(());
         }
         if intent == ActionIntent::DashAttack
-            && (actor.weapon_id != MAIN_WEAPON
-                || actor.active.is_some()
-                || actor.reaction_until.is_some())
+            && (!actor.dash_available() || actor.active.is_some() || actor.reaction_until.is_some())
         {
             return Ok(());
         }
@@ -384,11 +533,14 @@ impl Battle {
                 state,
                 weapon_id: actor.weapon_id,
                 duration_ms: if state == 439 {
-                    DASH_DURATION_MS
+                    actor.duration(Gesture::Dash, 2)
                 } else if state == 443 {
-                    DASH_REBOUND_MS
+                    actor
+                        .profile(actor.weapon_id)
+                        .and_then(|p| p["dashAttack"]["reboundMs"].as_u64())
+                        .unwrap_or(DASH_REBOUND_MS)
                 } else {
-                    0
+                    actor.state_duration(state)
                 },
                 server_time_ms,
                 target_actor_id: None,
@@ -526,7 +678,7 @@ impl Battle {
             .expect("known actor");
         // Historical parry feedback must not re-press a guard already released
         // while the verdict was pending, or replace a newer guard direction.
-        actor.active = if [231, 232, 233, 234].contains(&state) {
+        actor.active = if [231, 232, 233, 234, 111].contains(&state) {
             actor
                 .active
                 .take()
@@ -570,14 +722,14 @@ impl Actor {
             action_id,
             gesture,
             phase: ActionPhase::Preparing {
-                until: now + gesture.duration(0, self.weapon_id),
+                until: now + self.duration(gesture, 0),
             },
             released: false,
             buffered: None,
         });
         if gesture == Gesture::Dash {
             self.active.as_mut().expect("started dash").phase = ActionPhase::Releasing {
-                until: now + DASH_DURATION_MS,
+                until: now + self.duration(Gesture::Dash, 2),
             };
             self.emit(439, now, output);
         } else {
@@ -593,6 +745,11 @@ impl Actor {
         output: &mut Vec<(u16, u16, u64, Option<u32>)>,
     ) {
         let gesture = Gesture::from_intent(intent);
+        let release_duration = self
+            .active
+            .as_ref()
+            .map(|a| self.duration(a.gesture, 2))
+            .unwrap_or(0);
         let Some(active) = self.active.as_mut() else {
             if let Some(gesture) = gesture {
                 self.start(gesture, input_seq, now, output);
@@ -646,7 +803,7 @@ impl Actor {
         if matches!(active.phase, ActionPhase::Held) {
             let gesture = active.gesture;
             active.phase = ActionPhase::Releasing {
-                until: now + gesture.duration(2, self.weapon_id),
+                until: now + release_duration,
             };
             self.emit(gesture.states()[2], now, output);
         }
@@ -664,7 +821,7 @@ impl Actor {
                             continue;
                         }
                         active.phase = ActionPhase::Releasing {
-                            until: until + gesture.duration(2, self.weapon_id),
+                            until: until + self.duration(gesture, 2),
                         };
                         (gesture.states()[2], until)
                     } else {
@@ -680,7 +837,7 @@ impl Actor {
                         continue;
                     }
                     active.phase = ActionPhase::Recovering {
-                        until: until + gesture.duration(3, self.weapon_id),
+                        until: until + self.duration(gesture, 3),
                         chain_at: until,
                     };
                     (gesture.states()[3], until)
@@ -905,4 +1062,70 @@ mod tests {
             [(35, None), (253, Some(2)), (256, Some(2))]
         );
     }
+}
+
+#[cfg(test)]
+mod catalogue_tests {
+    use super::*;
+    #[test]
+    fn selected_weapon_uses_catalogue_deadlines_and_slots() {
+        let loadout = crate::loadout::Loadout {
+            hero_id: 1102,
+            equipment: vec![
+                crate::loadout::Equipment {
+                    slot: 1,
+                    weapon_id: 1010911,
+                },
+                crate::loadout::Equipment {
+                    slot: 3,
+                    weapon_id: 1030611,
+                },
+            ],
+        };
+        loadout.validate().unwrap();
+        let mut b = Battle::new("room".into(), "match".into(), [1].into_iter());
+        b.configure(1, loadout);
+        b.input(1, 1, ActionIntent::AttackUp, 0).unwrap();
+        b.input(1, 2, ActionIntent::AttackRelease, 1).unwrap();
+        let prepare = b.profile(1, 1010911).unwrap()["attacks"]["300560"]["phases"][0]
+            .as_u64()
+            .unwrap();
+        b.advance_input(1, prepare - 1);
+        assert_eq!(b.actors[0].history.back().unwrap().state, 235);
+        b.advance_input(1, prepare);
+        assert_eq!(b.actors[0].history.back().unwrap().state, 238);
+        b.advance_input(1, 10000);
+        b.input(1, 3, ActionIntent::EquipSlot3, 10001).unwrap();
+        assert_eq!(b.weapon(1), Some(1030611));
+        b.advance(20000);
+        b.input(1, 4, ActionIntent::ToggleFists, 20001).unwrap();
+        assert_eq!(b.weapon(1), Some(FIST_WEAPON));
+        b.advance(30000);
+        b.input(1, 5, ActionIntent::ToggleFists, 30001).unwrap();
+        assert_eq!(b.weapon(1), Some(1030611));
+    }
+    #[test]
+    fn shield_uses_native_chain_and_release_without_directional_guard() {
+        let mut b = Battle::new("room".into(), "match".into(), [1, 2].into_iter());
+        b.configure(1, crate::loadout::Loadout {
+            hero_id: 1001,
+            equipment: vec![
+                crate::loadout::Equipment { slot: 1, weapon_id: 1010811 },
+                crate::loadout::Equipment { slot: 2, weapon_id: 1090211 },
+            ],
+        });
+        b.input(2, 1, ActionIntent::ShieldGuard, 0).unwrap();
+        assert!(b.current(2).is_none_or(|s| s.state == 2));
+        b.input(1, 1, ActionIntent::ShieldGuard, 0).unwrap();
+        assert_eq!(b.current(1).unwrap().state, 95);
+        let delay = b.profile(1, 1010811).unwrap()["guard"]["prepareMs"].as_u64().unwrap();
+        b.advance(delay);
+        assert_eq!(b.current(1).unwrap().state, 309);
+        b.react(1, 111, delay + 1, 10, false, Some(2));
+        b.advance(delay + 11);
+        assert_eq!(b.current(1).unwrap().state, 309);
+        b.input(1, 2, ActionIntent::BlockRelease, delay + 12).unwrap();
+        assert_eq!(b.current(1).unwrap().state, 2);
+    }
+
 }

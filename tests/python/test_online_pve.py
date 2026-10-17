@@ -74,7 +74,10 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     # Idle selects a native gait while Rust retains position authority.
     client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 2})
     result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=2,inputSeq=2,serverTimeMs=3550,pose=pose))
-    movement = move_flow.decode_move_bc_with_system_and_active(result['send'][0]['body'])
+    assert not result['send']
+    client.context['nowMs'] = 220
+    result = instance(client, kind='timer', name='online-motion-render')
+    movement = move_flow.decode_move_bc_with_system_and_active(next(item['body'] for item in result['send'] if item['command'] == 2))
     assert movement.target_instance_id == 1024
     assert movement.state == 2 and movement.forward_back == 0
     assert movement.left_right == 0
@@ -82,7 +85,9 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     assert movement.position == pytest.approx(pose['position'])
     pose.update(forwardBack=0)
     stopped = client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=3,inputSeq=3,serverTimeMs=3600,pose=pose))
-    movement = move_flow.decode_move_bc_with_system_and_active(stopped['send'][0]['body'])
+    client.context['nowMs'] = 420
+    stopped = instance(client, kind='timer', name='online-motion-render')
+    movement = move_flow.decode_move_bc_with_system_and_active(next(item['body'] for item in stopped['send'] if item['command'] == 2))
     assert movement.state == 1 and movement.current_velocity == 0 and movement.forward_back == 0
     dead = {**m, 'alive': False, 'health': 0}
     result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
@@ -417,13 +422,23 @@ def test_monster_motion_updates_do_not_restart_an_unchanged_gait():
     first = move(1, pose['position'])
     assert move_flow.decode_move_bc_with_system_and_active(first['send'][0]['body']).state == 2
     moved = move(2, [2.6, 0., .2])
-    assert move_flow.decode_move_direct_bc(moved['send'][0]['body']).position == pytest.approx([2.6, 0., .2])
+    assert not moved['send']  # Receipt buffers the sample instead of moving the model.
+    client.context['nowMs'] = 220
+    rendered = instance(client, kind='timer', name='online-motion-render')
+    assert move_flow.decode_move_direct_bc(rendered['send'][0]['body']).position[0] <= 2.6
     for seq in range(3, 23):
         assert not move(seq, [2.6, 0., .2])['send']
     source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
     assert source['poseSeq'] == 22
-    client.reply(None, 'actionChanged', action=dict(roomId='room-test', matchId=MATCH,
-        actorId=m['actorId'], eventSeq=1, actionSeq=2, actionId=None, state=2,
-        weaponId=m['kind']['weaponId'], durationMs=0, serverTimeMs=5900))
-    restored = move(23, [2.6, 0., .2])
-    assert move_flow.decode_move_bc_with_system_and_active(restored['send'][0]['body']).state == 2
+    # Catch up over multiple phases: sequence validation occurs on receipt,
+    # although playback only presents the newest due phase.
+    for event_seq, state in ((1, 235), (2, 2)):
+        client.reply(None, 'actionChanged', action=dict(roomId='room-test', matchId=MATCH,
+            actorId=m['actorId'], eventSeq=event_seq, actionSeq=event_seq+1,
+            actionId=None, state=state, weaponId=m['kind']['weaponId'],
+            durationMs=0, serverTimeMs=5700+event_seq))
+    client.context['nowMs'] = 4000
+    instance(client, kind='timer', name='online-motion-render')
+    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
+    assert source['actionSeq'] == 3
+    assert source['battleState'] == 2

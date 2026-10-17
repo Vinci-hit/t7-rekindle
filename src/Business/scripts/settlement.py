@@ -60,7 +60,7 @@ def validState(state):
         return True
     value = state['settlement']
     if (type(value) is not dict or not battle_clock.validState({'battleClock': value})
-            or value.get('reason') not in ('quit', 'timeout', 'kill-target', 'pve-cleared', 'pve-wipe')
+            or value.get('reason') not in ('quit', 'timeout', 'kill-target', 'pve-cleared', 'pve-wipe', 'pve-objective-destroyed')
             or ('killTarget' in value and not kill_flow.valid_kill_target(value['killTarget']))
             or type(value.get('result')) is not int or value['result'] not in (0, 1, 2, 3)
             or (value['reason'] == 'quit') != (value['result'] == 0)

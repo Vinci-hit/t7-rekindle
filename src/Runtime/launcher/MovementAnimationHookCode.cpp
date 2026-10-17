@@ -8,6 +8,8 @@
 namespace t7r {
 namespace {
 constexpr uint32_t WRITER_RVA = 0x3D2BF2, RETURN_RVA = 0x3D2C0B, CONSTANTS_OFFSET = 0x700;
+constexpr uint32_t POSE_OFFSET = 0x800, DEFENSE_EXIT_OFFSET = 0xC00;
+constexpr uint32_t VARIABLE_WRITER_RVA = 0x29ED60;
 }
 void verifyMovementAnimationFunction(HANDLE process, uint32_t imageBase) {
     for (const auto& entry : std::vector<std::pair<uint32_t, Bytes>>{

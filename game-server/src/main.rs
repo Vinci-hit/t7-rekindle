@@ -86,7 +86,7 @@ async fn main() -> io::Result<()> {
                 let mut data = Vec::new();
                 use std::io::Read;
                 std::fs::File::open(path)?
-                    .take(131073)
+                    .take(t7_game_server::pve::MAX_CATALOG_BYTES as u64 + 1)
                     .read_to_end(&mut data)?;
                 pve =
                     Some(t7_game_server::pve::Catalog::from_json(&data).map_err(io::Error::other)?);

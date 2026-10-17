@@ -1,5 +1,6 @@
 """Native rendering and entry for server-owned cooperative monsters."""
 from functools import lru_cache
+import math
 import struct
 from . import actors, contracts as wire, controls
 from .codec import attr_flow, battle_flow, casual_flow, move_flow, vision_flow, objective_flow
@@ -260,6 +261,7 @@ def receive(flow, value):
             if key not in current:
                 if not state['monsters'][key].get('removed', False):
                     flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
+                flow.session.get('onlineMotion', {}).get('buffers', {}).pop(key, None)
                 del state['monsters'][key]
         for key, monster in current.items():
             if key not in state['monsters']:
@@ -295,6 +297,7 @@ def receive(flow, value):
                     flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
                         object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
                     source['removed'] = True
+                    flow.session.get('onlineMotion', {}).get('buffers', {}).pop(key, None)
         if match['pve'].get('objective') != snapshot.get('objective'):
             objective = snapshot.get('objective')
             flow.log('INFO', 'online-pve-objective ' + (
@@ -322,12 +325,30 @@ def action(flow, value, connection, session):
     if seq != source['actionSeq']%65535+1 or value['weaponId'] != source['kind']['weaponId']:
         raise ValueError('PVE action changed monster sequence or weapon')
     source['actionSeq'] = seq
+    from . import online_actions, online_motion
+    buffer = session.get('onlineMotion', {}).get('buffers', {}).get(str(value['actorId']), {})
+    if source.get('removed', False):
+        return
+    if buffer.get('samples') and value['state'] not in online_actions.REACTION_STATES:
+        queued = buffer.setdefault('actions', [])
+        if len(queued) >= 64:
+            raise ValueError('monster action playback queue overflow')
+        queued.append(value)
+        online_motion.schedule_render(flow, connection, session)
+        return
+    buffer.pop('actions', None)
+    present_action(flow, connection, session, value['actorId'], value)
+
+
+def present_action(flow, connection, session, actor, value):
+    source = ledger(session)['monsters'].get(str(actor))
+    if source is None or source.get('removed', False):
+        return
+    seq = value['actionSeq']
     source['battleState'] = value['state']
     # An action can change the native locomotion graph independently of poses.
     source.pop('nativeMovement', None)
     source.pop('nativeTransform', None)
-    if source.get('removed', False):
-        return
     if value['state'] in (35, 42):
         finish_birth(flow, source, connection, session)
     body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
@@ -348,29 +369,44 @@ def movement_body(source, pose, tick):
         forward_back=0, left_right=0, current_velocity=0, max_velocity=0, system_group=move_flow.MOVE_MESSAGE_GROUP_SERVER_INTERNAL, active=1)
 
 
-def pose(flow, value, connection, session):
-    from .custom_lobby import integer
-    from .online_motion import ledger as motion
-    state = motion(session)
-    sequence = integer(value['eventSeq'],1,0xffffffffffffffff)
-    if sequence != state['eventSeq']+1:
-        raise ValueError('PVE pose gap or replay')
-    state['eventSeq'] = sequence
-    source = ledger(session)['monsters'].get(str(value['actorId']))
-    if source is None:
+def pose(flow, actor, pose, connection, session, server_time, sequence):
+    from . import online_motion, online_playback
+    source = ledger(session)['monsters'].get(str(actor))
+    if source is None or sequence <= source['poseSeq']:
         return
-    seq=integer(value['inputSeq'],1,0xffffffff)
-    if seq <= source['poseSeq']:
-        raise ValueError('PVE pose input replay')
-    source['poseSeq'] = seq
-    source.update(value['pose'])
-    if source.get('removed', False):
+    source['poseSeq'] = sequence
+    source.update(pose)
+    if source.get('removed', False) or source.get('birth') is not None:
         return
-    if source.get('birth') is not None:
-        return  # The native birth graph owns the pose until the server ends it.
+    buffer = online_motion.ledger(session)['buffers'].setdefault(str(actor), {})
+    samples = buffer.setdefault('samples', [])
+    if samples and server_time < samples[-1]['at']:
+        return
+    buffer['clockOffset'] = min(buffer.get('clockOffset', flow.now-server_time), flow.now-server_time)
+    online_playback.observe(buffer, server_time, flow.now)
+    sample = dict(at=server_time, pose=pose)
+    if not samples or server_time-samples[-1]['at'] > online_motion.STALE_MS or math.dist(
+            pose['position'], samples[-1]['pose']['position']) > 8:
+        samples[:] = [sample]
+        buffer.pop('renderAt', None)
+        buffer.pop('playbackAt', None)
+        emit(flow, connection, session, actor, pose, buffer, 'online-pve-monster-pose')
+    else:
+        if server_time == samples[-1]['at']:
+            samples[-1] = sample
+        else:
+            samples.append(sample)
+            del samples[:-online_motion.MAX_SAMPLES]
+    online_motion.schedule_render(flow, connection, session)
+
+
+def emit(flow, connection, session, actor, pose, state, reason):
+    source = ledger(session)['monsters'].get(str(actor))
+    if source is None or source.get('removed', False) or source.get('birth') is not None:
+        return
+    state['renderedAt'] = flow.now
     # Only transitions select a gait. Reissuing a composite on every AI sample
     # restarts native movement commands even when intent has not changed.
-    pose = value['pose']
     movement = [pose['forwardBack'], pose['leftRight'], pose['running']]
     transform = [list(pose['position']), pose['heading']]
     idle = source.get('battleState', 2) == 2

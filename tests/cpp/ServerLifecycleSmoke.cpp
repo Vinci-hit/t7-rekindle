@@ -370,7 +370,6 @@ int wmain(int argc, wchar_t** argv) {
         }
         WSACleanup(); return result;
     }
-    const auto dispatched = t7r::detail::TimePoint{};
     if (argc == 3 && std::wstring(argv[1]) == L"--title-runtime")
         return verifyTitleRuntime(argv[2]) ? 0 : 1;
     if (argc == 3 && std::wstring(argv[1]) == L"--server-context")

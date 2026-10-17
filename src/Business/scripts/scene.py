@@ -21,7 +21,7 @@ def begin(flow):
     flow.state.pop('settlement', None)
     bot.stopAll(flow, publish=False)
     flow.cancelTimers()
-    for key in ('roundEnded', 'leaving', 'logoutData', 'battleEntered', 'heroChosen', 'loaded'):
+    for key in ('roundEnded', 'leaving', 'logoutData', 'battleEntered', 'heroChosen', 'loaded', 'actorImported'):
         flow.session.pop(key, None)
     battle.resetAction(flow)
     player_life.reset(flow)
@@ -43,7 +43,7 @@ def begin(flow):
         roster.assemble(flow)
     loadouts.begin(flow)
     flow.phase("instance-data-sent")
-    flow.later("instance-game-info", 200)
+    initializationStep(flow, "instance-game-info")
     flow.later("time-sync", 2000)
 
 
@@ -100,6 +100,14 @@ def startRound(flow):
     flow.phase("start-sent")
 
 
+def initializationStep(flow, name):
+    # Online initialization is an ordered packet batch; no client reply is required between steps.
+    if online_scene.enabled(flow):
+        timer(flow, name)
+    else:
+        flow.later(name, 200)
+
+
 def timer(flow, name):
     if online_scene.enabled(flow) and name in ("round-start", "round-game", "round-end"):
         return True
@@ -108,16 +116,16 @@ def timer(flow, name):
     elif name == "instance-game-info":
         flow.send(0xA, room_flow.encode_instance_update_game(
             server_time_ms=flow.now, instance_id=1), "instance-game-info")
-        flow.later("instance-round-info", 200)
+        initializationStep(flow, "instance-round-info")
     elif name == "instance-round-info":
         flow.send(0xA, wire.roundInfo(flow.now, battle_clock.current(flow)['durationMs']), "instance-round-info")
-        flow.later("instance-round-state", 200)
+        initializationStep(flow, "instance-round-state")
     elif name == "instance-round-state":
         flow.send(0xA, wire.roundState(flow.now, 2, wire.PREPARE_MS), "instance-round-state-after-auth")
-        flow.later("instance-start-pattern", 200)
+        initializationStep(flow, "instance-start-pattern")
     elif name == "instance-start-pattern":
         flow.send(0xA, wire.startPattern(pve.startPatternData(flow)), "instance-start-pattern-data-ntf-after-auth")
-        flow.later("instance-spawn-area", 200)
+        initializationStep(flow, "instance-spawn-area")
     elif name == "instance-spawn-area":
         flow.send(0xA, wire.spawnArea(flow.now), "instance-spawn-area-state-after-auth")
     elif name == "actor-select":
@@ -281,6 +289,8 @@ def message(flow, command, selector, body):
             return True
         if flow.session.get("battleEntered") and camp != flow.session.get("camp"):
             raise ValueError("camp-choice is closed after battle entry")
+        if camp != flow.session.get("camp"):
+            flow.session.pop("actorImported", None)
         flow.session["camp"] = camp
         if "bots" in flow.session and not flow.session.get("battleEntered"):
             roster.assemble(flow)
@@ -291,6 +301,9 @@ def message(flow, command, selector, body):
         wire.exact(body, 3, "camp-choice-ok")
         camp = flow.session["camp"]
         flow.send(0x23, struct.pack(">Hi", 4, 0), "instance-camp-choose-ok-result-zero")
+        # Retransmitted confirmations must not recreate models already imported in this instance.
+        if flow.session.get("actorImported"):
+            return True
         flow.send(0xE, roster.playerVision(flow), "instance-fixed-local-actor-vision-add-before-basic-info")
         flow.send(0xA, wire.actorInfo(flow.now, camp, flow.playerName, userId=flow.userId,
                    startPattern=pve.instanceStartPattern(flow),

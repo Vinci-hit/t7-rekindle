@@ -41,6 +41,18 @@ python -B scripts/export_combat_profiles.py --client-directory "CLIENT_BIN" --ou
 
 `CLIENT_BIN` 使用所选客户端的绝对 `Bin` 路径。导出只读客户端资源，输出文件必须尚不存在；内容不包含本机路径或动画二进制。
 
+## 联机动作与选将
+
+联机选将通过 `selectLoadout` 提交武将 ID 和最多四个 `{slot, weaponId}` 装备项，不提交时长。云端按自身目录校验武将与武器组合，加载完成后锁定配置；死亡后可重新选将。房间快照携带每位玩家的 `loadout`，供对方创建武将模型、装备与结算头像。
+
+本地攻击预测与云端四向攻击、碰撞窗口、反弹、被招架、换武器及冲刺时长使用同源静态参数。云端目录由以下命令生成，定向测试检查与 Python 源表完全一致：
+
+```powershell
+python scripts/export_online_combat_profiles.py --output game-server/src/combat_profiles.json
+```
+
+这部分接入只覆盖联机选将、装备与动作参数；云端伤害、盾牌耐久与特性结算仍以云端实现为准，不能将下文单机业务层规则视为已经全部接入云端。
+
 ## 近战伤害
 
 [damage_data.py](../src/Business/scripts/damage_data.py)保存同一范围内的零强化武器砍／刺／钝伤、独立攻防性能字母、盾牌耐久、武将护甲、原始动作伤害 ID 及特性绑定。来源为客户端 `s_weapon_cli`、`s_weapon_attr`、`s_heroscard_cli`、`s_hero_attr`、`s_battle_param_cli`；运行时不读表。不实现远程、坐骑、等级、品质、符文及强化成长。
@@ -72,7 +84,7 @@ python -B scripts/export_combat_profiles.py --client-directory "CLIENT_BIN" --ou
 
 格挡值 `5`、恢复等待 `2500 ms`、每秒恢复 `2`、主动命中／被挡恢复 `2`、耗尽重置 `2` 使用 `s_battle_common_para_cli` 原始参数 `91/93/94/95/97`。消耗公式、破防减伤、挡反窗口、硬直与击倒时间采用已确认的项目经验值，集中在 [guard_rules.py](../src/Business/scripts/guard_rules.py)。原始重量显示缺少可用值，暂按绑定移动重量分类赋相对权重；护甲类型暂按数值护甲映射，均在 `damage_resources.py` 标记项目来源。完整参数与判定顺序见[格挡与受击参数来源](combat-rules.md#格挡与受击参数来源)。
 
-业务状态版本为 `19`，原生接触证据版本为 `2`。旧版本已初始化或已进入战斗的实例拒绝热迁移，保留旧 revision 与状态；大厅和未初始化实例可迁移。升级需重新构建并重启 Runtime 和客户端。离线属性导出：
+业务状态版本为 `24`，原生接触证据版本为 `2`。旧版本已初始化或已进入战斗的实例拒绝热迁移，保留旧 revision 与状态；大厅和未初始化实例可迁移。升级需重新构建并重启 Runtime 和客户端。离线属性导出：
 
 ```powershell
 python -B scripts/export_damage_profiles.py "CLIENT_BIN" "damage_data.generated.py"

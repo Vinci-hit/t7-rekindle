@@ -9,12 +9,13 @@ INTENTS = {
     300560: 'attackUp', 300550: 'attackRight', 300570: 'attackDown', 300540: 'attackLeft',
     300580: 'blockUp', 300590: 'blockRight', 300600: 'blockDown', 300610: 'blockLeft',
     700250: 'dashAttack',
+    300130: 'shieldGuard', 300140: 'blockRelease',
     300020: 'attackRelease', 300620: 'blockRelease',
 }
-STATES = frozenset((1, 438, 439, 443, 2, 235, 237, 238, 239, 241, 243, 244, 245, 247, 249, 250, 251,
+STATES = frozenset((95, 309, 111,1, 438, 439, 443, 2, 235, 237, 238, 239, 241, 243, 244, 245, 247, 249, 250, 251,
                     253, 255, 256, 257, 305, 223, 227, 308, 224, 228, 307, 225, 229, 306, 226, 230, 35, 42, 240, 246, 252, 258, 231, 232, 233, 234, 466, 468, 467, 469))
-GUARD_STATES = frozenset((305, 308, 307, 306, 223, 224, 225, 226, 227, 228, 229, 230))
-REACTION_STATES = frozenset((439, 443, 35, 42, 240, 246, 252, 258, 231, 232, 233, 234, 466, 468, 467, 469))
+GUARD_STATES = frozenset((95, 309,305, 308, 307, 306, 223, 224, 225, 226, 227, 228, 229, 230))
+REACTION_STATES = frozenset((111,439, 443, 35, 42, 240, 246, 252, 258, 231, 232, 233, 234, 466, 468, 467, 469))
 
 
 def valid(session):
@@ -43,11 +44,19 @@ def message(flow, command, selector, body):
         return False
     if command == 5 and selector == 1:
         weapon_slot = weapon_flow.decode_change_request(body)
-        if weapon_slot not in (weapon_flow.MAIN_SLOT, weapon_flow.FIST_SLOT):
+        if weapon_slot not in (1, 2, 3, 4, weapon_flow.FIST_SLOT):
             from . import weapons
             flow.send(5, weapon_flow.encode_change_response(weapon_flow.INVALID_SLOT, weapons.equipped(flow.session)), 'online-weapon-invalid-slot')
             return True
-        intent = 'equipMain' if weapon_slot == weapon_flow.MAIN_SLOT else 'toggleFists'
+        from . import weapons
+        target = next((i['weaponId'] for i in weapons.inventory(flow.session) if i['slot'] == weapon_slot), None)
+        if target is None:
+            flow.send(5, weapon_flow.encode_change_response(weapon_flow.INVALID_SLOT, weapons.equipped(flow.session)), 'online-weapon-invalid-slot')
+            return True
+        selected = weapons.profile(flow.session, target)
+        if selected and selected['shield'] and weapons.shieldPrimary(flow.session) is None:
+            return True
+        intent = {1: 'equipMain', 2: 'equipSlot2', 3: 'equipSlot3', 4: 'equipSlot4'}.get(weapon_slot, 'toggleFists')
     elif command != 4 or selector != 1:
         return False
     elif len(body) != 11:
@@ -162,8 +171,7 @@ def receive(flow, value):
 def validate_event(match, value):
     from .custom_lobby import integer
     from . import online_scene, weapons, contracts as wire
-    if integer(value['weaponId'], 1) not in (wire.WEAPON_ID, weapons.FIST_ID):
-        raise ValueError('unsupported online equipment')
+    integer(value['weaponId'], 1)
     integer(value['durationMs'], 0, 65535)
     target = value.get('targetActorId')
     if target is not None and (type(target) is not int or target != 0 and online_scene.actor_rid(match, target) is None):
@@ -187,14 +195,19 @@ def present(flow, connection, session, rid, value):
         reacting.append(str(rid))
     from . import weapons, contracts as wire
     weapon = integer(value['weaponId'], 1)
-    if weapon not in (wire.WEAPON_ID, weapons.FIST_ID):
-        raise ValueError('unsupported online equipment')
     source = session if rid == 1 else online_scene.peer_data(session, rid)
+    if 'weaponProfiles' in source and str(weapon) not in source['weaponProfiles']:
+        raise ValueError('online weapon outside selected equipment')
+    if 'weaponProfiles' not in source and weapon not in (wire.WEAPON_ID, weapons.FIST_ID):
+        raise ValueError('unsupported online equipment')
     if source.get('weaponId', wire.WEAPON_ID) != weapon:
         source['weaponId'] = weapon
+        if weapon != weapons.FIST_ID:
+            source['mainWeaponId'] = weapon
+        source['offhandId'] = weapons.offhand(source, weapon)
         flow.result['send'].append({'connection': connection, 'command': 5,
-            'body': weapon_flow.encode_use_update(actor_id=rid, main_weapon_id=wire.WEAPON_ID,
-                fist_weapon_id=weapons.FIST_ID, equipped_weapon_id=weapon, now_ms=flow.now),
+            'body': weapon_flow.encode_equipment_update(actor_id=rid, items=weapons.inventory(source),
+                equipped_weapon_id=weapon, offhand_id=source.get('offhandId', 0), now_ms=flow.now),
             'reason': 'online-weapon-use-update'})
     # The native counter belongs to presentations, including corrections, not server phases.
     if rid == 1:
@@ -220,15 +233,21 @@ def weapon_reply(flow, payload, metadata):
     from . import contracts as wire, weapons
     from .custom_lobby import integer
     weapon = integer(payload['weaponId'], 1)
-    if weapon not in (wire.WEAPON_ID, weapons.FIST_ID):
-        raise ValueError('unsupported equipment acknowledgement')
     previous = metadata['previousWeapon']
-    expected = weapons.FIST_ID if metadata['weaponSlot'] == weapon_flow.FIST_SLOT and previous != weapons.FIST_ID else wire.WEAPON_ID
     instances = [(int(k), s) for k, s in flow.state['sessions'].items()
                  if s['role'] == 'instance' and s.get('initialized') and not s.get('leaving')
                  and int(k) in flow.context.get('connections', [])]
     if len(instances) != 1:
         return
+    source = instances[0][1]
+    if metadata['weaponSlot'] == weapon_flow.FIST_SLOT:
+        expected = weapons.FIST_ID if previous != weapons.FIST_ID else source.get('mainWeaponId', wire.WEAPON_ID)
+    else:
+        expected = next((i['weaponId'] for i in weapons.inventory(source) if i['slot'] == metadata['weaponSlot']), None)
+        if expected is not None and weapons.profile(source, expected) and weapons.profile(source, expected)['shield']:
+            expected = weapons.shieldPrimary(source)
+    if 'weaponProfiles' in source and str(weapon) not in source['weaponProfiles']:
+        raise ValueError('equipment acknowledgement outside selected loadout')
     flow.result['send'].append({'connection': instances[0][0], 'command': 5,
-        'body': weapon_flow.encode_change_response(0 if weapon == expected else weapon_flow.CANNOT_CHANGE, weapon),
+        'body': weapon_flow.encode_change_response(0 if weapon == expected else weapon_flow.CANNOT_CHANGE, weapon, weapons.offhand(source, weapon)),
         'reason': 'online-weapon-change-response'})

@@ -1700,6 +1700,10 @@ impl Coordinator {
             ClientCommand::SetCamp { camp } => self.lobby.set_camp(&account, *camp)?,
             ClientCommand::Ready { ready } => self.lobby.ready(&account, *ready)?,
             ClientCommand::Start => self.lobby.start(&account, now_ms)?,
+            ClientCommand::SelectLoadout { match_id, loadout } => {
+                self.lobby
+                    .select_loadout(&account, match_id, loadout.clone())?
+            }
             ClientCommand::Loaded { match_id } => self.lobby.loaded(&account, match_id, now_ms)?,
             ClientCommand::GetClientView { match_id } => {
                 return Ok((

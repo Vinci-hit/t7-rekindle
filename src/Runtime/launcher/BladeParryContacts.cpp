@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace t7 {
+namespace t7r {
 namespace {
 using Point = std::array<float, 3>;
 constexpr float CONTACT_DISTANCE = .06f;

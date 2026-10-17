@@ -249,3 +249,27 @@ def test_native_reaction_trace_distinguishes_restart_from_repeated_sampling(monk
     client.context['botWorld']['actors']['2']['state'] = 2
     assert len(traces(client.event('world'))) == 1
     assert not traces(client.event('world'))
+
+
+def test_thrust_windup_does_not_consume_later_valid_contact(monkeypatch, spawnPoints):
+    client = running(monkeypatch, spawnPoints, peer=True)
+    client.context['nowMs'] = 1000
+    epoch = client.state['sessions']['2']['instanceStartedAt']
+    hit = dict(ready=True, hit=True, actorId=1, targetId=2, entity=101, targetEntity=102,
+        state=250, seq=3, targetState=2, targetSeq=1, phaseAt=900, targetPhaseAt=800,
+        occurredAt=950., along=.5, sourcePosition=[0.,0.,.5], targetPosition=[1.2,0.,.5],
+        sourceHeading=0., targetHeading=180., position=[.9,0.,1.5], normal=[-1.,0.,0.], direction=[1.,0.,0.], material=4)
+    hit = native_evidence(hit)
+    client.context['botWorld'] = dict(ready=True, sampledAt=1000, instanceStartedAt=epoch,
+        actors={'1':dict(ready=True, entity=101, position=[0.,0.,.5], heading=0.)},
+        contactJournal=dict(throughAt=1000, batchId=1, frames=10, dropped=0,
+            events=[hit, {**hit, 'actorId':2, 'targetId':1, 'entity':102, 'targetEntity':101}]))
+    hit['seq'] = online_prediction.remember(client.state['sessions']['2'], 250, 1)
+    assert not any('contactInput' in v['request'] for v in client.event('world').get('gateway', []))
+    client.context['nowMs'] = 1100
+    client.context['botWorld']['sampledAt'] = 1100
+    client.context['botWorld']['contactJournal'].update(
+        throughAt=1100, batchId=2, events=[{**hit, 'occurredAt': 1050.}])
+    result = client.event('world')
+    request = next(json.loads(v['request']) for v in result['gateway'] if 'contactInput' in v['request'])
+    assert request['command']['payload']['contact']['elapsedMs'] == 150

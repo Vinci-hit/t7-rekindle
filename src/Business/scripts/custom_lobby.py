@@ -34,7 +34,7 @@ def valid(session):
         next_id = integer(gateway["nextId"], 1, 0xffffffffffffffff)
         for sequence, item in gateway["pending"].items():
             if guid(sequence) >= next_id or item["kind"] not in (
-                    "hello", "ping", "clock-echo", "combat-heartbeat", "channels", "list", "get", "create", "join", "quit", "ready", "camp", "start", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn", "pve-create", "pve-start"):
+                    "hello", "ping", "clock-echo", "combat-heartbeat", "channels", "list", "get", "create", "join", "quit", "ready", "camp", "start", "view", "loadout", "loaded", "scene-leave", "action", "pose", "contact", "respawn", "pve-create", "pve-start"):
                 return False
         if "paused" in gateway and type(gateway["paused"]) is not bool:
             return False
@@ -296,6 +296,7 @@ def changed(flow, room, *, force=False):
             phase = {"loading": 1, "countdown": 2, "running": 3}[room['phase']]
             if phase < match['phase']:
                 raise ValueError("scene phase cannot move backwards")
+            online_scene.sync_loadouts(flow, room)
             match['phase'] = phase
             online_scene.applyAuthority(flow)
         return
@@ -482,15 +483,16 @@ def receive(flow, body):
             raise ValueError("invalid room service error code")
         if kind == 'clock-echo' and code == 'badRequest':
             flow.log('WARN', 'combat clock sample expired or invalid; retry on next heartbeat')
-        elif kind == 'action' and code == 'badRequest':
-            # A rejected input must not tear down the authenticated game session.
-            flow.log('WARN', f'online action rejected; connection retained request={request_id} code={code}')
-        elif kind == 'pose' and code == 'invalidPose':
-            flow.log('WARN', 'online pose rejected by movement bounds')
-        elif (kind in ('action', 'pose', 'contact', 'respawn') and flow.state.get('onlineScene', {}).get('phase') == 4
-                and code in ('wrongPhase', 'staleMatch', 'notInRoom')):
-            flow.log('INFO', 'online action cancelled with its scene')
-        elif kind in ("hello", "ping", "clock-echo", "combat-heartbeat", "view", "loaded", "scene-leave", "action", "pose", "contact", "respawn"):
+        elif kind in ('action', 'pose', 'contact', 'respawn'):
+            # A gameplay rejection is a request outcome, not a broken session.
+            flow.log('WARN', f'online input rejected; connection retained kind={kind} request={request_id} code={code}')
+            if code == 'invalidPose':
+                for session in flow.state['sessions'].values():
+                    motion = session.get('onlineMotion')
+                    if motion is not None:
+                        motion.pop('lastSent', None)
+                        motion['sentAt'] = -online_limits.COMBAT_HEARTBEAT_INTERVAL_MS
+        elif kind in ("hello", "ping", "clock-echo", "combat-heartbeat", "view", "loadout", "loaded", "scene-leave", "action", "pose", "contact", "respawn"):
             raise ValueError(f"room service rejected {kind}: {code}")
         else:
             failure(flow, kind, metadata)
@@ -498,7 +500,7 @@ def receive(flow, body):
     else:
         expected = {"hello": "welcome", "ping": "clockSample", "clock-echo": "clockReady", "combat-heartbeat": "pong", "channels": "channelList", "list": "roomPage",
                     "get": "roomListing", "create": "room", "join": "room", "quit": "left", "pve-create": "room", "pve-start": "room",
-                    "ready": "room", "camp": "room", "start": "room", "view": "clientView", "loaded": "room", "scene-leave": "left", "action": "actionAccepted", "pose": "poseAccepted", "contact": "contactAccepted", "respawn": "respawnAccepted"}[kind]
+                    "ready": "room", "camp": "room", "start": "room", "view": "clientView", "loadout": "room", "loaded": "room", "scene-leave": "left", "action": "actionAccepted", "pose": "poseAccepted", "contact": "contactAccepted", "respawn": "respawnAccepted"}[kind]
         if message["type"] != expected:
             raise ValueError("room service reply does not match the request")
         payload = message["payload"]
@@ -597,7 +599,7 @@ def receive(flow, body):
                 flow.send(codec.COMMAND, codec.encode_dismiss_notify(room_guid), 'custom-room-scene-left')
         elif kind == 'view':
             view(flow, payload['view'], metadata)
-        elif kind in ("ready", "camp", "start", "loaded"):
+        elif kind in ("ready", "camp", "start", "loadout", "loaded"):
             if kind == "ready":
                 flow.send(codec.COMMAND, codec.encode_result(19, 0), "custom-room-ready")
             elif kind == 'start':

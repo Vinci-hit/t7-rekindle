@@ -108,6 +108,11 @@ pub enum ClientCommand {
         ready: bool,
     },
     Start,
+    SelectLoadout {
+        #[serde(rename = "matchId")]
+        match_id: String,
+        loadout: crate::loadout::Loadout,
+    },
     Loaded {
         #[serde(rename = "matchId")]
         match_id: String,

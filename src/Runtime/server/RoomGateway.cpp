@@ -11,7 +11,7 @@
 #include <sstream>
 #include <utility>
 
-namespace t7 {
+namespace t7r {
 namespace {
 using Clock = std::chrono::steady_clock;
 

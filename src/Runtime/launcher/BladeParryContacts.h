@@ -1,7 +1,7 @@
 #pragma once
 #include "../core/WorldSnapshot.h"
 
-namespace t7 {
+namespace t7r {
 // Retain a bounded pair of poses to catch a strike crossing a held guard blade.
 class BladeParryContacts final {
 public:

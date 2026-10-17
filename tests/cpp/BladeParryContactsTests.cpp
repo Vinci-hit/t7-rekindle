@@ -3,8 +3,8 @@
 #include <stdexcept>
 
 namespace {
-t7::WorldSnapshot snapshot(uint64_t at, float offset) {
-    t7::WorldSnapshot world;
+t7r::WorldSnapshot snapshot(uint64_t at, float offset) {
+    t7r::WorldSnapshot world;
     world.ready=world.contactsReady=true; world.instanceStartedAt=100; world.sampledAt=at;
     auto& source=world.actors[0]; auto& target=world.actors[1];
     source.ready=target.ready=true; source.entity=101; target.entity=102;
@@ -19,7 +19,7 @@ t7::WorldSnapshot snapshot(uint64_t at, float offset) {
 void require(bool value) { if(!value) throw std::runtime_error("guard blade contact invariant failed"); }
 }
 bool verifyBladeParryContacts() {
-    t7::BladeParryContacts contacts;
+    t7r::BladeParryContacts contacts;
     auto first=snapshot(1000,-.3f); contacts.append(first);
     require(first.contacts.empty());
     auto second=snapshot(1050,.3f); contacts.append(second);

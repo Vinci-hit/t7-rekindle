@@ -11,7 +11,7 @@ from .codec import kill_flow, login_flow, protocol, room_flow
 from .codec.method3 import Method3UplinkMessage
 
 API_VERSION = 1
-STATE_VERSION = 23
+STATE_VERSION = 24
 STARTUP_STEP_DELAY_MS = 1000
 
 

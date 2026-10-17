@@ -1369,3 +1369,71 @@ async fn reconnect_rejects_unknown_capabilities() {
     assert!(matches!(error, Error::Http(response) if response.status() == 401));
     server.stop().await;
 }
+
+#[tokio::test]
+async fn selected_hero_and_weapon_reach_both_clients_before_attack() {
+    let server = TestServer::start(true).await;
+    let mut a = server.connect().await;
+    let mut b = server.connect().await;
+    request(
+        &mut a,
+        1,
+        json!({"type":"hello","payload":{"accountId":"loadout-owner"}}),
+    )
+    .await;
+    request(
+        &mut b,
+        1,
+        json!({"type":"hello","payload":{"accountId":"loadout-guest"}}),
+    )
+    .await;
+    let room = request(
+        &mut a,
+        2,
+        json!({"type":"createRoom","payload":{"name":"loadouts","mapId":1003}}),
+    )
+    .await;
+    request(
+        &mut b,
+        2,
+        json!({"type":"joinRoom","payload":{"roomId":room["payload"]["room"]["roomId"]}}),
+    )
+    .await;
+    request(&mut b, 3, json!({"type":"ready","payload":{"ready":true}})).await;
+    let loading = request(&mut a, 3, json!({"type":"start"})).await;
+    let id = loading["payload"]["room"]["currentMatch"]["matchId"].clone();
+    let loadout = json!({"heroId":1102,"equipment":[{"slot":1,"weaponId":1010911},{"slot":3,"weaponId":1030611}]});
+    let selected = request(
+        &mut a,
+        4,
+        json!({"type":"selectLoadout","payload":{"matchId":id,"loadout":loadout}}),
+    )
+    .await;
+    assert_eq!(
+        selected["payload"]["room"]["members"][0]["loadout"],
+        loadout
+    );
+    request(&mut a, 5, json!({"type":"loaded","payload":{"matchId":id}})).await;
+    request(&mut b, 4, json!({"type":"loaded","payload":{"matchId":id}})).await;
+    room_phase(&mut a, "running").await;
+    let remote = room_phase(&mut b, "running").await;
+    assert_eq!(remote["members"][0]["loadout"], loadout);
+    let accepted = request(
+        &mut a,
+        6,
+        json!({"type":"actionInput","payload":{"matchId":id,"inputSeq":1,"intent":"attackUp"}}),
+    )
+    .await;
+    assert_eq!(accepted["payload"]["weaponId"], 1010911);
+    let action = receive(&mut b).await;
+    assert_eq!(action["event"]["payload"]["action"]["weaponId"], 1010911);
+    assert!(
+        action["event"]["payload"]["action"]["durationMs"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    a.close(None).await.unwrap();
+    b.close(None).await.unwrap();
+    server.stop().await;
+}

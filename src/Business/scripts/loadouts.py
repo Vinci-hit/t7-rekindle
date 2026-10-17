@@ -45,6 +45,9 @@ def select(flow, position):
     flow.session['damageProfile'] = damage_resources.loadProfile(heroId,
         {hero_resources.FIST_ID, *(i['weaponId'] for i in items)})
     damage_state.reset(flow.session)
+    if 'onlineScene' in flow.state:
+        from . import online_scene
+        online_scene.publish_loadout(flow)
     return True
 
 

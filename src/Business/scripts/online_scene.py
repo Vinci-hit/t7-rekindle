@@ -93,7 +93,9 @@ def assemble(flow):
 
 def peerVision(flow, rid):
     peer = peer_data(flow.session, rid)
-    body = wire.actorVision(peer['camp'], actorName=peer['name'].encode('gbk'), runtimeMovement=True,
+    body = wire.actorVision(peer['camp'], heroId=peer.get('heroId', wire.HERO_ID),
+                            equipment=peer.get('equipment'), weaponId=peer.get('weaponId', wire.WEAPON_ID),
+                            offhandId=peer.get('offhandId', 0), actorName=peer['name'].encode('gbk'), runtimeMovement=True,
                             position=tuple(peer['position']), actorId=rid, userId=peer['userId'])
     return body[:45] + struct.pack('>h', peer['heading']) + body[47:]
 
@@ -112,7 +114,7 @@ def importPeer(flow):
         flow.send(0xA, room_flow.encode_instance_update_actor_basic_info(
             server_time_ms=flow.now, instance_id=1, actor_mid=rid, user_id=peer['userId'],
             user_name=peer['name'].encode('gbk'), user_image_id=7, level=1, actor_state=4,
-            hero_resource_id=wire.HERO_ID, camp=peer['camp'], start_pattern=wire.START_PATTERN), 'online-peer-basic-info')
+            hero_resource_id=peer.get('heroId', wire.HERO_ID), camp=peer['camp'], start_pattern=wire.START_PATTERN), 'online-peer-basic-info')
 
 
 def applyAuthority(flow):
@@ -148,6 +150,9 @@ def applyAuthority(flow):
                 flow.send(0xE, vision_flow.encode_vision_del_event(object_mid=rid), 'online-peer-vision-del-at-entry')
                 flow.send(0xE, peerVision(flow, rid), 'online-peer-vision-add-at-entry')
             controls.enableGround(flow)
+            if 'pve' in match:
+                from . import online_pve
+                online_pve.present_objective(flow, online_pve.ledger(value), match['pve'])
             flow.phase('online-running')
         else:
             from . import online_prediction
@@ -171,3 +176,59 @@ def room_rules(flow):
     if len(rooms) != 1:
         raise ValueError('online scene requires one room authority')
     return rooms[0]
+
+
+def publish_loadout(flow):
+    """Send only selected IDs; the authority owns the combat catalogue."""
+    from . import custom_lobby
+    match = flow.state['onlineScene']
+    selection = dict(heroId=flow.session['heroId'], equipment=flow.session['equipment'])
+    connection, session = flow.connection, flow.session
+    try:
+        for key, value in flow.state['sessions'].items():
+            if value.get('customLobby', {}).get('identified') and int(key) in flow.context.get('connections', []):
+                flow.connection, flow.session = int(key), value
+                custom_lobby.send(flow, 'loadout', dict(type='selectLoadout', payload=dict(
+                    matchId=match['matchId'], loadout=selection)))
+                break
+    finally:
+        flow.connection, flow.session = connection, session
+
+
+def sync_loadouts(flow, room):
+    from .combat_resources import loadCombatProfiles
+    from . import weapons
+    members = {m['actorId']: m for m in room['members']}
+    match = flow.state['onlineScene']
+    connection, session = flow.connection, flow.session
+    try:
+        for key, value in flow.state['sessions'].items():
+            if value['role'] != 'instance' or not value.get('initialized') or value.get('leaving'):
+                continue
+            flow.connection, flow.session = int(key), value
+            for binding in bindings(match):
+                selection = members[binding['actorId']].get('loadout')
+                if selection is None:
+                    continue
+                peer = peer_data(value, binding['localRid'])
+                if peer.get('heroId') == selection['heroId'] and peer.get('equipment') == selection['equipment']:
+                    continue
+                profiles = loadCombatProfiles('', selection['heroId'])
+                equipment = selection['equipment']
+                for item in equipment:
+                    if item['weaponId'] not in profiles:
+                        raise ValueError('peer equipment outside hero catalogue')
+                primary = next((i['weaponId'] for i in sorted(equipment, key=lambda i: i['slot'])
+                                if not profiles[i['weaponId']]['shield']), weapons.FIST_ID)
+                peer.update(heroId=selection['heroId'], equipment=equipment, weaponId=primary,
+                            mainWeaponId=primary, weaponProfiles={str(t): profiles[t] for t in
+                                {weapons.FIST_ID, *(i['weaponId'] for i in equipment)}})
+                peer['offhandId'] = weapons.offhand(peer, primary)
+                if value.get('actorImported'):
+                    rid = binding['localRid']
+                    flow.send(0x36, room_flow.encode_actor_choose_hero_message(
+                        server_time_ms=flow.now, actor_mid=rid, hero_resource_id=peer['heroId'], hero_badge=0), 'online-peer-hero-selected')
+                    flow.send(0xE, vision_flow.encode_vision_del_event(object_mid=rid), 'online-peer-loadout-del')
+                    flow.send(0xE, peerVision(flow, rid), 'online-peer-loadout-add')
+    finally:
+        flow.connection, flow.session = connection, session
