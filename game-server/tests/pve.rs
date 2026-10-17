@@ -1257,3 +1257,34 @@ fn proximity_trigger_does_not_require_the_ai_navigation_component() {
     lobby.advance(3100);
     assert_eq!(lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters.len(), 1);
 }
+
+#[test]
+fn a_wave_sharing_one_spawn_point_spreads_out_instead_of_stacking() {
+    let mut lobby = lobby([6., 0., 0.], &[6], 100, 60_000);
+    let room = lobby.create_pve("a", "crowd", 1).unwrap();
+    let id = lobby.start("a", 0).unwrap().current_match.unwrap().match_id;
+    lobby.loaded("a", &id, 0).unwrap();
+    lobby.advance(3000);
+    pose(&mut lobby, &id, 1, 3001);
+    lobby.advance(3001);
+    let gaps = |lobby: &Lobby| {
+        let monsters = lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters;
+        assert_eq!(monsters.len(), 6);
+        let mut gap = f32::INFINITY;
+        for (i, a) in monsters.iter().enumerate() {
+            for b in &monsters[i + 1..] {
+                gap = gap.min((a.position[0] - b.position[0]).hypot(a.position[1] - b.position[1]));
+            }
+        }
+        gap
+    };
+    // Six monsters on one configured point used to share the identical coordinate.
+    assert!(gaps(&lobby) > 0.5, "spawn stacked: {}", gaps(&lobby));
+    for seq in 2..=80u32 {
+        let now = 3001 + u64::from(seq) * 100;
+        pose(&mut lobby, &id, seq, now);
+        lobby.advance(now);
+    }
+    // After closing on the player they keep their spacing rather than collapsing onto one point.
+    assert!(gaps(&lobby) > 0.4, "crowd collapsed: {}", gaps(&lobby));
+}
