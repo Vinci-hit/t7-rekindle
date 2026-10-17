@@ -490,3 +490,10 @@ def test_attack_cancels_the_walking_gait_before_the_action_and_stops_hold_positi
     assert reasons.index('online-pve-monster-stop') < reasons.index('online-pve-monster-action')
     stop = move_flow.decode_move_bc_with_system_and_active(result['send'][reasons.index('online-pve-monster-stop')]['body'])
     assert (stop.state, stop.forward_back, stop.current_velocity, stop.max_velocity) == (1, 0, 0, 0)
+
+
+def test_stationary_monster_is_re_anchored_so_animations_cannot_walk_it_off_the_hitbox():
+    assert not online_pve.pin_due(dict(alive=True, nativeSentAt=1000), 1050)
+    assert online_pve.pin_due(dict(alive=True, nativeSentAt=1000), 1100)
+    assert online_pve.pin_due(dict(alive=True), 5)
+    assert not online_pve.pin_due(dict(alive=False, nativeSentAt=0), 9999)

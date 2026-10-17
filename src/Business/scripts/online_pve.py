@@ -17,6 +17,7 @@ TRACE = os.environ.get('T7_PVE_TRACE') == '1'
 # (60 Hz direct moves restart the locomotion graph and cost a packet per monster per frame).
 DIRECT_CORRECTION_MS = 50
 HEADING_CORRECTION_DEGREES = 8
+HOLD_PIN_MS = 100
 BIRTH_STATES = {'emerge1': (200, 3167), 'emerge2': (201, 3167), 'emerge3': (202, 3167),
                 'vault1': (203, 1800), 'vault2': (204, 3433)}
 
@@ -443,7 +444,8 @@ def emit(flow, connection, session, actor, pose, state, reason):
     if idle and source.get('nativeMovement') != movement:
         body = movement_body(source, pose, flow.now-session['instanceStartedAt'])
         source['nativeMovement'] = movement
-    elif source.get('nativeTransform') != transform and correction_due(source, pose, transform, flow.now):
+    elif (source.get('nativeTransform') != transform and correction_due(source, pose, transform, flow.now)) \
+            or pin_due(source, flow.now):
         body = move_flow.encode_move_direct_bc(
             server_tick=flow.now-session['instanceStartedAt'],
             target_instance_id=instance_id(source['actorId']),
@@ -463,6 +465,16 @@ def trace(flow, source, what, **fields):
         flow.log('DEBUG', 'pve-trace ' + ' '.join([f"t={flow.now}", f"actor={source['actorId']}", what,
             f"state={source.get('battleState', 2)}", f"server={[round(v, 2) for v in source['position']]}/{source['heading']}",
             f"shown={source.get('presented')}"] + [f"{k}={v}" for k, v in fields.items()]))
+
+
+def pin_due(source, now):
+    """Re-anchor a monster whose pose is unchanged.
+
+    Attack and hurt animations (and player body collision) move the native proxy by themselves. While the
+    server pose is stationary nothing else is sent, so the model drifted or turned away from the position
+    the server and the hit sampling use. A periodic anchor keeps model and hitbox together.
+    """
+    return source['alive'] and now - source.get('nativeSentAt', -HOLD_PIN_MS) >= HOLD_PIN_MS
 
 
 def correction_due(source, pose, transform, now):
