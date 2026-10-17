@@ -1077,9 +1077,11 @@ impl Pve {
                     motion: None,
                 };
                 // Generated motion stays within the same bounded transport contract.
-                motion
-                    .input(id, monster.input_seq, pose, now)
-                    .expect("bounded AI pose");
+                // A rejected generated pose must not panic the room task: drop the route and retry.
+                if motion.input(id, monster.input_seq, pose, now).is_err() {
+                    monster.route.clear();
+                    continue;
+                }
                 if idle
                     && length <= ATTACK_RANGE
                     && (monster.view.position[2] - position[2]).abs() <= 1.5
@@ -1087,13 +1089,13 @@ impl Pve {
                     && !self.target_attack_deadlines.contains_key(&target_id)
                 {
                     monster.input_seq += 1;
-                    battle
-                        .input(id, monster.input_seq, ActionIntent::AttackUp, now)
-                        .expect("known AI actor");
+                    let up = battle.input(id, monster.input_seq, ActionIntent::AttackUp, now);
                     monster.input_seq += 1;
-                    battle
-                        .input(id, monster.input_seq, ActionIntent::AttackRelease, now)
-                        .expect("known AI actor");
+                    let release =
+                        battle.input(id, monster.input_seq, ActionIntent::AttackRelease, now);
+                    if up.is_err() || release.is_err() {
+                        continue;
+                    }
                     monster.next_attack = now.saturating_add(ATTACK_COOLDOWN_MS);
                     monster.attack_target = Some(target_id);
                     self.target_attack_deadlines.insert(target_id, now.saturating_add(TARGET_ATTACK_SPACING_MS));
