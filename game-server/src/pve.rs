@@ -15,6 +15,7 @@ pub const FIRST_MONSTER_ID: u32 = 0x40000001;
 pub const FIRST_OBJECT_ID: u32 = 0x50000001;
 pub const AI_INTERVAL_MS: u64 = 100;
 const MAX_AI_STEP_MS: u64 = 250;
+const GOAL_PUBLISH_INTERVAL_MS: u64 = 500;
 const ROUTES_PER_TICK: usize = 8;
 const ROUTE_REFRESH_MS: u64 = 1000;
 pub const MAX_MONSTERS: usize = 64;
@@ -502,6 +503,7 @@ pub(crate) struct Pve {
     next_batch_at: u64,
     next_tick: u64,
     previous_tick: u64,
+    goal_dirty_since: Option<u64>,
     next_id: u32,
     monsters: Vec<Monster>,
     target_attack_deadlines: BTreeMap<u32, u64>,
@@ -530,6 +532,7 @@ impl Pve {
             next_batch_at: now,
             next_tick: now,
             previous_tick: now,
+            goal_dirty_since: None,
             next_id: FIRST_MONSTER_ID,
             monsters: Vec::new(),
             target_attack_deadlines: BTreeMap::new(),
@@ -635,6 +638,7 @@ impl Pve {
         }
     }
     fn publish(&mut self, now: u64) {
+        self.goal_dirty_since = None;
         self.event_seq += 1;
         self.pending.push(Event {
             room_id: self.room_id.clone(),
@@ -682,7 +686,24 @@ impl Pve {
             if let Some(goal) = &mut self.goal {
                 let previous = goal.progress();
                 goal.advance(&poses, (dt * 1000.).round() as u64);
-                changed |= previous != goal.progress();
+                let current = goal.progress();
+                if previous != current {
+                    // Continuous progress (defend timer, escort position) is coalesced; discrete
+                    // changes (completion, health, step) publish immediately.
+                    let discrete = match (&previous, &current) {
+                        (Some(a), Some(b)) => {
+                            a.complete != b.complete
+                                || a.health != b.health
+                                || (a.kind != "defend" && a.current != b.current)
+                        }
+                        _ => true,
+                    };
+                    if discrete {
+                        changed = true;
+                    } else {
+                        self.goal_dirty_since.get_or_insert(now);
+                    }
+                }
             }
         }
         let lives = combat.health();
@@ -1146,6 +1167,12 @@ impl Pve {
         // would commit a body hit before the head/leg contact can arrive.
         if self.goal.as_ref().is_some_and(GoalRuntime::failed) {
             self.phase = Phase::Defeat;
+            changed = true;
+        }
+        if self
+            .goal_dirty_since
+            .is_some_and(|since| now.saturating_sub(since) >= GOAL_PUBLISH_INTERVAL_MS)
+        {
             changed = true;
         }
         if changed {
