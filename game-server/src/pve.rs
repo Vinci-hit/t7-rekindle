@@ -25,8 +25,8 @@ pub const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 const CORPSE_MS: u64 = 1000;
 // Conservative fallback until native monster blade trajectories are available.
 const ATTACK_RANGE: f32 = 1.1;
-const ATTACK_CONTACT_START_MS: u64 = 360;
-const ATTACK_CONTACT_END_MS: u64 = 540;
+const ATTACK_CONTACT_START_MS: u64 = 360 + crate::limits::PRESENTATION_DELAY_MS;
+const ATTACK_CONTACT_END_MS: u64 = 540 + crate::limits::PRESENTATION_DELAY_MS;
 const TARGET_ATTACK_SPACING_MS: u64 = 700;
 pub(crate) const MONSTER_DAMAGE: u16 = 8;
 const ATTACK_COOLDOWN_MS: u64 = 1800;

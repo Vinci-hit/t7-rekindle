@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 import pytest
 from Business.scripts import online_playback as playback
 
@@ -35,3 +37,10 @@ def test_extrapolation_is_finite_and_rejects_teleports():
     b['pose']['position'] = [100, 0, 0]
     assert playback.extrapolate(a, b, 100)['position'] == [100, 0, 0]
 
+
+
+def test_server_presentation_delay_matches_the_minimum_playback_delay():
+    # Rust holds a monster's damage back by this much so it lands when the blade is visible.
+    limits = Path(__file__).resolve().parents[2] / 'game-server' / 'src' / 'limits.rs'
+    delay = int(re.search(r'PRESENTATION_DELAY_MS: u64 = (\d+);', limits.read_text()).group(1))
+    assert delay == playback.BASE_DELAY_MS

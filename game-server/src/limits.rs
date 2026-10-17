@@ -14,6 +14,10 @@ pub const GUARD_FACING_COS: f32 = 0.5;
 pub const GUARD_SIDE_COS: f32 = -0.5;
 /// Supported client state 35 finishes after 550 ms.
 pub const HURT_RECOVERY_MS: u64 = 550;
+/// A remote actor's animation is shown this long after the server starts it (the client's minimum
+/// playback delay, `online_playback.BASE_DELAY_MS`). Damage the server applies for such an action
+/// waits the same time, so the hit lands when the blade is visibly there.
+pub const PRESENTATION_DELAY_MS: u64 = 100;
 /// After a hurt reaction a monster ignores further staggers for this long (counted from the
 /// reaction start plus its recovery), so a combo cannot hold it in place indefinitely.
 pub const MONSTER_STAGGER_IMMUNITY_MS: u64 = 800;

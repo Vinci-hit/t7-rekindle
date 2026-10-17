@@ -369,6 +369,13 @@ impl Combat {
                 .and_then(|p| p["contactEndMs"].as_u64())
                 .unwrap_or(contact_end)
         };
+        // A monster's blade is shown PRESENTATION_DELAY_MS after the server swings it, so its contact
+        // is adjudicated that much later into the swing.
+        let contact_end = if actor >= crate::pve::FIRST_MONSTER_ID {
+            (contact_end + crate::limits::PRESENTATION_DELAY_MS).min(duration)
+        } else {
+            contact_end
+        };
         let terrain_rebound = if direction == 4 {
             dash.and_then(|p| p["reboundMs"].as_u64())
                 .unwrap_or(rebound)
