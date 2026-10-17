@@ -14,6 +14,9 @@ use std::{collections::BTreeMap, sync::Arc};
 pub const FIRST_MONSTER_ID: u32 = 0x40000001;
 pub const FIRST_OBJECT_ID: u32 = 0x50000001;
 pub const AI_INTERVAL_MS: u64 = 100;
+const MAX_AI_STEP_MS: u64 = 250;
+const ROUTES_PER_TICK: usize = 8;
+const ROUTE_REFRESH_MS: u64 = 1000;
 pub const MAX_MONSTERS: usize = 64;
 pub const MAX_WAVES: usize = 128;
 pub const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
@@ -656,8 +659,13 @@ impl Pve {
         if now < self.next_tick || matches!(self.phase, Phase::Victory | Phase::Defeat) {
             return;
         }
-        self.next_tick = now.saturating_add(AI_INTERVAL_MS);
-        let dt = now.saturating_sub(self.previous_tick).min(AI_INTERVAL_MS) as f32 / 1000.;
+        // Fixed-rate schedule anchored on the previous deadline, so room-tick quantisation and
+        // scheduler jitter do not stretch the average period; integrate the real elapsed time.
+        self.next_tick = self.next_tick.saturating_add(AI_INTERVAL_MS);
+        if self.next_tick <= now {
+            self.next_tick = now.saturating_add(AI_INTERVAL_MS);
+        }
+        let dt = now.saturating_sub(self.previous_tick).min(MAX_AI_STEP_MS) as f32 / 1000.;
         self.previous_tick = now;
         if players.iter().all(|id| !combat.alive(*id)) {
             self.phase = Phase::Defeat;
@@ -879,6 +887,7 @@ impl Pve {
             changed |= count > 0;
         }
         self.target_attack_deadlines.retain(|_, deadline| *deadline > now);
+        let mut routes_left = ROUTES_PER_TICK;
         for monster in self.monsters.iter_mut().filter(|m| m.view.alive) {
             let id = monster.view.actor_id;
             if let MonsterLocomotion::Spawning { until } = monster.locomotion {
@@ -983,9 +992,14 @@ impl Pve {
                 if idle && (length > ATTACK_RANGE || !same_floor) {
                     let destination =
                         if let Some(nav) = &self.scenario.navigation {
-                            if now >= monster.next_route_at {
+                            // Bounded per tick; monsters over budget keep their old route and
+                            // retry next tick. Refresh is staggered per actor to avoid a herd.
+                            if now >= monster.next_route_at && routes_left > 0 {
+                                routes_left -= 1;
                                 monster.route = nav.route(monster.view.position, position).into();
-                                monster.next_route_at = now.saturating_add(1000);
+                                monster.next_route_at = now.saturating_add(
+                                    ROUTE_REFRESH_MS + u64::from(monster.view.actor_id % 10) * AI_INTERVAL_MS / 2,
+                                );
                             }
                             while monster.route.front().is_some_and(|point| {
                                 distance(monster.view.position, *point) < 0.001
