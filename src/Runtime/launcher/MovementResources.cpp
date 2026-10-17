@@ -137,6 +137,63 @@ std::vector<Edit> infantry(const std::vector<Element>& nodes) {
     }
     return edits;
 }
+std::vector<Edit> monsterDeath(std::string_view source, const std::vector<Element>& nodes) {
+    const auto root = unique(nodes, 0, "Node", "ID", "1");
+    const auto entry = unique(nodes, root, "Node", "Description", encoded(L"进入节点"));
+    const auto sequence = unique(nodes, entry, "Node", "Description", encoded(L"进入死亡"));
+    if (attribute(nodes[sequence], "Type") != "SEQ") invalid();
+    const auto collision = unique(nodes, sequence, "Node", "Name", encoded(L"开关物理碰撞"));
+    const auto enabled = unique(nodes, collision, "Param", "Name", encoded(L"是否开启"));
+    if (nodes[collision].parent != sequence || attribute(nodes[enabled], "Value") != "false") invalid();
+    if (nodes[collision].begin == nodes[sequence].content) return {};
+    // Disable the controller collision before death effects or animation delays can yield.
+    return {{nodes[sequence].content, nodes[sequence].content,
+                std::string(source.substr(nodes[collision].begin, nodes[collision].end - nodes[collision].begin))},
+            {nodes[collision].begin, nodes[collision].end, ""}};
+}
+std::vector<Edit> monsterBlood(std::string_view source, const std::vector<Element>& nodes) {
+    if (nodes[0].name != "PropertySheet" || attribute(nodes[0], "Version") != "100") invalid();
+    // Reuse the original effects of the matching weapon family, retaining existing rows.
+    const std::pair<const wchar_t*, const wchar_t*> aliases[] = {
+        {L"大刀", L"双手刀"}, {L"狼牙棒", L"巨锤"}, {L"偃月刀", L"长柄刀"},
+        {L"罗马短剑", L"单手剑"}, {L"长矛", L"长枪"}, {L"罗马长矛", L"长枪"}, {L"长棍", L"巨锤"},
+        {L"骨朵", L"单手锤"}, {L"盾", L"单手锤"}, {L"拳头", L"单手锤"},
+        {L"双拳", L"单手锤"}, {L"右拳", L"单手锤"}, {L"槊", L"长枪"},
+        {L"双手剑不可复活", L"双手剑"}, {L"双矛", L"长枪"}, {L"双矛左手", L"长枪"},
+        {L"力士锤", L"巨锤"}, {L"力士剑", L"双手剑"},
+        {L"力士锤单手", L"单手锤"}, {L"力士剑单手", L"单手剑"},
+        {L"袖刃", L"匕首"}, {L"罗马长矛单手", L"长枪"},
+        {L"投枪近战双手", L"长枪"}, {L"罗马投矛双手", L"长枪"}, {L"罗马投矛单手", L"长枪"},
+        {L"罗马投矛投掷", L"投枪投掷"},
+        {L"长柄刀大", L"长柄刀"}, {L"偃月刀大", L"长柄刀"}, {L"新双手刀", L"双手刀"},
+    };
+    std::map<std::pair<std::string, std::string>, size_t> rows;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].parent != 0 || nodes[i].name != "Record") continue;
+        const auto type = unique(nodes, i, encoded(L"攻击方类型").c_str());
+        const auto attack = unique(nodes, i, encoded(L"攻击方攻击类型").c_str());
+        if (!rows.emplace(std::make_pair(attribute(nodes[type], "Value"),
+                attribute(nodes[attack], "Value")), i).second) invalid();
+    }
+    std::string added;
+    for (const auto& alias : aliases) {
+        size_t foundRows = 0;
+        for (const auto* direction : {L"左砍攻击", L"右砍攻击", L"劈攻击", L"刺攻击", L""}) {
+            if (rows.count({encoded(alias.first), encoded(direction)})) { ++foundRows; continue; }
+            const auto found = rows.find({encoded(alias.second), encoded(direction)});
+            if (found == rows.end()) continue;
+            ++foundRows;
+            const auto i = found->second;
+            const auto type = unique(nodes, i, encoded(L"攻击方类型").c_str());
+            auto record = std::string(source.substr(nodes[i].begin, nodes[i].end - nodes[i].begin));
+            const auto replacement = "<" + encoded(L"攻击方类型") + " Value=\"" + encoded(alias.first) + "\"/>";
+            record.replace(nodes[type].begin - nodes[i].begin, nodes[type].end - nodes[type].begin, replacement);
+            added += record;
+        }
+        if (!foundRows) invalid();
+    }
+    return {{nodes[0].closing, nodes[0].closing, std::move(added)}};
+}
 std::vector<Edit> birth(std::string_view source, const std::vector<Element>& nodes) {
     std::set<uint32_t> ids;
     uint32_t maxId = 0;
@@ -175,6 +232,8 @@ std::string movementResourcePath(MovementResource resource) {
     case MovementResource::Infantry: return encoded(L"../data/entsheet/步兵.esf");
     case MovementResource::Router: return "../data/btree/t7r_runtime_movement.btree";
     case MovementResource::Birth: return encoded(L"../data/btree/武将_出生.btree");
+    case MovementResource::MonsterDeath: return encoded(L"../data/btree/僵尸_死了.btree");
+    case MovementResource::MonsterBlood: return encoded(L"../data/propsheet/被击特效(僵尸).psheet");
     default: return {};
     }
 }
@@ -185,7 +244,7 @@ MovementResource movementResourceForPath(std::string_view path) {
         if (c == '\\') c = '/';
         else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
     }
-    for (auto resource : {MovementResource::Infantry, MovementResource::Router, MovementResource::Birth})
+    for (auto resource : {MovementResource::Infantry, MovementResource::Router, MovementResource::Birth, MovementResource::MonsterBlood, MovementResource::MonsterDeath})
         if (normalized == movementResourcePath(resource)) return resource;
     return MovementResource::None;
 }
@@ -193,9 +252,11 @@ std::string transformMovementResource(MovementResource resource, std::string_vie
     if (resource == MovementResource::None) return std::string(source);
     if (source.empty() || source.size() > MOVEMENT_XML_LIMIT || source.find('\0') != source.npos) invalid();
     const auto nodes = elements(source);
-    if (resource != MovementResource::Infantry && (nodes[0].name != "BTree" || attribute(nodes[0], "Version") != "4")) invalid();
+    if (resource != MovementResource::Infantry && resource != MovementResource::MonsterBlood && (nodes[0].name != "BTree" || attribute(nodes[0], "Version") != "4")) invalid();
     auto edits = resource == MovementResource::Infantry ? infantry(nodes)
-        : resource == MovementResource::Router ? router(source, nodes) : birth(source, nodes);
+        : resource == MovementResource::Router ? router(source, nodes)
+        : resource == MovementResource::MonsterBlood ? monsterBlood(source, nodes)
+        : resource == MovementResource::MonsterDeath ? monsterDeath(source, nodes) : birth(source, nodes);
     auto result = applyEdits(source, std::move(edits));
     if (resource == MovementResource::Router) result = applyEdits(result, modelActions(elements(result)));
     if (result.size() > source.size() + MOVEMENT_XML_RESERVE) invalid();

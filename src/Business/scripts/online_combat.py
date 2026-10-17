@@ -238,6 +238,8 @@ def health(flow, lives):
     for actor, hp in values.items():
         monster = online_pve.by_rid(flow.session, actor) if actor != 1 else None
         if monster is not None:
+            if hp == 0 and online_scene.peer_data(flow.session, actor)['health'] > 0:
+                online_pve.stop_dead_motion(flow, actor)
             monster['health'] = hp
             online_scene.peer_data(flow.session, actor)['health'] = hp
             flow.send(15, attr_flow.encode_health_update(entity_rid=actor,health=hp,server_time_ms=flow.now), 'online-health-monster')
@@ -321,7 +323,6 @@ def contact(flow, effect):
     if any(not .9 <= math.hypot(*effect[key]) <= 1.1 for key in ('normal', 'direction')):
         raise ValueError('invalid combat contact normal')
     flow.log('DEBUG', f'online-contact-verdict event={ledger(flow.session)["eventSeq"]} attacker={attacker} target={target} swing={sequence} parried={effect["parried"]} damage={damage}')
-    values = health(flow, effect['lives'])
     if attacker == 1:
         # The body and weapon probes may overlap on successive native frames.
         # Once adjudicated, this swing/target cannot report another outcome.
@@ -332,7 +333,9 @@ def contact(flow, effect):
     # Body and scene contacts still need their contact-point feedback.
     if not effect['parried']:
         from . import online_pve
-        birth_active = bool(target) and online_pve.in_birth(flow.session, target) and values.get(target, 0) > 0
+        target_health = next((life['health'] for life in effect['lives']
+                              if life['actorId'] == effect['target']), 0)
+        birth_active = bool(target) and online_pve.in_birth(flow.session, target) and target_health > 0
         # Monster contacts are server-synthesised or sampled on a non-player body; the native flesh
         # effects key on the body material, so present every damaging monster contact as flesh.
         if target and damage and (online_pve.monster_id(effect['attacker']) or online_pve.monster_id(effect['target'])):
@@ -344,6 +347,9 @@ def contact(flow, effect):
             hit_part=hit_part, ignore_hurt=birth_active or not (target and damage), attacker_mid=attacker, target_mid=target,
             attacker_weapon_id=weapon, target_weapon_id=0,
             server_time_ms=flow.now), 'online-contact-effect')
+    # Let the native hit tree consume the contact before zero HP or locomotion
+    # teardown can move a monster into its death graph.
+    values = health(flow, effect['lives'])
     if effect['parried']:
         flow.send(4, battle_flow.encode_battle_defense_notify(attacker_mid=attacker, defender_mid=target,
             attacker_weapon_id=weapon, target_weapon_id=target_weapon, server_time_ms=flow.now), 'online-parry-sound')

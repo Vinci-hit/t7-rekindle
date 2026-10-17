@@ -3,8 +3,8 @@
 #include <string_view>
 
 namespace t7r {
-enum class MovementResource { None, Infantry, Router, Birth };
-inline constexpr size_t MOVEMENT_XML_RESERVE = 4096;
+enum class MovementResource { None, Infantry, Router, Birth, MonsterBlood, MonsterDeath };
+inline constexpr size_t MOVEMENT_XML_RESERVE = 64 * 1024;
 inline constexpr size_t MOVEMENT_XML_LIMIT = 4 * 1024 * 1024;
 
 std::string movementResourcePath(MovementResource resource);

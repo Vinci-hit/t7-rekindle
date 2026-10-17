@@ -47,7 +47,28 @@ def in_birth(session, rid):
 def held(session, rid):
     """Poses and actions are not presented while the emergence clip or the death graph owns the model."""
     monster = by_rid(session, rid)
-    return monster is not None and (monster.get('birth') is not None or not monster['alive'])
+    return monster is not None and (monster.get('birth') is not None or not monster['alive'] or monster['health'] == 0)
+
+
+def stop_dead_motion(flow, rid):
+    """Release locomotion before the death graph takes ownership of the model."""
+    from . import online_motion
+    peer = flow.session['onlinePeers'][str(rid)]
+    online_motion.ledger(flow.session)['buffers'].pop(str(rid), None)
+    position, heading = peer['position'], peer['heading']
+    effects = flow.result.setdefault('remoteMotion', [])
+    effects[:] = [effect for effect in effects if effect['rid'] != rid]
+    effects.append(dict(rid=rid, instanceStartedAt=flow.session['instanceStartedAt'],
+        airborne=False, jumping=False, position=list(position), velocity=[0., 0., 0.]))
+    flow.send(2, move_flow.encode_move_bc_with_system_and_active(
+        server_tick=flow.now - flow.session['instanceStartedAt'], target_instance_id=rid,
+        position=tuple(position), direction_yaw=heading, state=1,
+        forward_back=0, left_right=0, current_velocity=0, max_velocity=0,
+        system_group=2, active=1, acceleration=0), 'online-pve-death-stop')
+    # The movement controller owns a separate collision body from death ragdolls.
+    flow.send(2, move_flow.encode_move_notify_active(
+        server_tick=flow.now - flow.session['instanceStartedAt'],
+        target_instance_id=rid, active=0), 'online-pve-death-deactivate')
 
 
 def object_id(actor):
@@ -365,6 +386,7 @@ def receive(flow, value):
                 finish_birth(flow, source, flow.connection)
             peer = flow.session.get('onlinePeers', {}).get(str(source['localRid'])) if presented else None
             if died and peer is not None and peer.get('health', 0) > 0:
+                stop_dead_motion(flow, source['localRid'])
                 # The killing contact normally plays the death; this covers a death it did not carry.
                 flow.send(4, battle_flow.encode_battle_dead_notify(entity_rid=source['localRid'],
                     server_time_ms=flow.now), 'online-pve-monster-dead')

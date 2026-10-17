@@ -97,7 +97,9 @@ MovementHookPage buildMovementHooks(uint32_t remoteBase, uint32_t imageBase, boo
     const auto router = putString(movementResourcePath(MovementResource::Router));
     const auto birth = putString(movementResourcePath(MovementResource::Birth));
     const auto offline = putString(movementOfflineTreePath());
-    std::vector<Path> xmlPaths{infantry, router, birth};
+    std::vector<Path> xmlPaths{infantry, router, birth,
+        putString(movementResourcePath(MovementResource::MonsterBlood)),
+        putString(movementResourcePath(MovementResource::MonsterDeath))};
     if (skipStartupAnimation) xmlPaths.push_back(putString(startupAnimationResourcePath()));
     const uint32_t replacementObject = remoteBase + 0x200;
     std::memcpy(page.bytes.data() + 0x200, &offline.address, 4);

@@ -72,6 +72,28 @@ def test_pve_damage_does_not_insert_monsters_into_player_scoreboard(entering):
     assert struct.unpack_from('>i', feedback['body'], 47)[0] == 4
 
 
+@pytest.mark.parametrize('remaining', [40, 0])
+def test_monster_hit_effect_precedes_health_and_death(remaining):
+    client, _ = running()
+    m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    lives = [dict(actorId=1, health=100, kills=int(remaining == 0), deaths=0, streak=0),
+             dict(actorId=m['actorId'], health=remaining, kills=0, deaths=int(remaining == 0), streak=0)]
+    effect = dict(type='contact', attacker=1, target=m['actorId'], actionSeq=3,
+        weaponId=1030411, targetWeaponId=11000002, parried=False, damage=20,
+        hitPart='body', position=[3., 0., 1.2], normal=[-1., 0., 0.],
+        direction=[1., 0., 0.], material=0, lives=lives)
+    result = client.reply(None, 'combatChanged', update=dict(roomId='room-test', matchId=MATCH,
+        eventSeq=1, serverTimeMs=3500, effect=effect))
+    packets = result['send']
+    hit_index = next(i for i, p in enumerate(packets) if p['reason'] == 'online-contact-effect')
+    assert packets[hit_index]['body'][87] == 0
+    assert struct.unpack_from('>i', packets[hit_index]['body'], 47)[0] == 4
+    assert sum(p['reason'] == 'online-contact-effect' for p in packets) == 1
+    assert all(hit_index < i for i, p in enumerate(packets)
+               if p['reason'] in ('online-health-monster', 'online-pve-death-stop', 'online-dead'))
+
+
 def test_pve_failure_is_explicit_and_non_pve_selection_does_not_start_a_room():
     client=Client(runtime_movement=True);client.identify()
     client.event('message',command=32,body=selection())
@@ -375,8 +397,11 @@ def test_corpse_stays_in_its_slot_until_removed_and_is_never_reanimated():
     client.reply(None, 'pveChanged', update=update(value))
     dead = {k: v for k, v in m.items() if k != 'birth'}; dead.update(health=0, alive=False)
     result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+    from Business.scripts.codec import move_flow
+    disabled = next(s for s in result['send'] if s['reason'] == 'online-pve-death-deactivate')
+    assert move_flow.decode_move_notify_active(disabled['body']).active == 0
     # Death ends the emergence and plays the native death graph on the slot; the model stays.
-    assert [s['reason'] for s in result['send']] == ['online-pve-birth-end', 'online-pve-birth-position', 'online-pve-monster-dead']
+    assert [s['reason'] for s in result['send']] == ['online-pve-birth-end', 'online-pve-birth-position', 'online-pve-death-stop', 'online-pve-death-deactivate', 'online-pve-monster-dead']
     assert not client.reply(None, 'poseChanged', update=pose_update(m, 1, 3600, [2.8, 0., .2]))['send']
     assert not client.reply(None, 'actionChanged', action=monster_action(m, 1, 2, 2))['send']
     result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': []}, 3))
@@ -389,6 +414,38 @@ def test_reconnect_corpse_is_not_presented():
     m = {**monster(), 'alive': False, 'health': 0}
     result = client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
     assert not result['send'] and not client.state['onlineScene']['peers']
+
+
+@pytest.mark.parametrize('combat_first', [False, True])
+def test_death_cancels_buffered_walk_and_native_velocity(combat_first):
+    client, _ = running(); m = monster()
+    value = {**snapshot([m]), 'phase': 'active', 'wave': 1}
+    client.reply(None, 'pveChanged', update=update(value))
+    client.reply(None, 'poseChanged', update=pose_update(m, 1, 3500, [2.8, 0., .2]))
+    assert '2' in client.state['sessions']['2']['onlineMotion']['buffers']
+    if combat_first:
+        lives = [dict(actorId=1, health=100, kills=1, deaths=0, streak=1),
+                 dict(actorId=m['actorId'], health=0, kills=0, deaths=1, streak=0)]
+        effect = dict(type='contact', attacker=1, target=m['actorId'], actionSeq=3,
+            weaponId=1030411, targetWeaponId=11000002, parried=False, damage=60, hitPart='body',
+            position=[2.8, 0., 1.2], normal=[-1., 0., 0.], direction=[1., 0., 0.], material=0, lives=lives)
+        result = client.reply(None, 'combatChanged', update=dict(roomId='room-test', matchId=MATCH,
+            eventSeq=1, serverTimeMs=3500, effect=effect))
+    else:
+        dead = {**m, 'health': 0, 'alive': False}
+        result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+    stop = next(s for s in result['send'] if s['reason'] == 'online-pve-death-stop')
+    packet = move_flow.decode_move_bc_with_system_and_active(stop['body'])
+    assert (packet.forward_back, packet.left_right, packet.current_velocity, packet.max_velocity) == (0, 0, 0, 0)
+    assert result['remoteMotion'][0]['velocity'] == [0., 0., 0.]
+    assert '2' not in client.state['sessions']['2']['onlineMotion']['buffers']
+    assert not client.reply(None, 'poseChanged', update=pose_update(m, 2, 3550, [2., 0., .2]))['send']
+    result = instance(client, kind='timer', name='online-motion-render')
+    assert not result['send'] and not result.get('remoteMotion')
+    if combat_first:
+        dead = {**m, 'health': 0, 'alive': False}
+        result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+        assert not result['send']
 
 
 def test_snapshot_rejects_monsters_outside_enemy_slots_or_sharing_one():

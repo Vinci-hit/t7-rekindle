@@ -56,6 +56,15 @@ struct Fixture {
                 L"</GeServerMovable><Collision Keep=\"1\"/></Entity><Entity Name=\"女武将\"><GeServerMovable>"
                 L"<BTree Value=\"online\"/></GeServerMovable><Camera Keep=\"1\"/></Entity></EntSheet>")},
         };
+        std::string blood = "<PropertySheet Version=\"100\"><Header/>";
+        for (const auto* family : {L"双手刀", L"巨锤", L"长柄刀", L"单手剑", L"长枪",
+                L"单手锤", L"双手剑", L"匕首"})
+            for (const auto* direction : {L"左砍攻击", L"右砍攻击", L"劈攻击", L"刺攻击"})
+                blood += gbk(L"<Record><攻击方类型 Value=\"") + gbk(family)
+                    + gbk(L"\"/><攻击方攻击类型 Value=\"") + gbk(direction)
+                    + gbk(L"\"/><本地特效实体 Value=\"fixture-effect\"/></Record>");
+        blood += gbk(L"<Record><攻击方类型 Value=\"投枪投掷\"/><攻击方攻击类型 Value=\"\"/></Record></PropertySheet>");
+        inputs.push_back({t7r::movementResourcePath(Resource::MonsterBlood), blood});
         inputs.push_back({t7r::startupAnimationResourcePath(), malformedLogin ? "<BTree>" : startupAnimationFixture()});
         auto alternatePath = t7r::startupAnimationResourcePath();
         alternatePath.replace(0, 14, "..\\DATA\\BTREE\\");
@@ -104,7 +113,7 @@ struct Fixture {
         for (size_t i = 0; i < inputs.size(); ++i) {
             auto& input = inputs[i];
             input.object = BASE + 0x3000 + static_cast<uint32_t>(i) * 0x100;
-            input.buffer = BASE + 0x4000 + static_cast<uint32_t>(i) * 0x3000;
+            input.buffer = BASE + 0x4000 + static_cast<uint32_t>(i) * 0x20000;
             input.result = BASE + 0x2100 + static_cast<uint32_t>(i) * 24;
             t7r::Bytes object(24, 0);
             const auto pathData = input.object + 24, length = static_cast<uint32_t>(input.path.size());

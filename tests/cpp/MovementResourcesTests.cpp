@@ -73,6 +73,44 @@ std::vector<std::string> inputActions(const std::string& source, int playerState
 bool verifyMovementResources() {
     using Resource = t7r::MovementResource;
     try {
+        const auto collision = gbk(L"<Node Type=\"ACTION\" ID=\"5\" Name=\"开关物理碰撞\"><Param Name=\"是否开启\" Value=\"false\"/></Node>");
+        const auto deathPrefix = gbk(L"<BTree Version=\"4\"><Node ID=\"1\"><Node Description=\"进入节点\"><Node Type=\"SEQ\" Description=\"进入死亡\">");
+        const auto delay = "<Node Type=\"DELAY\" ID=\"4\"><DelayTime Value=\"3000\"/></Node>";
+        const auto deathSuffix = "</Node></Node></Node></BTree>";
+        const auto death = t7r::transformMovementResource(Resource::MonsterDeath,
+            deathPrefix + delay + collision + deathSuffix);
+        require(death == deathPrefix + collision + delay + deathSuffix,
+                "corpse collision is disabled only after death delays");
+        require(t7r::transformMovementResource(Resource::MonsterDeath, death) == death,
+                "death collision transformation is not idempotent");
+        require(t7r::movementResourceForPath(t7r::movementResourcePath(Resource::MonsterDeath)) == Resource::MonsterDeath,
+                "monster death resource is not intercepted");
+        std::string blood = "<PropertySheet Version=\"100\"><Header/>";
+        for (const auto* family : {L"双手刀", L"巨锤", L"长柄刀", L"单手剑", L"长枪",
+                L"单手锤", L"双手剑", L"匕首"})
+            for (const auto* direction : {L"左砍攻击", L"右砍攻击", L"劈攻击", L"刺攻击"})
+                blood += gbk(L"<Record><攻击方类型 Value=\"") + gbk(family)
+                    + gbk(L"\"/><攻击方攻击类型 Value=\"") + gbk(direction)
+                    + gbk(L"\"/><本地特效实体 Value=\"original-effect\"/></Record>");
+        blood += gbk(L"<Record><攻击方类型 Value=\"投枪投掷\"/><攻击方攻击类型 Value=\"\"/><本地特效实体 Value=\"original-projectile\"/></Record></PropertySheet>");
+        const auto aliased = t7r::transformMovementResource(Resource::MonsterBlood, blood);
+        const auto records = t7r::resourceXml::elements(aliased);
+        std::map<std::string, size_t> covered;
+        for (const auto& node : records)
+            if (node.name == gbk(L"攻击方类型")) ++covered[t7r::resourceXml::attribute(node, "Value")];
+        for (const auto* family : {L"大刀", L"狼牙棒", L"偃月刀", L"罗马短剑", L"长矛", L"罗马长矛",
+                L"长棍", L"骨朵", L"盾", L"拳头", L"双拳", L"右拳", L"槊", L"双矛", L"双矛左手",
+                L"力士锤", L"力士剑", L"力士锤单手", L"力士剑单手", L"袖刃", L"罗马长矛单手",
+                L"投枪近战双手", L"罗马投矛双手", L"罗马投矛单手", L"长柄刀大", L"偃月刀大", L"新双手刀"})
+            require(covered[gbk(family)] == 4, "missing weapon blood direction");
+        require(covered[gbk(L"罗马投矛投掷")] == 1, "missing ranged weapon blood effect");
+        require(aliased.find(blood.substr(0, blood.find("</PropertySheet>"))) == 0,
+                "existing blood effects changed");
+        require(t7r::transformMovementResource(Resource::MonsterBlood, aliased) == aliased,
+                "blood rows duplicated on repeated transformation");
+        require(t7r::movementResourceForPath(t7r::movementResourcePath(Resource::MonsterBlood)) == Resource::MonsterBlood,
+                "monster blood resource is not intercepted");
+        rejected(Resource::MonsterBlood, "<PropertySheet Version=\"100\"><Header/></PropertySheet>");
         const auto component = "<GeServerMovable><BTree Value=\"original\"/></GeServerMovable>";
         const auto physics = "<Collision Shape=\"fixture-shape\" Mask=\"7\"/><Camera Value=\"keep\"/>";
         const auto source = std::string("<?xml version=\"1.0\" encoding=\"gb2312\"?><EntSheet><Header>")

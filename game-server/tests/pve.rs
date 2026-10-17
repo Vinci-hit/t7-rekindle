@@ -144,7 +144,7 @@ fn cleared_waves_use_fresh_ids_and_settle_then_reset_without_monster_respawns() 
     let view = lobby.client_view("a", &match_id).unwrap();
     assert_eq!(
         view.to_local(&match_id, ActorId(first)),
-        Ok(LocalRid(first))
+        Ok(LocalRid(2))
     );
     lobby.advance(3600);
     assert!(!lobby.snapshot(&room).unwrap().pve.unwrap().monsters[0].alive);
@@ -156,6 +156,9 @@ fn cleared_waves_use_fresh_ids_and_settle_then_reset_without_monster_respawns() 
     assert_eq!(lobby.snapshot(&room).unwrap().pve.unwrap().wave, 2);
     let second = kill(&mut lobby, &room, &match_id, 102, 5200);
     assert_eq!(second, first + 1);
+    let view = lobby.client_view("a", &match_id).unwrap();
+    assert_eq!(view.to_local(&match_id, ActorId(first)), Err(ErrorCode::UnknownActor));
+    assert_eq!(view.to_actor(&match_id, LocalRid(2)), Ok(ActorId(second)));
     assert_eq!(
         lobby
             .client_view("a", &match_id)

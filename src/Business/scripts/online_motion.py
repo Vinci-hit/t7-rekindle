@@ -258,6 +258,9 @@ def render(flow):
 
 
 def render_actor(flow, rid, state):
+    from . import online_pve
+    if online_pve.held(flow.session, rid):
+        return
     samples = state.get('samples', [])
     if not samples or flow.now - state.get('renderedAt', -RENDER_INTERVAL_MS) < RENDER_INTERVAL_MS:
         return
