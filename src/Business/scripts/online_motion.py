@@ -285,7 +285,7 @@ def render_actor(flow, rid, state, monster):
         if monster and not reacting:
             # Cooperative monsters carry no authored velocity, so an exhausted
             # buffer extends the newest sample instead of holding still.
-            pose = online_playback.extrapolate(before, after, at)
+            pose = online_playback.extrapolate(before, after, at, limit=online_playback.MONSTER_EXTRAPOLATION_MS)
         elif motion is not None and not reacting:
             pose = online_playback.extrapolate(before, after, at, airborne=motion['airborne'])
         else:

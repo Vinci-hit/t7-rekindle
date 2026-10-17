@@ -9,6 +9,10 @@ MAX_RATE_CHANGE = .1
 GROUND_EXTRAPOLATION_MS = 100
 AIR_EXTRAPOLATION_MS = 150
 MAX_EXTRAPOLATION_SPEED = 25.
+# One lost 100 ms monster sample (or three lost 50 ms player samples) must not disable prediction.
+MAX_EXTRAPOLATION_SPAN_MS = 250
+# Monsters publish at 10 Hz: bridge one lost sample (next one is due 200 ms after the last received).
+MONSTER_EXTRAPOLATION_MS = 250
 
 
 def observe(state, tick, arrived):
@@ -40,14 +44,14 @@ def advance(state, now, earliest):
     return at
 
 
-def extrapolate(before, after, at, airborne=False):
+def extrapolate(before, after, at, airborne=False, limit=None):
     pose = dict(after['pose'])
     if pose.get('motion') is not None:
         pose['motion'] = dict(pose['motion'], velocity=[0., 0., 0.])
     span = after['at'] - before['at']
     age = at - after['at']
-    limit = AIR_EXTRAPOLATION_MS if airborne else GROUND_EXTRAPOLATION_MS
-    if not 0 < span <= 150 or age <= 0:
+    limit = limit or (AIR_EXTRAPOLATION_MS if airborne else GROUND_EXTRAPOLATION_MS)
+    if not 0 < span <= MAX_EXTRAPOLATION_SPAN_MS or age <= 0:
         return pose
     exhausted = age >= limit
     age = min(age, limit)
