@@ -334,8 +334,21 @@ def handleMessage(flow, event):
         flow.log("WARN", f"unhandled command={command} selector={selector}; no speculative response")
 
 
+def copyState(value):
+    # Business state is JSON-like (dict/list plus immutable scalars/bytes): a direct recursive copy is
+    # several times faster than copy.deepcopy, which pays memo bookkeeping for every node.
+    kind = type(value)
+    if kind is dict:
+        return {key: copyState(item) for key, item in value.items()}
+    if kind is list:
+        return [copyState(item) for item in value]
+    if kind in (str, int, float, bool, bytes) or value is None:
+        return value
+    return deepcopy(value)
+
+
 def handleEvent(event, state, context):
-    state = deepcopy(state)
+    state = copyState(state)
     flow = Flow(event, state, context)
     eventType, key = event["type"], str(event["connection"])
     # Remove a closed target before authority can produce any scene messages for it.

@@ -311,6 +311,7 @@ def _phase(value):
 class Runtime:
     def __init__(self, root, cache):
         self.root, self.cache = root, cache
+        self._stateCache = None
         self.active = Revision(root, cache)
         self.previous = None
         self.candidate = None
@@ -384,7 +385,14 @@ class Runtime:
         started = perf_counter_ns()
         if type(event) is str:
             event = decode(event)
-        stateValue = decode(state)
+        # The business state is opaque to C++ and returned verbatim, so when the incoming text is exactly
+        # what the previous dispatch produced the already-decoded (and validated) object is reused.
+        cached = self._stateCache
+        if cached is not None and cached[0] == state:
+            stateValue = cached[1]
+        else:
+            stateValue = decode(state)
+        self._stateCache = None
         decoded = perf_counter_ns()
         if (event.get('type') == 'timer' and event.get('scope') == 'match'
                 and event.get('matchId') != stateValue.get('matchId')):
@@ -418,6 +426,7 @@ class Runtime:
         finished = perf_counter_ns()
         timing = dict(decodeMs=(decoded - started) / 1e6, handlerMs=(handled - decoded) / 1e6,
                       validationMs=(validated - handled) / 1e6, encodeMs=(finished - validated) / 1e6)
+        self._stateCache = (encoded, result['state'])
         transition = (encoded, result['send'], timers, logs, phase, timing, result.get('titleRequest'))
         return transition + (result.get('gateway', []), result.get('remoteMotion', []))
 
@@ -431,6 +440,7 @@ class Runtime:
         if target.module.validateState(value) is not True:
             raise ValueError("reload state rejected")
         encoded = encode(value)
+        self._stateCache = None
         obsolete = None if rollback else self.previous
         old = self.active
         self.active = target
