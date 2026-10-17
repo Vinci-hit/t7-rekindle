@@ -45,9 +45,10 @@ def applyTimings(profile, animation, hurtMs):
         attack = result['attacks'][str(intent)]
         oldProcess = attack['phases'][2]
         for index, phase in ((0, 'Prepare'), (2, 'Process'), (3, 'Finish')):
-            attack['phases'][index] = choose('Attack' + direction + phase, attack['phases'][index])
+            # Record animation evidence, but the weapon table owns gameplay timing.
+            choose('Attack' + direction + phase, attack['phases'][index])
         for field, phase in (('parried', 'Parryed'), ('rebound', 'Fend')):
-            attack[field] = choose('Attack' + direction + phase, attack[field])
+            choose('Attack' + direction + phase, attack[field])
         # Preserve the existing 0/0-table policy: collision covers the whole process phase.
         if attack['contactStartMs'] == 0 and attack['contactEndMs'] == oldProcess:
             attack['contactEndMs'] = attack['phases'][2]

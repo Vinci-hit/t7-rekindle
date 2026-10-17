@@ -232,7 +232,7 @@ impl Actor {
             let field = if state == 95 { "prepareMs" } else { "successMs" };
             return self.profile(self.weapon_id).and_then(|p| p["guard"][field].as_u64()).unwrap_or(0);
         }
-        if self.loadout.is_some() {
+        {
             for direction in 0..4 {
                 let gesture = Gesture::Attack(direction);
                 if let Some(phase) = gesture.states().iter().position(|s| *s == state) {
@@ -709,10 +709,10 @@ impl Battle {
         actor.emitted_action_id = None;
         actor.emit(state, now, &mut output);
         self.publish(actor_id, output, Some(now));
-        self.pending
-            .last_mut()
-            .expect("reaction event")
-            .target_actor_id = target.map(ActorId);
+        let event = self.pending.last_mut().expect("reaction event");
+        // Native enforcedDuration must match the authoritative recovery deadline.
+        event.duration_ms = duration;
+        event.target_actor_id = target.map(ActorId);
     }
 }
 
@@ -993,6 +993,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(235, 5), (237, 365), (238, 900), (239, 1540), (2, 2040)]
         );
+    }
+
+    #[test]
+    fn animation_duration_matches_phase_and_reaction_deadlines() {
+        let mut b = battle();
+        b.input(1, 1, ActionIntent::AttackUp, 0).unwrap();
+        let event = b.take_events().pop().unwrap();
+        assert_eq!(event.duration_ms, 360);
+        for (state, duration) in [(240, 530), (241, 430), (35, 550)] {
+            b.react(1, state, 1000, duration, false, None);
+            let event = b.take_events().pop().unwrap();
+            assert_eq!(event.duration_ms, duration);
+            assert_eq!(b.actors[0].reaction_until, Some(1000 + event.duration_ms));
+        }
     }
 
     #[test]

@@ -56,16 +56,16 @@ def test_all_static_hero_weapon_profiles_are_valid_isolated_and_use_no_client_re
                 assert (animationMs is not None and not reason) or (animationMs is None and reason)
     first = combat.loadCombatProfiles('', 1101)
     first[1030411]['attacks']['300560']['phases'][0] = 999
-    assert combat.loadCombatProfiles('', 1101)[1030411]['attacks']['300560']['phases'] == [270, 0, 540, 480]
+    assert combat.loadCombatProfiles('', 1101)[1030411]['attacks']['300560']['phases'] == [360, 0, 640, 500]
 
 
 def test_static_animation_timings_preserve_crops_and_gender_bindings():
     male = combat.loadCombatProfiles('', 1101)
-    assert male[100000]['attacks']['300560']['parried'] == 200
+    assert male[100000]['attacks']['300560']['parried'] == 520
     assert male[1030411]['dashAttack']['reboundMs'] == 800
     assert male[1030411]['dashAttack']['durationSource'] == 'animation'
     female = combat.loadCombatProfiles('', 2102)
-    assert female[1030121]['attacks']['300560']['phases'] == [300, 0, 780, 510]
+    assert female[1030121]['attacks']['300560']['phases'] == [360, 0, 640, 500]
 
 
 def test_static_combat_profiles_round_trip_through_runtime_state():
@@ -122,3 +122,22 @@ def test_invalid_action_snapshots_are_rejected(mutation):
     assert combat.validProfile(profile)
     mutation(profile)
     assert not combat.validProfile(profile)
+
+
+def test_every_exported_melee_timing_uses_weapon_table_and_matches_rust():
+    import json
+    from pathlib import Path
+    from Business.scripts.combat_profile_data import HERO_WEAPONS
+    rust = json.loads((Path(__file__).resolve().parents[2] /
+                       'game-server/src/combat_profiles.json').read_text(encoding='utf-8'))
+    directions = {'300560': 'Up', '300550': 'Right', '300570': 'Down', '300540': 'Left'}
+    for hero in HERO_WEAPONS:
+        for weapon, profile in combat.loadCombatProfiles('', hero).items():
+            assert profile['attacks'] == rust[str(hero)][str(weapon)]['attacks']
+            for intent, attack in profile['attacks'].items():
+                prefix = 'Attack' + directions[intent]
+                evidence = profile['timingSources']
+                assert attack['phases'] == [evidence[prefix+'Prepare'][0], 0,
+                    evidence[prefix+'Process'][0], evidence[prefix+'Finish'][0]]
+                assert attack['parried'] == evidence[prefix+'Parryed'][0]
+                assert attack['rebound'] == evidence[prefix+'Fend'][0]

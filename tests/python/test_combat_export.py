@@ -33,20 +33,20 @@ def test_dash_uses_animation_and_truncates_only_contact_end(monkeypatch):
     assert profile == original
 
 
-def test_explicit_melee_window_is_truncated_to_process_duration(monkeypatch):
+def test_melee_table_timing_is_not_overridden_by_shorter_animation(monkeypatch):
     profile = combatProfiles(1101)[702]
     result = exporter.applyTimings(profile, animation(monkeypatch, 'AttackUpProcess', .4), 550)
     attack = result['attacks']['300560']
-    assert attack['phases'] == [350, 0, 400, 400]
-    assert (attack['contactStartMs'], attack['contactEndMs']) == (70, 400)
-    assert result['windowAdjustments']['AttackUpProcess'] == (550, 400)
+    assert attack['phases'] == [350, 0, 600, 400]
+    assert (attack['contactStartMs'], attack['contactEndMs']) == (70, 550)
+    assert 'windowAdjustments' not in result
 
 
-def test_full_process_contact_window_follows_animation_without_changing_hold(monkeypatch):
+def test_full_process_contact_window_follows_table_without_changing_hold(monkeypatch):
     profile = combatProfiles(1101)[702]
     profile['attacks']['300560'].update(contactStartMs=0, contactEndMs=600)
     result = exporter.applyTimings(profile, animation(monkeypatch, 'AttackUpProcess', .7), 550)
-    assert result['attacks']['300560']['contactEndMs'] == 700
+    assert result['attacks']['300560']['contactEndMs'] == 600
     assert all(attack['phases'][1] == 0 for attack in result['attacks'].values())
     assert result['hurtMs'] == 550 and result['guard'] == profile['guard']
 
