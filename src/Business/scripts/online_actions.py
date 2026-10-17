@@ -133,15 +133,29 @@ def receive(flow, value):
     if len(instances) != 1:
         raise ValueError('online action requires one live instance')
     connection, session = instances[0]
-    if online_pve.monster_id(actor):
-        online_pve.action(flow,value,connection,session)
+    actions = ledger(session)
+    if rid is None:
+        # A monster outside its presented lifecycle (removed, or spawn still in flight).
+        if event_sequence != actions['eventSeq'] + 1:
+            raise ValueError('online action event sequence has a gap or replay')
+        actions['eventSeq'] = event_sequence
         return
     validate_event(match, value)
-    actions = ledger(session)
     if event_sequence != actions['eventSeq'] + 1 or sequence != actions['actors'].get(str(rid), 1) % 0xffff + 1:
         raise ValueError('online action event sequence has a gap or replay')
     actions['eventSeq'] = event_sequence
     actions['actors'][str(rid)] = sequence
+    if online_pve.held(session, rid):
+        # Emergence owns the native graph until it ends (death, 42, still interrupts it); a corpse
+        # is never re-animated by a late action.
+        if state != 42 or not online_pve.in_birth(session, rid):
+            return
+        previous_connection, previous_session = flow.connection, flow.session
+        try:
+            flow.connection, flow.session = connection, session
+            online_pve.finish_birth(flow, online_pve.by_rid(session, rid), connection, session)
+        finally:
+            flow.connection, flow.session = previous_connection, previous_session
     if rid == 1 and online_prediction.reconcile(flow, session, sequence, state, action_id):
         return
     buffer = session.get('onlineMotion', {}).get('buffers', {}).get(str(rid), {})
@@ -196,9 +210,13 @@ def present(flow, connection, session, rid, value):
     from . import weapons, contracts as wire
     weapon = integer(value['weaponId'], 1)
     source = session if rid == 1 else online_scene.peer_data(session, rid)
-    if 'weaponProfiles' in source and str(weapon) not in source['weaponProfiles']:
+    if source.get('monster') is not None:
+        # Monster equipment is fixed by its kind (validated in the PVE snapshot).
+        if weapon != source['weaponId']:
+            raise ValueError('PVE monster changed weapon')
+    elif 'weaponProfiles' in source and str(weapon) not in source['weaponProfiles']:
         raise ValueError('online weapon outside selected equipment')
-    if 'weaponProfiles' not in source and weapon not in (wire.WEAPON_ID, weapons.FIST_ID):
+    elif 'weaponProfiles' not in source and weapon not in (wire.WEAPON_ID, weapons.FIST_ID):
         raise ValueError('unsupported online equipment')
     if source.get('weaponId', wire.WEAPON_ID) != weapon:
         source['weaponId'] = weapon

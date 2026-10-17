@@ -11,8 +11,6 @@ AIR_EXTRAPOLATION_MS = 150
 MAX_EXTRAPOLATION_SPEED = 25.
 # One lost 100 ms monster sample (or three lost 50 ms player samples) must not disable prediction.
 MAX_EXTRAPOLATION_SPAN_MS = 250
-# Monsters publish at 10 Hz: bridge one lost sample (next one is due 200 ms after the last received).
-MONSTER_EXTRAPOLATION_MS = 250
 
 
 def observe(state, tick, arrived):

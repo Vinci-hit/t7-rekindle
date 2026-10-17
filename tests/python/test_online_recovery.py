@@ -115,6 +115,8 @@ def test_pve_recovery_restores_monsters_and_stream_baselines_without_old_contact
     state = client.state['sessions']['2']
     assert state['onlinePve']['eventSeq'] == 3
     assert state['onlinePve']['monsters'][str(m['actorId'])]['health'] == 40
-    assert state['onlinePve']['monsters'][str(m['actorId'])]['actionSeq'] == 2
+    # The monster is restored into its enemy slot and its action baseline is that slot's.
+    assert state['onlineActions']['actors']['2'] == 2
+    assert any(p['localRid'] == 2 and p['actorId'] == m['actorId'] for p in client.state['onlineScene']['peers'])
     client.reply(None, 'pveChanged', update=update(value['room']['pve'], 4))
-    assert online_pve.instance_id(m['actorId']) == 1024
+    assert online_pve.by_rid(state, 2)['actorId'] == m['actorId']

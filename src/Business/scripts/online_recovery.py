@@ -116,7 +116,7 @@ def restore_battle(flow, room, recovery):
         values = online_combat.health(flow, recovery['lives'])
         flow.session.pop('respawnPending', None)
         for rid, hp in values.items():
-            if online_pve.monster_id(rid):
+            if rid != 1 and online_scene.monster(flow, rid):
                 continue
             if previous_health[rid] == 0 and hp:
                 online_combat.respawn(flow, rid, recovery['lives'])
@@ -138,41 +138,28 @@ def restore_battle(flow, room, recovery):
         actions.update(eventSeq=sequences['actionSeq'], actors={}, reacting=[])
         for action in recovery['actions']:
             rid = online_scene.actor_rid(match, action['actorId'])
-            if online_pve.monster_id(action['actorId']):
-                source = online_pve.ledger(flow.session)['monsters'].get(str(action['actorId']))
-                if source is not None and not source.get('removed'):
-                    source['actionSeq'] = action['actionSeq'] % 65535 or 65535
-                    flow.send(4, battle_flow.encode_battle_state_sync_simple(
-                        instance_id=online_pve.instance_id(action['actorId']), seq_no=action['actionSeq'],
-                        state=action['state'], state_change_ms=flow.now-flow.session['instanceStartedAt'],
-                        state_time_ms=action['durationMs']), 'online-recovery-monster-action')
-                continue
             if rid is None:
+                if online_pve.monster_id(action['actorId']):
+                    continue  # corpse or monster not presented on this client
                 raise ValueError('recovery action outside the roster')
             online_actions.validate_event(match, action)
             actions['actors'][str(rid)] = custom_lobby.integer(action['actionSeq'], 1, 65535)
-            online_actions.present(flow, target_connection, flow.session, rid, action)
+            if not online_pve.held(flow.session, rid):
+                online_actions.present(flow, target_connection, flow.session, rid, action)
         for pose in recovery['poses']:
             actor = pose['actorId']
             rid = online_scene.actor_rid(match, actor)
             if rid is None:
                 continue
             value = pose['pose']
-            if online_pve.monster_id(actor):
-                source = online_pve.ledger(flow.session)['monsters'].get(str(actor))
-                if source is None or source.get('removed'):
-                    continue
-            if not online_pve.monster_id(actor):
-                motion['actors'][str(rid)] = pose['inputSeq']
-                if rid != 1:
-                    online_motion.emit(flow, target_connection, flow.session, value,
-                        'online-recovery-peer-pose', rid, motion['buffers'].setdefault(str(rid), {}))
-            else:
-                source['poseSeq'] = pose['inputSeq']
+            motion['actors'][str(rid)] = pose['inputSeq']
+            if rid != 1 and not online_pve.held(flow.session, rid):
+                online_motion.emit(flow, target_connection, flow.session, value,
+                    'online-recovery-peer-pose', rid, motion['buffers'].setdefault(str(rid), {}))
             # Own position is restored only at this explicit recovery boundary.
             flow.send(2, move_flow.encode_move_direct_bc(server_tick=flow.now-flow.session['instanceStartedAt'],
-                target_instance_id=online_pve.instance_id(actor) if online_pve.monster_id(actor) else rid,
-                direction_yaw=value['heading'], position=tuple(value['position'])), 'online-recovery-position')
+                target_instance_id=rid, direction_yaw=value['heading'], position=tuple(value['position'])),
+                'online-recovery-position')
         if combat['health']:
             controls.enableGround(flow)
     finally:

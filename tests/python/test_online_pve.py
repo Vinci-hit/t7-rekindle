@@ -18,7 +18,7 @@ def snapshot(monsters=None):
 
 
 def monster():
-    return dict(actorId=online_pve.FIRST_MONSTER_ID,kind=dict(resourceId=11001,heroId=11001,weaponId=11000002,health=60,speed=2.),
+    return dict(actorId=online_pve.FIRST_MONSTER_ID,localRid=2,kind=dict(resourceId=11001,heroId=11001,weaponId=11000002,health=60,speed=2.),
         position=[3.,0.,.2],heading=180,alive=True,health=60)
 
 
@@ -51,52 +51,6 @@ def running():
 
 def update(value,sequence=1):
     return dict(roomId='room-test',matchId=MATCH,eventSeq=sequence,serverTimeMs=3500,snapshot=value)
-
-
-def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_actions_and_poses():
-    client,_=running()
-    m=monster();value={**snapshot([m]),'phase':'active','wave':1,'nextWaveAtMs':None}
-    result=client.reply(None,'pveChanged',update=update(value))
-    assert result['send'][0]['reason']=='online-pve-monster-add'
-    assert struct.unpack_from('>Hii', result['send'][0]['body']) == (1, 1, 3)
-    rid=m['actorId']
-    assert online_pve.instance_id(rid)==1024
-    assert online_scene.actor_rid(client.state['onlineScene'],rid)==rid
-    assert online_scene.rid_actor(client.state['onlineScene'],rid)==rid
-    action=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,actionSeq=2,actionId=None,state=235,weaponId=11000002,durationMs=0,serverTimeMs=3500)
-    result=client.reply(None,'actionChanged',action=action)
-    assert battle_flow.decode_battle_state_sync_simple(result['send'][0]['body']).instance_id==1024
-    pose=dict(position=[2.8,0.,.2],heading=180,forwardBack=-1,leftRight=0,running=False)
-    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=1,inputSeq=1,serverTimeMs=3500,pose=pose))
-    direct = move_flow.decode_move_direct_bc(result['send'][0]['body'])
-    assert direct.target_instance_id == 1024
-    assert direct.position == pytest.approx(pose['position'])
-    # Idle selects a native gait while Rust retains position authority.
-    client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 2})
-    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=2,inputSeq=2,serverTimeMs=3550,pose=pose))
-    assert not result['send']
-    client.context['nowMs'] = 220
-    result = instance(client, kind='timer', name='online-motion-render')
-    movement = move_flow.decode_move_bc_with_system_and_active(next(item['body'] for item in result['send'] if item['command'] == 2))
-    assert movement.target_instance_id == 1024
-    assert movement.state == 2 and movement.forward_back == -1000
-    assert movement.left_right == 0
-    assert movement.current_velocity == 2000 and movement.max_velocity == 25000
-    assert movement.position == pytest.approx(pose['position'])
-    pose.update(forwardBack=0)
-    stopped = client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=3,inputSeq=3,serverTimeMs=3600,pose=pose))
-    client.context['nowMs'] = 420
-    stopped = instance(client, kind='timer', name='online-motion-render')
-    movement = move_flow.decode_move_bc_with_system_and_active(next(item['body'] for item in stopped['send'] if item['command'] == 2))
-    assert movement.state == 1 and movement.current_velocity == 0 and movement.forward_back == 0
-    dead = {**m, 'alive': False, 'health': 0}
-    result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
-    assert [p['reason'] for p in result['send']] == ['online-pve-monster-remove']
-    assert struct.unpack_from('>HiiQ', result['send'][0]['body'])[-1] == rid
-    removed={**snapshot(),'phase':'intermission','wave':1,'nextWaveAtMs':5000}
-    result=client.reply(None,'pveChanged',update=update(removed,3))
-    assert not result['send']
-    assert not client.state['sessions']['2']['onlinePve']['monsters']
 
 
 @pytest.mark.parametrize('entering', [False, True])
@@ -242,60 +196,11 @@ def birth(animation='emerge1', start=3500):
     return dict(animation=animation, startedAtMs=start, endsAtMs=start+online_pve.BIRTH_STATES[animation][1])
 
 
-def test_birth_uses_native_non_combat_channel_and_stops_movement_until_finished():
-    client,_=running();m={**monster(),'birth':birth()}
-    value={**snapshot([m]),'phase':'active','wave':1,'nextWaveAtMs':None}
-    result=client.reply(None,'pveChanged',update=update(value))
-    assert [s['reason'] for s in result['send']]==[
-        'online-pve-monster-add','online-pve-birth-mode','online-pve-birth-start']
-    assert struct.unpack('>HQBQ',result['send'][1]['body'])[:3]==(30,m['actorId'],1)
-    assert struct.unpack('>HQiQ',result['send'][2]['body'])[:3]==(29,m['actorId'],200)
-    pose=dict(position=m['position'],heading=0,forwardBack=0,leftRight=0,running=False)
-    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],
-        eventSeq=1,inputSeq=1,serverTimeMs=3600,pose=pose))
-    assert not result['send']
-    finished={k:v for k,v in m.items() if k!='birth'}
-    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[finished]},2))
-    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position']
-    assert struct.unpack('>HQBQ',result['send'][0]['body'])[:3]==(30,m['actorId'],0)
-    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[finished]},3))
-    assert not result['send']
-    result=client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],
-        eventSeq=2,inputSeq=2,serverTimeMs=6800,pose=pose))
-    assert result['send'][0]['reason']=='online-pve-monster-pose'
-
-
-def test_death_exits_birth_before_stopping_corpse_and_does_not_repeat_birth():
-    client,_=running();m={**monster(),'birth':birth('vault1')}
-    value={**snapshot([m]),'phase':'active','wave':1}
-    client.reply(None,'pveChanged',update=update(value))
-    dead={k:v for k,v in m.items() if k!='birth'};dead.update(health=0,alive=False)
-    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[dead]},2))
-    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-remove']
-
-
 @pytest.mark.parametrize('bad', [dict(animation='unknown',startedAtMs=0,endsAtMs=100),
     dict(animation='emerge1',startedAtMs=0,endsAtMs=1),
     dict(animation='emerge1',startedAtMs=True,endsAtMs=3168)])
 def test_invalid_birth_snapshot_is_rejected(bad):
     assert not online_pve.valid_snapshot(snapshot([{**monster(),'birth':bad}]))
-
-
-def test_hurt_and_recovery_leave_living_birth_animation_untouched():
-    client,_=running();m={**monster(),'birth':birth()}
-    value={**snapshot([m]),'phase':'active','wave':1}
-    client.reply(None,'pveChanged',update=update(value))
-    action=dict(roomId='room-test',matchId=MATCH,actorId=m['actorId'],eventSeq=1,actionSeq=2,
-        actionId=None,state=35,weaponId=m['kind']['weaponId'],durationMs=550,serverTimeMs=3600)
-    result=client.reply(None,'actionChanged',action=action)
-    assert not result['send']
-    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
-    assert source['birth'] == m['birth'] and source['actionSeq'] == 2
-    result=client.reply(None,'actionChanged',action={**action,'eventSeq':2,'actionSeq':3,'state':2})
-    assert not result['send']
-    dead={k:v for k,v in m.items() if k!='birth'};dead.update(health=0,alive=False)
-    result=client.reply(None,'pveChanged',update=update({**value,'monsters':[dead]},2))
-    assert [s['reason'] for s in result['send']]==['online-pve-birth-end','online-pve-birth-position','online-pve-monster-remove']
 
 
 def test_objective_snapshot_validation_and_transition_logging():
@@ -379,128 +284,114 @@ def test_scene_objects_have_separate_identity_and_idempotent_lifecycle():
     assert not online_pve.valid_snapshot({**value, 'objects': [{**entry, 'actorId': online_pve.FIRST_MONSTER_ID}]})
 
 
-def test_dead_monster_cannot_be_reanimated_by_late_pose_or_action():
-    client, _ = running()
-    m = monster()
+# ---- Monsters are enemy-roster actors on the remote-player pipeline ----
+
+def pose_update(m, seq, at, position, forward=-1, heading=180):
+    return dict(roomId='room-test', matchId=MATCH, actorId=m['actorId'], eventSeq=seq, inputSeq=seq,
+        serverTimeMs=at, pose=dict(position=position, heading=heading, forwardBack=forward, leftRight=0, running=False))
+
+
+def monster_action(m, event, seq, state, at=3600, duration=0):
+    return dict(roomId='room-test', matchId=MATCH, actorId=m['actorId'], eventSeq=event, actionSeq=seq,
+        actionId=None, state=state, weaponId=m['kind']['weaponId'], durationMs=duration, serverTimeMs=at)
+
+
+def vision_rid_and_instance(body):
+    rid, = struct.unpack_from('>Q', body, 10)
+    length, = struct.unpack_from('>I', body, 18)
+    instance, = struct.unpack_from('>H', body, 22 + length)
+    return rid, instance
+
+
+def test_monster_is_bound_to_its_enemy_slot_and_driven_by_the_peer_pipeline():
+    from Business.scripts import online_scene
+    client, _ = running(); m = monster()
+    result = client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    assert [s['reason'] for s in result['send']] == ['online-pve-monster-add']
+    assert vision_rid_and_instance(result['send'][0]['body']) == (2, 2)
+    match = client.state['onlineScene']
+    assert online_scene.actor_rid(match, m['actorId']) == 2 and online_scene.rid_actor(match, 2) == m['actorId']
+    assert online_scene.ids(type('F', (), {'state': client.state})()) == (1, 2)
+    peer = client.state['sessions']['2']['onlinePeers']['2']
+    assert peer['camp'] == 2 and peer['monster'] == m['actorId'] and peer['speed'] == 2.
+    # Poses: the same playback and native gait as a remote player, integrating at the monster speed.
+    result = client.reply(None, 'poseChanged', update=pose_update(m, 1, 3500, [2.8, 0., .2]))
+    gait = next(s for s in result['send'] if s['reason'] == 'online-peer-movement')
+    packet = move_flow.decode_move_bc_with_system_and_active(gait['body'])
+    assert packet.target_instance_id == 2 and packet.forward_back == -1000
+    assert (packet.current_velocity, packet.max_velocity) == (2000, 25000)
+    # Actions: presented on the slot like any enemy player.
+    result = client.reply(None, 'actionChanged', action=monster_action(m, 1, 2, 235))
+    client.context['nowMs'] = 900
+    result = result['send'] or instance(client, kind='timer', name='online-motion-render')['send']
+    sync = next(s for s in result if s['command'] == 4)
+    assert battle_flow.decode_battle_state_sync_simple(sync['body']).instance_id == 2
+
+
+def test_freed_slot_is_reused_only_after_the_previous_monster_is_removed():
+    client, _ = running(); m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    client.reply(None, 'poseChanged', update=pose_update(m, 1, 3500, [2.8, 0., .2]))
+    nxt = {**monster(), 'actorId': m['actorId'] + 1, 'position': [5., 0., .2]}
+    result = client.reply(None, 'pveChanged', update=update({**snapshot([nxt]), 'phase': 'active', 'wave': 1}, 2))
+    assert [s['reason'] for s in result['send']] == ['online-pve-monster-remove', 'online-pve-monster-add']
+    assert struct.unpack_from('>HiiQ', result['send'][0]['body'])[-1] == 2
+    peers = client.state['onlineScene']['peers']
+    assert [p['actorId'] for p in peers if p['localRid'] == 2] == [nxt['actorId']]
+    # The new actor's pose sequence restarts without being rejected as a replay.
+    assert client.reply(None, 'poseChanged', update=pose_update(nxt, 2, 3600, [4.8, 0., .2]))['send']
+
+
+def test_monster_without_a_slot_is_ignored_rather_than_rejected():
+    client, _ = running(); m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([]), 'phase': 'active', 'wave': 1}))
+    assert not client.reply(None, 'poseChanged', update=pose_update(m, 1, 3500, [2.8, 0., .2]))['send']
+    assert not client.reply(None, 'actionChanged', action=monster_action(m, 1, 2, 235))['send']
+    assert client.state['sessions']['2']['onlineActions']['eventSeq'] == 1
+
+
+def test_birth_holds_poses_and_actions_then_hands_the_slot_to_the_peer_pipeline():
+    client, _ = running(); m = {**monster(), 'birth': birth()}
+    value = {**snapshot([m]), 'phase': 'active', 'wave': 1, 'nextWaveAtMs': None}
+    result = client.reply(None, 'pveChanged', update=update(value))
+    assert [s['reason'] for s in result['send']] == ['online-pve-monster-add', 'online-pve-birth-mode', 'online-pve-birth-start']
+    assert struct.unpack('>HQBQ', result['send'][1]['body'])[:3] == (30, 2, 1)
+    assert struct.unpack('>HQiQ', result['send'][2]['body'])[:3] == (29, 2, 200)
+    assert not client.reply(None, 'poseChanged', update=pose_update(m, 1, 3600, m['position'], forward=0))['send']
+    assert not client.reply(None, 'actionChanged', action=monster_action(m, 1, 2, 35, duration=550))['send']
+    finished = {k: v for k, v in m.items() if k != 'birth'}
+    result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [finished]}, 2))
+    assert [s['reason'] for s in result['send']] == ['online-pve-birth-end', 'online-pve-birth-position']
+    assert struct.unpack('>HQBQ', result['send'][0]['body'])[:3] == (30, 2, 0)
+    assert move_flow.decode_move_direct_bc(result['send'][1]['body']).target_instance_id == 2
+    assert client.reply(None, 'poseChanged', update=pose_update(m, 2, 6800, [2.8, 0., .2]))['send']
+
+
+def test_corpse_stays_in_its_slot_until_removed_and_is_never_reanimated():
+    client, _ = running(); m = {**monster(), 'birth': birth('vault1')}
     value = {**snapshot([m]), 'phase': 'active', 'wave': 1}
     client.reply(None, 'pveChanged', update=update(value))
-    dead = {**m, 'alive': False, 'health': 0}
-    client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
-    action = dict(roomId='room-test', matchId=MATCH, actorId=m['actorId'], eventSeq=1,
-        actionSeq=2, actionId=None, state=2, weaponId=m['kind']['weaponId'], durationMs=0, serverTimeMs=3600)
-    assert not client.reply(None, 'actionChanged', action=action)['send']
-    pose = dict(position=m['position'], heading=180, forwardBack=-1, leftRight=0, running=False)
-    assert not client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH,
-        actorId=m['actorId'], eventSeq=1, inputSeq=1, serverTimeMs=3600, pose=pose))['send']
+    dead = {k: v for k, v in m.items() if k != 'birth'}; dead.update(health=0, alive=False)
+    result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': [dead]}, 2))
+    # Death ends the emergence and plays the native death graph on the slot; the model stays.
+    assert [s['reason'] for s in result['send']] == ['online-pve-birth-end', 'online-pve-birth-position', 'online-pve-monster-dead']
+    assert not client.reply(None, 'poseChanged', update=pose_update(m, 1, 3600, [2.8, 0., .2]))['send']
+    assert not client.reply(None, 'actionChanged', action=monster_action(m, 1, 2, 2))['send']
+    result = client.reply(None, 'pveChanged', update=update({**value, 'monsters': []}, 3))
+    assert [s['reason'] for s in result['send']] == ['online-pve-monster-remove']
+    assert not any(p['localRid'] == 2 for p in client.state['onlineScene']['peers'])
 
 
-def test_reconnect_snapshot_does_not_leave_a_dead_collision_proxy():
+def test_reconnect_corpse_is_not_presented():
     client, _ = running()
     m = {**monster(), 'alive': False, 'health': 0}
     result = client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
-    assert [p['reason'] for p in result['send']] == ['online-pve-monster-add', 'online-pve-monster-remove']
+    assert not result['send'] and not client.state['onlineScene']['peers']
 
 
-@pytest.mark.parametrize('running', [False, True])
-@pytest.mark.parametrize('axes', [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)])
-def test_monster_gait_drives_the_native_locomotion_graph(running, axes):
-    m = monster()
-    pose = dict(position=[8., -3., 1.5], heading=-90,
-                forwardBack=axes[0], leftRight=axes[1], running=running)
-    packet = move_flow.decode_move_bc_with_system_and_active(
-        online_pve.movement_body(m, pose, 1234))
-    assert packet.position == pytest.approx(pose['position'])
-    table = online_pve.controls.GROUND_RUN_STATES if running else online_pve.controls.GROUND_WALK_STATES
-    assert packet.state == table.get(axes, 1)
-    if axes == (0, 0):
-        assert packet.forward_back == packet.left_right == packet.current_velocity == packet.max_velocity == 0
-    else:
-        assert (packet.forward_back, packet.left_right) == (axes[0] * 1000, axes[1] * 1000)
-        assert packet.current_velocity == 2000 and packet.max_velocity == 25000
-
-
-def test_monster_position_is_written_on_every_changed_frame():
-    # Rate-limited corrections stepped the model whenever the native gait did not integrate itself.
-    source = dict(nativeTransform=[[0., 0., 0.], 0], nativeSentAt=1000)
-    walking = dict(forwardBack=-1, leftRight=0)
-    assert online_pve.correction_due(source, walking, [[.03, 0., 0.], 0], 1016)
-    assert online_pve.correction_due(source, dict(forwardBack=0, leftRight=0), [[.03, 0., 0.], 0], 1001)
-
-
-def test_monster_motion_updates_do_not_restart_an_unchanged_gait():
-    client, _ = running()
-    m = monster()
-    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
-    pose = dict(position=[2.8, 0., .2], heading=180, forwardBack=-1, leftRight=0, running=False)
-
-    def move(seq, position):
-        return client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH,
-            actorId=m['actorId'], eventSeq=seq, inputSeq=seq, serverTimeMs=3500+seq*100,
-            pose={**pose, 'position': position}))
-
-    first = move(1, pose['position'])
-    assert move_flow.decode_move_bc_with_system_and_active(first['send'][0]['body']).state == 2
-    moved = move(2, [2.6, 0., .2])
-    assert not moved['send']  # Receipt buffers the sample instead of moving the model.
-    client.context['nowMs'] = 220
-    rendered = instance(client, kind='timer', name='online-motion-render')
-    assert move_flow.decode_move_direct_bc(rendered['send'][0]['body']).position[0] <= 2.6
-    for seq in range(3, 23):
-        assert not move(seq, [2.6, 0., .2])['send']
-    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
-    assert source['poseSeq'] == 22
-    # Catch up over multiple phases: sequence validation occurs on receipt,
-    # although playback only presents the newest due phase.
-    for event_seq, state in ((1, 235), (2, 2)):
-        client.reply(None, 'actionChanged', action=dict(roomId='room-test', matchId=MATCH,
-            actorId=m['actorId'], eventSeq=event_seq, actionSeq=event_seq+1,
-            actionId=None, state=state, weaponId=m['kind']['weaponId'],
-            durationMs=0, serverTimeMs=5700+event_seq))
-    client.context['nowMs'] = 4000
-    instance(client, kind='timer', name='online-motion-render')
-    source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
-    assert source['actionSeq'] == 3
-    assert source['battleState'] == 2
-
-
-def test_attack_cancels_the_walking_gait_before_the_action_and_stops_hold_position():
-    client, _ = running()
-    m = monster()
-    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
-    rid = m['actorId']
-    pose = dict(position=[2.8, 0., .2], heading=180, forwardBack=-1, leftRight=0, running=False)
-    action = dict(roomId='room-test', matchId=MATCH, actorId=rid, eventSeq=1, actionSeq=2, actionId=None,
-        state=2, weaponId=11000002, durationMs=0, serverTimeMs=3500)
-    client.reply(None, 'actionChanged', action=action)
-    for seq, x in ((1, 2.8), (2, 2.6)):
-        client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH, actorId=rid, eventSeq=seq,
-            inputSeq=seq, serverTimeMs=3400+seq*100, pose={**pose, 'position': [x, 0., .2]}))
-    client.context['nowMs'] = 220
-    instance(client, kind='timer', name='online-motion-render')
-    source = client.state['sessions']['2']['onlinePve']['monsters'][str(rid)]
-    assert source['nativeMovement'][:3] == [-1, 0, False]
-    # Attacks are queued behind playback; once due, the first packet must stop the gait before the state sync.
-    client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 235, 'serverTimeMs': 3450})
-    client.context['nowMs'] = 700
-    result = instance(client, kind='timer', name='online-motion-render')
-    reasons = [p['reason'] for p in result['send']]
-    assert 'online-pve-monster-action' in reasons and 'online-pve-monster-stop' in reasons
-    assert reasons.index('online-pve-monster-stop') < reasons.index('online-pve-monster-action')
-    stop = move_flow.decode_move_bc_with_system_and_active(result['send'][reasons.index('online-pve-monster-stop')]['body'])
-    assert (stop.state, stop.forward_back, stop.current_velocity, stop.max_velocity) == (1, 0, 0, 0)
-
-
-def test_stationary_monster_is_re_anchored_so_animations_cannot_walk_it_off_the_hitbox():
-    assert not online_pve.pin_due(dict(alive=True, nativeSentAt=1000), 1050)
-    assert online_pve.pin_due(dict(alive=True, nativeSentAt=1000), 1100)
-    assert online_pve.pin_due(dict(alive=True), 5)
-    assert not online_pve.pin_due(dict(alive=False, nativeSentAt=0), 9999)
-
-
-def test_walking_gait_is_reissued_when_the_travel_direction_turns():
-    assert online_pve.gait_due(None, [-1, 0, False], 0)
-    assert not online_pve.gait_due([-1, 0, False, 0], [-1, 0, False], 5)
-    assert online_pve.gait_due([-1, 0, False, 0], [-1, 0, False], 12)
-    assert online_pve.gait_due([-1, 0, False, 175], [-1, 0, False], -170)  # wraps: 15 degrees
-    assert not online_pve.gait_due([0, 0, False, 0], [0, 0, False], 90)   # standing turns use corrections
-    assert online_pve.gait_due([-1, 0, False, 0], [0, 0, False], 0)       # stop
+def test_snapshot_rejects_monsters_outside_enemy_slots_or_sharing_one():
+    assert not online_pve.valid_snapshot(snapshot([{**monster(), 'localRid': 12}]))
+    assert not online_pve.valid_snapshot(snapshot([{**monster(), 'localRid': 1}]))
+    twin = {**monster(), 'actorId': online_pve.FIRST_MONSTER_ID + 1}
+    assert not online_pve.valid_snapshot(snapshot([monster(), twin]))
+    assert online_pve.valid_snapshot(snapshot([monster(), {**twin, 'localRid': 11}]))

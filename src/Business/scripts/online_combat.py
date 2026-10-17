@@ -50,9 +50,7 @@ def world_updated(flow):
     if match['phase'] != 3 or flow.session.get('leaving') or not ledger(flow.session)['health']:
         return
     raw = flow.context.get('botWorld', {})
-    if 'pve' in match:
-        from . import online_pve_contacts
-        online_pve_contacts.world_updated(flow, raw)
+    # PVE monsters occupy enemy roster slots, so their hits are native blade contacts like players'.
     trace_reactions(flow, actors.world(flow))
     journal = raw.get('contactJournal')
     if type(journal) is not dict or raw.get('instanceStartedAt') != flow.session['instanceStartedAt']:
@@ -74,7 +72,7 @@ def world_updated(flow):
         if event['occurredAt'] - event['phaseAt'] < contact_start:
             continue
         if (event['occurredAt'] < state.get('resumeAt', 0) or event['actorId'] != 1 or event['state'] not in STRIKES or event['entity'] != local.get('entity')
-                or event['targetId'] not in (0, *online_scene.ids(flow)[1:], *(m['actorId'] for m in match.get('pve', {}).get('monsters', []))) or event['occurredAt'] < event['phaseAt']
+                or event['targetId'] not in (0, *online_scene.ids(flow)[1:]) or event['occurredAt'] < event['phaseAt']
                 or event['occurredAt'] - event['phaseAt'] > contact_end):
             continue
         target = 0 if event['targetId'] == 0 else online_scene.rid_actor(match, event['targetId'])
@@ -215,20 +213,32 @@ def rid(flow, actor):
 
 def health(flow, lives):
     from .custom_lobby import integer
-    monsters = flow.session.get('onlinePve', {}).get('monsters', {})
-    if type(lives) is not list or len(lives) != len(online_scene.ids(flow)) + len(monsters):
+    from . import online_pve
+    match = flow.state['onlineScene']
+    if type(lives) is not list:
+        raise ValueError('invalid combat roster')
+    # Players are the frozen roster; monsters are those currently bound to a slot. A monster the
+    # server already tracks but whose lifecycle event is still in flight has no slot yet.
+    players = [life for life in lives if not online_pve.monster_id(life.get('actorId'))]
+    bound = [life for life in lives if online_pve.monster_id(life.get('actorId'))
+             and online_scene.actor_rid(match, life['actorId']) is not None]
+    roster = [rid for rid in online_scene.ids(flow) if rid == 1 or not online_scene.monster(flow, rid)]
+    if len(players) != len(roster):
         raise ValueError('invalid combat roster')
     values = {}
-    for life in lives:
+    for life in players + bound:
         actor = rid(flow, life['actorId'])
         if actor in values:
             raise ValueError('duplicate combat actor')
-        values[actor] = integer(life['health'], 0, monsters[str(actor)]['kind']['health'] if str(actor) in monsters else 100)
+        monster = online_pve.by_rid(flow.session, actor) if actor != 1 else None
+        values[actor] = integer(life['health'], 0, monster['kind']['health'] if monster else 100)
         for key in ('kills', 'deaths', 'streak'):
             integer(life[key], 0, kill_flow.MAX_SCORE)
     for actor, hp in values.items():
-        if str(actor) in monsters:
-            monsters[str(actor)]['health'] = hp
+        monster = online_pve.by_rid(flow.session, actor) if actor != 1 else None
+        if monster is not None:
+            monster['health'] = hp
+            online_scene.peer_data(flow.session, actor)['health'] = hp
             flow.send(15, attr_flow.encode_health_update(entity_rid=actor,health=hp,server_time_ms=flow.now), 'online-health-monster')
         elif actor == 1:
             ledger(flow.session)['health'] = hp
@@ -283,6 +293,12 @@ def scores(flow, lives):
 
 def contact(flow, effect):
     from .custom_lobby import integer
+    from . import online_pve
+    match = flow.state['onlineScene']
+    # A monster removed (or not yet bound) by an in-flight lifecycle event has no slot to present on.
+    if any(online_pve.monster_id(actor) and online_scene.actor_rid(match, actor) is None
+           for actor in (effect['attacker'], effect['target'])):
+        return
     attacker = rid(flow, effect['attacker'])
     target = 0 if effect['target'] is None else rid(flow, effect['target'])
     if attacker == target or type(effect['parried']) is not bool:
@@ -314,8 +330,8 @@ def contact(flow, effect):
     # Parry reaction states already play the native effects on both weapons.
     # Body and scene contacts still need their contact-point feedback.
     if not effect['parried']:
-        monster = flow.session.get('onlinePve', {}).get('monsters', {}).get(str(target))
-        birth_active = monster is not None and monster.get('birth') is not None and values[target] > 0
+        from . import online_pve
+        birth_active = bool(target) and online_pve.in_birth(flow.session, target) and values.get(target, 0) > 0
         # Native HurtType also gates blood and flesh effects. Enable the normal
         # hit path only for an authoritative damaging body contact.
         flow.send(4, battle_flow.encode_battle_hit_point_notify(hit_pos=tuple(effect['position']),

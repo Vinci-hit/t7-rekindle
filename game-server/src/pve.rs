@@ -408,6 +408,10 @@ pub enum Phase {
 #[serde(rename_all = "camelCase")]
 pub struct MonsterView {
     pub actor_id: u32,
+    /// Enemy roster slot (RID) every client presents this monster in, exactly like an enemy player.
+    /// The original client only samples, animates and collides actors in its 2..=20 roster, so
+    /// concurrently living monsters are bounded by the enemy team's slots.
+    pub local_rid: u32,
     pub kind: MonsterKind,
     pub position: [f32; 3],
     pub heading: i16,
@@ -817,7 +821,13 @@ impl Pve {
                     schedule.batch_size.min(self.remaining_to_spawn)
                 })
             };
-            let count = usize::from(count).min(MAX_MONSTERS.saturating_sub(self.monsters.len()));
+            // A monster is only spawned into a free enemy slot; the rest of the wave waits for one.
+            let free = (crate::limits::ENEMY_FIRST_RID..crate::limits::FRIENDLY_FIRST_RID)
+                .filter(|rid| !self.monsters.iter().any(|m| m.view.local_rid == *rid))
+                .count();
+            let count = usize::from(count)
+                .min(MAX_MONSTERS.saturating_sub(self.monsters.len()))
+                .min(free);
             let encounter = self
                 .active_encounter
                 .map(|index| &self.scenario.encounters[index]);
@@ -835,6 +845,9 @@ impl Pve {
                     .unwrap_or(kind);
                 let id = self.next_id;
                 self.next_id += 1;
+                let local_rid = (crate::limits::ENEMY_FIRST_RID..crate::limits::FRIENDLY_FIRST_RID)
+                    .find(|rid| !self.monsters.iter().any(|m| m.view.local_rid == *rid))
+                    .expect("spawn count is bounded by free enemy slots");
                 let point_index = index % points.len();
                 // More monsters than spawn points: each reuse spirals outward from the point
                 // instead of stacking every monster on the identical coordinate.
@@ -887,6 +900,7 @@ impl Pve {
                 self.monsters.push(Monster {
                     view: MonsterView {
                         actor_id: id,
+                        local_rid,
                         kind: kind.clone(),
                         position,
                         heading,

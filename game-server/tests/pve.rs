@@ -1288,3 +1288,27 @@ fn a_wave_sharing_one_spawn_point_spreads_out_instead_of_stacking() {
     // After closing on the player they keep their spacing rather than collapsing onto one point.
     assert!(gaps(&lobby) > 0.4, "crowd collapsed: {}", gaps(&lobby));
 }
+
+#[test]
+fn monsters_take_distinct_enemy_slots_and_the_rest_of_the_wave_waits_for_one() {
+    let mut lobby = lobby([6., 0., 0.], &[14], 100, 60_000);
+    let room = lobby.create_pve("a", "slots", 1).unwrap();
+    let id = lobby.start("a", 0).unwrap().current_match.unwrap().match_id;
+    lobby.loaded("a", &id, 0).unwrap();
+    lobby.advance(3000);
+    pose(&mut lobby, &id, 1, 3001);
+    lobby.advance(3001);
+    let monsters = lobby.snapshot(&room.room_id).unwrap().pve.unwrap().monsters;
+    // The original client presents at most the ten enemy roster slots (RID 2..=11).
+    assert_eq!(monsters.len(), 10);
+    let mut slots: Vec<u32> = monsters.iter().map(|m| m.local_rid).collect();
+    slots.sort();
+    assert_eq!(slots, (2..=11).collect::<Vec<u32>>());
+    // The view maps each monster to its slot and back.
+    let view = lobby.client_view("a", &id).unwrap();
+    for monster in &monsters {
+        let rid = view.to_local(&id, ActorId(monster.actor_id)).unwrap();
+        assert_eq!(rid, LocalRid(monster.local_rid));
+        assert_eq!(view.to_actor(&id, rid).unwrap(), ActorId(monster.actor_id));
+    }
+}

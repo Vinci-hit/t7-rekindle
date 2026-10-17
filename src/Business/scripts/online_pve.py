@@ -1,24 +1,25 @@
-"""Native rendering and entry for server-owned cooperative monsters."""
-import os
+"""Server-owned cooperative monsters, presented to the original client as enemy-roster actors.
+
+Rust owns every monster decision (target, path, spacing, movement, attacks, damage). Each living
+monster is bound to an enemy roster slot (RID 2..11, chosen by the server and identical on every
+client) and from then on uses exactly the remote-player pipeline: pose playback and native gait
+(online_motion), action presentation (online_actions), native blade contacts and combat effects
+(online_combat), recovery. This module only owns the monster lifecycle (bind, birth, unbind), the
+scenario objects and the objective UI.
+"""
 from functools import lru_cache
-import math
 import struct
-from . import actors, contracts as wire, controls
+from . import actors, contracts as wire
 from .codec import attr_flow, battle_flow, casual_flow, move_flow, vision_flow, objective_flow
 
 FIRST_MONSTER_ID = 0x40000001
 FIRST_OBJECT_ID = 0x50000001
 MAX_MONSTERS = 64
 MAX_WAVES = 128
-FIRST_MONSTER_INSTANCE = 1024
 DEFAULT_MONSTER_SPEED = 2.0
-TRACE = os.environ.get('T7_PVE_TRACE') == '1'
-# Position is written on every rendered frame in which the presented transform changed. A larger value
-# rate-limits it; that is only smooth if the native gait integrates its velocity between writes, which
-# could not be confirmed (stepping at the correction rate otherwise), so it stays at one frame.
-DIRECT_CORRECTION_MS = 0
-HEADING_CORRECTION_DEGREES = 8
-HOLD_PIN_MS = 100
+MONSTER_NAME = 'Zombie'
+# Synthetic user identities for monster roster slots; real users never use this range.
+MONSTER_USER_BASE = 0x7F000000
 BIRTH_STATES = {'emerge1': (200, 3167), 'emerge2': (201, 3167), 'emerge3': (202, 3167),
                 'vault1': (203, 1800), 'vault2': (204, 3433)}
 
@@ -27,10 +28,26 @@ def monster_id(value):
     return type(value) is int and FIRST_MONSTER_ID <= value < FIRST_MONSTER_ID + MAX_WAVES * MAX_MONSTERS
 
 
-def instance_id(actor):
-    if not monster_id(actor):
-        raise ValueError('invalid PVE monster identity')
-    return FIRST_MONSTER_INSTANCE + actor - FIRST_MONSTER_ID
+def slot(rid):
+    from . import online_limits
+    return type(rid) is int and online_limits.ENEMY_FIRST_RID <= rid < online_limits.FRIENDLY_FIRST_RID
+
+
+def by_rid(session, rid):
+    """The living-or-corpse monster ledger entry presented in roster slot `rid`, if any."""
+    return next((m for m in session.get('onlinePve', {}).get('monsters', {}).values()
+                 if m.get('localRid') == rid and not m.get('removed')), None)
+
+
+def in_birth(session, rid):
+    monster = by_rid(session, rid)
+    return monster is not None and monster.get('birth') is not None
+
+
+def held(session, rid):
+    """Poses and actions are not presented while the emergence clip or the death graph owns the model."""
+    monster = by_rid(session, rid)
+    return monster is not None and (monster.get('birth') is not None or not monster['alive'])
 
 
 def object_id(actor):
@@ -56,16 +73,69 @@ def valid_birth(birth):
 def finish_birth(flow, source, connection, session=None):
     if source.get('birth') is None:
         return
+    rid = source['localRid']
     flow.result['send'].append(dict(connection=connection, command=4,
-        body=casual_flow.encode_no_fight(actor_id=source['actorId'], enabled=False, server_time_ms=flow.now),
+        body=casual_flow.encode_no_fight(actor_id=rid, enabled=False, server_time_ms=flow.now),
         reason='online-pve-birth-end'))
     source['birth'] = None
     flow.result['send'].append(dict(connection=connection, command=2,
         body=move_flow.encode_move_direct_bc(
             server_tick=flow.now-(flow.session if session is None else session)['instanceStartedAt'],
-            target_instance_id=instance_id(source['actorId']),
-            direction_yaw=source['heading'], position=tuple(source['position'])),
+            target_instance_id=rid, direction_yaw=source['heading'], position=tuple(source['position'])),
         reason='online-pve-birth-position'))
+
+
+def monster_vision(source, server_time_ms):
+    kind = source['kind']
+    return vision_flow.encode_monster_vision_add_event(rid=source['localRid'], instance_id=source['localRid'],
+        resource_id=kind['resourceId'], hero_id=kind['heroId'], weapon_id=kind['weaponId'],
+        position=tuple(source['position']), heading=source['heading'], current_hp=source['health'],
+        maximum_hp=kind['health'], camp=2, server_time_ms=server_time_ms, display_name=MONSTER_NAME.encode())
+
+
+def bind(flow, match, source):
+    """Enter a monster into its enemy roster slot exactly as a remote player would be."""
+    from . import online_scene, online_motion, online_actions
+    rid, kind = source['localRid'], source['kind']
+    if online_scene.rid_actor(match, rid) is not None:
+        raise ValueError('PVE monster slot is still occupied')
+    match['peers'].append(dict(actorId=source['actorId'], localRid=rid, camp=2,
+        userId=MONSTER_USER_BASE + rid, name=MONSTER_NAME, spawnIndex=rid - 2))
+    flow.session.setdefault('onlinePeers', {})[str(rid)] = dict(
+        position=list(source['position']), heading=source['heading'], camp=2,
+        spawnPosition=list(source['position']), spawnHeading=source['heading'],
+        userId=MONSTER_USER_BASE + rid, name=MONSTER_NAME, monster=source['actorId'],
+        heroId=kind['heroId'], weaponId=kind['weaponId'], speed=kind.get('speed', DEFAULT_MONSTER_SPEED),
+        health=source['health'])
+    # A reused slot starts a new actor: its pose and action sequences restart.
+    online_motion.ledger(flow.session)['actors'].pop(str(rid), None)
+    online_motion.ledger(flow.session)['buffers'].pop(str(rid), None)
+    actions = online_actions.ledger(flow.session)
+    actions['actors'].pop(str(rid), None)
+    if str(rid) in actions.get('reacting', []):
+        actions['reacting'].remove(str(rid))
+    flow.send(14, monster_vision(source, flow.now), 'online-pve-monster-add')
+    if source.get('birth') is not None:
+        flow.send(4, casual_flow.encode_no_fight(actor_id=rid, enabled=True, server_time_ms=flow.now), 'online-pve-birth-mode')
+        flow.send(4, casual_flow.encode_state(actor_id=rid, state=BIRTH_STATES[source['birth']['animation']][0],
+            server_time_ms=flow.now), 'online-pve-birth-start')
+    flow.log('INFO', f"online-pve spawned actor={source['actorId']} rid={rid}")
+
+
+def unbind(flow, match, source):
+    from . import online_motion, online_actions
+    rid = source['localRid']
+    flow.send(14, vision_flow.encode_vision_del_event(object_mid=rid, object_type=vision_flow.VISION_OBJECT_MONSTER),
+        'online-pve-monster-remove')
+    match['peers'][:] = [p for p in match['peers'] if p['actorId'] != source['actorId']]
+    flow.session.get('onlinePeers', {}).pop(str(rid), None)
+    online_motion.ledger(flow.session)['buffers'].pop(str(rid), None)
+    online_motion.ledger(flow.session)['actors'].pop(str(rid), None)
+    actions = online_actions.ledger(flow.session)
+    actions['actors'].pop(str(rid), None)
+    if str(rid) in actions.get('reacting', []):
+        actions['reacting'].remove(str(rid))
+    source['removed'] = True
 
 
 def valid_snapshot(value):
@@ -131,13 +201,16 @@ def valid_snapshot(value):
                 or not all(actors.validPosition(point) for point in value['playerSpawns'])
                 or type(value['monsters']) is not list or len(value['monsters']) > MAX_MONSTERS):
             return False
-        seen = set()
+        seen, slots = set(), set()
         for monster in value['monsters']:
             actor = monster['actorId']
             kind = monster['kind']
             if not monster_id(actor) or actor in seen or type(kind) is not dict:
                 return False
             seen.add(actor)
+            if not slot(monster.get('localRid')) or monster['localRid'] in slots:
+                return False
+            slots.add(monster['localRid'])
             if monster.get('birth') is not None and (not monster['alive'] or not valid_birth(monster['birth'])):
                 return False
             for key in ('resourceId', 'heroId', 'weaponId'):
@@ -244,6 +317,7 @@ def request(flow, body):
 
 def receive(flow, value):
     from .custom_lobby import integer
+    from . import online_scene
     match = flow.state.get('onlineScene')
     room = flow.session['customLobby'].get('room')
     if match is None or 'pve' not in match or value['matchId'] != match['matchId'] or value['roomId'] != room['roomId']:
@@ -266,47 +340,38 @@ def receive(flow, value):
             raise ValueError('PVE lifecycle gap or replay')
         state['eventSeq'] = sequence
         current = {str(m['actorId']):m for m in snapshot['monsters']}
+        # Leavers first: the server may reuse a freed slot in the same snapshot.
         for key in tuple(state['monsters']):
             if key not in current:
                 if not state['monsters'][key].get('removed', False):
-                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
-                flow.session.get('onlineMotion', {}).get('buffers', {}).pop(key, None)
+                    unbind(flow, match, state['monsters'][key])
                 del state['monsters'][key]
         for key, monster in current.items():
             if key not in state['monsters']:
-                kind = monster['kind']
-                flow.send(14, vision_flow.encode_monster_vision_add_event(rid=int(key),
-                    instance_id=instance_id(int(key)), resource_id=kind['resourceId'], hero_id=kind['heroId'],
-                    weapon_id=kind['weaponId'], position=tuple(monster['position']), heading=monster['heading'],
-                    current_hp=monster['health'], maximum_hp=kind['health'],
-                    camp=2,server_time_ms=flow.now,display_name=b'Zombie'), 'online-pve-monster-add')
-                state['monsters'][key] = dict(actionSeq=1,poseSeq=0,**monster)
-                if monster.get('birth') is not None:
-                    flow.send(4, casual_flow.encode_no_fight(actor_id=int(key), enabled=True,
-                        server_time_ms=flow.now), 'online-pve-birth-mode')
-                    flow.send(4, casual_flow.encode_state(actor_id=int(key),
-                        state=BIRTH_STATES[monster['birth']['animation']][0], server_time_ms=flow.now),
-                        'online-pve-birth-start')
-                flow.log('INFO', f'online-pve spawned actor={key} inst={instance_id(int(key))}')
-                if not monster['alive']:
-                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
-                        object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
-                    state['monsters'][key]['removed'] = True
-            else:
-                source = state['monsters'][key]
-                died = source['alive'] and not monster['alive']
-                if source.get('birth') is not None and monster.get('birth') is None:
-                    source.update(position=monster['position'], heading=monster['heading'])
-                    finish_birth(flow, source, flow.connection)
-                source.update(monster)
-                source['birth'] = monster.get('birth')
-                if died:
-                    # Vision removal also removes the native collision proxy. An idle
-                    # locomotion packet can otherwise interrupt the death graph.
-                    flow.send(14, vision_flow.encode_vision_del_event(object_mid=int(key),
-                        object_type=vision_flow.VISION_OBJECT_MONSTER), 'online-pve-monster-remove')
+                source = state['monsters'][key] = dict(actionSeq=1, poseSeq=0, **monster)
+                if monster['alive']:
+                    bind(flow, match, source)
+                else:
+                    # A corpse first seen on reconnect is not presented.
                     source['removed'] = True
-                    flow.session.get('onlineMotion', {}).get('buffers', {}).pop(key, None)
+                continue
+            source = state['monsters'][key]
+            if monster['localRid'] != source['localRid']:
+                raise ValueError('PVE monster changed roster slot')
+            presented = not source.get('removed')
+            died = source['alive'] and not monster['alive']
+            if source.get('birth') is not None and monster.get('birth') is None and presented:
+                source.update(position=monster['position'], heading=monster['heading'])
+                finish_birth(flow, source, flow.connection)
+            peer = flow.session.get('onlinePeers', {}).get(str(source['localRid'])) if presented else None
+            if died and peer is not None and peer.get('health', 0) > 0:
+                # The killing contact normally plays the death; this covers a death it did not carry.
+                flow.send(4, battle_flow.encode_battle_dead_notify(entity_rid=source['localRid'],
+                    server_time_ms=flow.now), 'online-pve-monster-dead')
+            source.update(monster)
+            source['birth'] = monster.get('birth')
+            if peer is not None:
+                peer['health'] = monster['health']
         if match['pve'].get('objective') != snapshot.get('objective'):
             objective = snapshot.get('objective')
             flow.log('INFO', 'online-pve-objective ' + (
@@ -317,186 +382,6 @@ def receive(flow, value):
         match['pve'] = snapshot
     finally:
         flow.connection, flow.session = connection, session
-
-
-def action(flow, value, connection, session):
-    from .custom_lobby import integer
-    from .online_actions import ledger as actions
-    state = actions(session)
-    sequence = integer(value['eventSeq'],1,0xffffffffffffffff)
-    if sequence != state['eventSeq']+1:
-        raise ValueError('PVE action gap or replay')
-    state['eventSeq'] = sequence
-    source = ledger(session)['monsters'].get(str(value['actorId']))
-    if source is None:
-        return
-    seq = integer(value['actionSeq'],1,65535)
-    if seq != source['actionSeq']%65535+1 or value['weaponId'] != source['kind']['weaponId']:
-        raise ValueError('PVE action changed monster sequence or weapon')
-    source['actionSeq'] = seq
-    from . import online_actions, online_motion
-    buffer = session.get('onlineMotion', {}).get('buffers', {}).get(str(value['actorId']), {})
-    if source.get('removed', False):
-        return
-    if buffer.get('samples') and value['state'] not in online_actions.REACTION_STATES:
-        queued = buffer.setdefault('actions', [])
-        if len(queued) >= 64:
-            raise ValueError('monster action playback queue overflow')
-        queued.append(value)
-        online_motion.schedule_render(flow, connection, session)
-        return
-    buffer.pop('actions', None)
-    present_action(flow, connection, session, value['actorId'], value)
-
-
-def present_action(flow, connection, session, actor, value):
-    source = ledger(session)['monsters'].get(str(actor))
-    if source is None or source.get('removed', False):
-        return
-    # Birth owns the native graph until completion. Keep consuming authoritative
-    # action sequences, but do not replace a living monster's emergence with hurt/idle.
-    if source.get('birth') is not None and value['state'] != 42:
-        return
-    seq = value['actionSeq']
-    source['battleState'] = value['state']
-    walking = source.get('nativeMovement')
-    if walking and (walking[0] or walking[1]) and value['state'] != 42:
-        # The gait now carries velocity, so it must be cancelled before the action starts; otherwise the
-        # native intent keeps walking the proxy away from the server position during the animation.
-        shown = source.get('presented') or [source['position'], source['heading']]
-        flow.result['send'].append(dict(connection=connection, command=2, reason='online-pve-monster-stop',
-            body=movement_body(source, dict(position=shown[0], heading=shown[1], forwardBack=0, leftRight=0,
-                running=False), flow.now-session['instanceStartedAt'])))
-    # An action can change the native locomotion graph independently of poses.
-    source.pop('nativeMovement', None)
-    source.pop('nativeTransform', None)
-    if value['state'] == 42:
-        finish_birth(flow, source, connection, session)
-    body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
-        state=value['state'],state_change_ms=flow.now-session['instanceStartedAt'],state_time_ms=value['durationMs'])
-    trace(flow, source, 'action', toState=value['state'], seq=seq)
-    flow.result['send'].append(dict(connection=connection,command=4,body=body,reason='online-pve-monster-action'))
-
-
-def movement_body(source, pose, tick):
-    """Select the native gait and drive its locomotion graph.
-
-    Every mover that animates correctly (player, bots, peers) sends non-zero axes and velocity with
-    its gait: the walk graph is blended by velocity, so a zero-velocity gait slides the idle pose.
-    Translation stays server-owned: the correction packets in `emit` re-anchor the proxy to the
-    presented pose every DIRECT_CORRECTION_MS, which bounds any native integration drift.
-    """
-    axes = (pose['forwardBack'], pose['leftRight'])
-    moving = source['alive'] and axes != (0, 0)
-    gait = (controls.GROUND_RUN_STATES if pose['running'] else controls.GROUND_WALK_STATES).get(axes, 1) if moving else 1
-    speed = source.get('kind', {}).get('speed', DEFAULT_MONSTER_SPEED)
-    velocity = max(0, min(25000, round(1000 * speed))) if moving else 0
-    return move_flow.encode_move_bc_with_system_and_active(
-        server_tick=tick, target_instance_id=instance_id(source['actorId']),
-        direction_yaw=pose['heading'], position=tuple(pose['position']), state=gait,
-        forward_back=axes[0] * 1000 if moving else 0, left_right=axes[1] * 1000 if moving else 0,
-        current_velocity=velocity, max_velocity=25000 if moving else 0,
-        system_group=move_flow.MOVE_MESSAGE_GROUP_SERVER_INTERNAL, active=1)
-
-
-def pose(flow, actor, pose, connection, session, server_time, sequence):
-    from . import online_motion, online_playback
-    source = ledger(session)['monsters'].get(str(actor))
-    if source is None or sequence <= source['poseSeq']:
-        return
-    source['poseSeq'] = sequence
-    source.update(pose)
-    if source.get('removed', False) or source.get('birth') is not None:
-        return
-    buffer = online_motion.ledger(session)['buffers'].setdefault(str(actor), {})
-    samples = buffer.setdefault('samples', [])
-    if samples and server_time < samples[-1]['at']:
-        return
-    buffer['clockOffset'] = min(buffer.get('clockOffset', flow.now-server_time), flow.now-server_time)
-    online_playback.observe(buffer, server_time, flow.now)
-    sample = dict(at=server_time, pose=pose)
-    if not samples or server_time-samples[-1]['at'] > online_motion.STALE_MS or math.dist(
-            pose['position'], samples[-1]['pose']['position']) > 8:
-        samples[:] = [sample]
-        buffer.pop('renderAt', None)
-        buffer.pop('playbackAt', None)
-        emit(flow, connection, session, actor, pose, buffer, 'online-pve-monster-pose')
-    else:
-        if server_time == samples[-1]['at']:
-            samples[-1] = sample
-        else:
-            samples.append(sample)
-            del samples[:-online_motion.MAX_SAMPLES]
-    online_motion.schedule_render(flow, connection, session)
-
-
-def emit(flow, connection, session, actor, pose, state, reason):
-    source = ledger(session)['monsters'].get(str(actor))
-    if source is None or source.get('removed', False) or source.get('birth') is not None:
-        return
-    state['renderedAt'] = flow.now
-    # Only transitions select a gait. Reissuing a composite on every AI sample
-    # restarts native movement commands even when intent has not changed.
-    movement = [pose['forwardBack'], pose['leftRight'], pose['running']]
-    transform = [list(pose['position']), pose['heading']]
-    # What the player sees: hit sampling uses this, whether or not a correction packet was needed.
-    source['presented'] = transform
-    idle = source.get('battleState', 2) == 2
-    if idle and gait_due(source.get('nativeMovement'), movement, pose['heading']):
-        # The composite carries direction and position: re-issuing it when the travel direction turns
-        # is what peers do. Without it the native gait kept walking along the old heading while
-        # corrections pulled it back, which read as side-to-side wobble.
-        body = movement_body(source, pose, flow.now-session['instanceStartedAt'])
-        source['nativeMovement'] = movement + [pose['heading']]
-    elif (source.get('nativeTransform') != transform and correction_due(source, pose, transform, flow.now)) \
-            or pin_due(source, flow.now):
-        body = move_flow.encode_move_direct_bc(
-            server_tick=flow.now-session['instanceStartedAt'],
-            target_instance_id=instance_id(source['actorId']),
-            direction_yaw=pose['heading'], position=tuple(pose['position']))
-    else:
-        return
-    source['nativeTransform'] = transform
-    source['nativeSentAt'] = flow.now
-    trace(flow, source, 'write', kind='gait' if body[:2] != b'\0\4' else 'direct')
-    flow.result['send'].append(dict(connection=connection,command=2,body=body,reason='online-pve-monster-pose'))
-
-
-def trace(flow, source, what, **fields):
-    # Opt-in (T7_PVE_TRACE=1): one line per native write with the server pose beside the presented pose,
-    # so a recorded fight shows which writer moved or turned a monster and when.
-    if TRACE:
-        flow.log('DEBUG', 'pve-trace ' + ' '.join([f"t={flow.now}", f"actor={source['actorId']}", what,
-            f"state={source.get('battleState', 2)}", f"server={[round(v, 2) for v in source['position']]}/{source['heading']}",
-            f"shown={source.get('presented')}"] + [f"{k}={v}" for k, v in fields.items()]))
-
-
-def gait_due(previous, movement, heading):
-    if previous is None or previous[:3] != movement:
-        return True
-    moving = movement[0] != 0 or movement[1] != 0
-    return moving and (len(previous) < 4
-        or abs((heading - previous[3] + 180) % 360 - 180) > HEADING_CORRECTION_DEGREES)
-
-
-def pin_due(source, now):
-    """Re-anchor a monster whose pose is unchanged.
-
-    Attack and hurt animations (and player body collision) move the native proxy by themselves. While the
-    server pose is stationary nothing else is sent, so the model drifted or turned away from the position
-    the server and the hit sampling use. A periodic anchor keeps model and hitbox together.
-    """
-    return source['alive'] and now - source.get('nativeSentAt', -HOLD_PIN_MS) >= HOLD_PIN_MS
-
-
-def correction_due(source, pose, transform, now):
-    """Rate-limit position corrections while the native gait is walking; settle immediately otherwise."""
-    previous = source.get('nativeTransform')
-    if previous is None or (pose['forwardBack'] == 0 and pose['leftRight'] == 0):
-        return True
-    if abs((transform[1] - previous[1] + 180) % 360 - 180) > HEADING_CORRECTION_DEGREES:
-        return True
-    return now - source.get('nativeSentAt', -DIRECT_CORRECTION_MS) >= DIRECT_CORRECTION_MS
 
 
 STAGE_RESOURCE_PATH = 'data/table/s_res_pve_stage_cli.bin'

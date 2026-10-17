@@ -44,18 +44,15 @@ def bindings(match):
 
 
 def actor_rid(match, actor):
+    # PVE monsters are ordinary bindings (enemy slots), added and removed with their lifecycle.
     if type(actor) is not int:
         return None
-    if 'pve' in match and any(m['actorId'] == actor for m in match['pve']['monsters']):
-        return actor
     if actor == match['localActorId']:
         return 1
     return next((p['localRid'] for p in bindings(match) if p['actorId'] == actor), None)
 
 
 def rid_actor(match, rid):
-    if 'pve' in match and any(m['actorId'] == rid for m in match['pve']['monsters']):
-        return rid
     if rid == 1:
         return match['localActorId']
     return next((p['actorId'] for p in bindings(match) if p['localRid'] == rid), None)
@@ -91,8 +88,21 @@ def assemble(flow):
     controls.groundState(flow).update(position=list(position), heading=heading)
 
 
+def monster(flow, rid):
+    return peer_data(flow.session, rid).get('monster') is not None
+
+
+def peerVisionDel(flow, rid):
+    return vision_flow.encode_vision_del_event(object_mid=rid, object_type=vision_flow.VISION_OBJECT_MONSTER) \
+        if monster(flow, rid) else vision_flow.encode_vision_del_event(object_mid=rid)
+
+
 def peerVision(flow, rid):
     peer = peer_data(flow.session, rid)
+    if peer.get('monster') is not None:
+        from . import online_pve
+        source = flow.session['onlinePve']['monsters'][str(peer['monster'])]
+        return online_pve.monster_vision(dict(source, position=peer['position'], heading=peer['heading']), flow.now)
     body = wire.actorVision(peer['camp'], heroId=peer.get('heroId', wire.HERO_ID),
                             equipment=peer.get('equipment'), weaponId=peer.get('weaponId', wire.WEAPON_ID),
                             offhandId=peer.get('offhandId', 0), actorName=peer['name'].encode('gbk'), runtimeMovement=True,
@@ -102,6 +112,8 @@ def peerVision(flow, rid):
 
 def peerState(flow, state):
     for rid in ids(flow)[1:]:
+        if monster(flow, rid):
+            continue
         peer = peer_data(flow.session, rid)
         flow.send(0x36, room_flow.encode_actor_update_state(user_id=peer['userId'], actor_mid=rid, actor_state=state,
                   update_time_ms=flow.now), 'online-peer-state')
@@ -109,6 +121,8 @@ def peerState(flow, state):
 
 def importPeer(flow):
     for rid in ids(flow)[1:]:
+        if monster(flow, rid):
+            continue
         peer = peer_data(flow.session, rid)
         flow.send(0xE, peerVision(flow, rid), 'online-peer-vision-add')
         flow.send(0xA, room_flow.encode_instance_update_actor_basic_info(
@@ -147,7 +161,7 @@ def applyAuthority(flow):
             flow.send(0x36, wire.actorState(flow.now, 6, userId=flow.userId), 'online-actor-running')
             peerState(flow, 6)
             for rid in ids(flow)[1:]:
-                flow.send(0xE, vision_flow.encode_vision_del_event(object_mid=rid), 'online-peer-vision-del-at-entry')
+                flow.send(0xE, peerVisionDel(flow, rid), 'online-peer-vision-del-at-entry')
                 flow.send(0xE, peerVision(flow, rid), 'online-peer-vision-add-at-entry')
             controls.enableGround(flow)
             if 'pve' in match:
@@ -207,7 +221,7 @@ def sync_loadouts(flow, room):
                 continue
             flow.connection, flow.session = int(key), value
             for binding in bindings(match):
-                selection = members[binding['actorId']].get('loadout')
+                selection = members.get(binding['actorId'], {}).get('loadout')  # monsters have no loadout
                 if selection is None:
                     continue
                 peer = peer_data(value, binding['localRid'])

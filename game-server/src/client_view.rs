@@ -94,12 +94,13 @@ impl ClientView {
 
     pub fn to_actor(&self, match_id: &str, rid: LocalRid) -> Result<ActorId, ErrorCode> {
         self.check_match(match_id)?;
-        if self
+        // Monsters are presented in enemy roster slots, like enemy players.
+        if let Some(monster) = self
             .pve
             .as_ref()
-            .is_some_and(|pve| pve.monsters.iter().any(|m| m.actor_id == rid.0))
+            .and_then(|pve| pve.monsters.iter().find(|m| m.local_rid == rid.0))
         {
-            return Ok(ActorId(rid.0));
+            return Ok(ActorId(monster.actor_id));
         }
         self.actors
             .iter()
@@ -110,12 +111,12 @@ impl ClientView {
 
     pub fn to_local(&self, match_id: &str, actor: ActorId) -> Result<LocalRid, ErrorCode> {
         self.check_match(match_id)?;
-        if self
+        if let Some(monster) = self
             .pve
             .as_ref()
-            .is_some_and(|pve| pve.monsters.iter().any(|m| m.actor_id == actor.0))
+            .and_then(|pve| pve.monsters.iter().find(|m| m.actor_id == actor.0))
         {
-            return Ok(LocalRid(actor.0));
+            return Ok(LocalRid(monster.local_rid));
         }
         self.actors
             .iter()

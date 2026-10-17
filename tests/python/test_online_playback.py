@@ -35,12 +35,3 @@ def test_extrapolation_is_finite_and_rejects_teleports():
     b['pose']['position'] = [100, 0, 0]
     assert playback.extrapolate(a, b, 100)['position'] == [100, 0, 0]
 
-
-def test_monster_extrapolation_bridges_one_lost_sample():
-    a = {'at': 0, 'pose': {'position': [0, 0, 0]}}
-    b = {'at': 100, 'pose': {'position': [.2, 0, 0]}}
-    default = playback.extrapolate(a, b, 300)['position']
-    monster = playback.extrapolate(a, b, 300, limit=playback.MONSTER_EXTRAPOLATION_MS)['position']
-    assert default == pytest.approx([.4, 0, 0])
-    assert monster == pytest.approx([.6, 0, 0])
-    assert playback.extrapolate(a, {**b, 'at': 300}, 600)['position'] == [.2, 0, 0]
