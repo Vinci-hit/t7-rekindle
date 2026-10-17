@@ -17,8 +17,8 @@ def presented_position(monster):
     # The blade is tested against the pose last sent to the native client (the delayed playback the
     # player actually sees), not the newest server pose, which can lead the drawn model by the
     # playback delay. Monsters not yet presented fall back to the server position.
-    native = monster.get('nativeTransform')
-    return native[0] if native else monster['position']
+    shown = monster.get('presented') or monster.get('nativeTransform')
+    return shown[0] if shown else monster['position']
 
 
 def body_contact(base, tip, feet):

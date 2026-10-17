@@ -79,9 +79,9 @@ def test_pve_native_spawning_does_not_alias_player_instance_and_routes_monster_a
     result = instance(client, kind='timer', name='online-motion-render')
     movement = move_flow.decode_move_bc_with_system_and_active(next(item['body'] for item in result['send'] if item['command'] == 2))
     assert movement.target_instance_id == 1024
-    assert movement.state == 2 and movement.forward_back == 0
+    assert movement.state == 2 and movement.forward_back == -1000
     assert movement.left_right == 0
-    assert movement.current_velocity == movement.max_velocity == 0
+    assert movement.current_velocity == 2000 and movement.max_velocity == 25000
     assert movement.position == pytest.approx(pose['position'])
     pose.update(forwardBack=0)
     stopped = client.reply(None,'poseChanged',update=dict(roomId='room-test',matchId=MATCH,actorId=rid,eventSeq=3,inputSeq=3,serverTimeMs=3600,pose=pose))
@@ -403,17 +403,30 @@ def test_reconnect_snapshot_does_not_leave_a_dead_collision_proxy():
 
 @pytest.mark.parametrize('running', [False, True])
 @pytest.mark.parametrize('axes', [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)])
-def test_monster_gait_never_integrates_a_second_trajectory(running, axes):
+def test_monster_gait_drives_the_native_locomotion_graph(running, axes):
     m = monster()
     pose = dict(position=[8., -3., 1.5], heading=-90,
                 forwardBack=axes[0], leftRight=axes[1], running=running)
     packet = move_flow.decode_move_bc_with_system_and_active(
         online_pve.movement_body(m, pose, 1234))
     assert packet.position == pytest.approx(pose['position'])
-    assert packet.forward_back == packet.left_right == 0
-    assert packet.current_velocity == packet.max_velocity == 0
     table = online_pve.controls.GROUND_RUN_STATES if running else online_pve.controls.GROUND_WALK_STATES
     assert packet.state == table.get(axes, 1)
+    if axes == (0, 0):
+        assert packet.forward_back == packet.left_right == packet.current_velocity == packet.max_velocity == 0
+    else:
+        assert (packet.forward_back, packet.left_right) == (axes[0] * 1000, axes[1] * 1000)
+        assert packet.current_velocity == 2000 and packet.max_velocity == 25000
+
+
+def test_monster_position_corrections_are_rate_limited_while_walking():
+    source = dict(nativeTransform=[[0., 0., 0.], 0], nativeSentAt=1000)
+    walking = dict(forwardBack=-1, leftRight=0)
+    moved = [[.1, 0., 0.], 0]
+    assert not online_pve.correction_due(source, walking, moved, 1040)
+    assert online_pve.correction_due(source, walking, moved, 1050)
+    assert online_pve.correction_due(source, walking, [[.1, 0., 0.], 20], 1010)  # turn
+    assert online_pve.correction_due(source, dict(forwardBack=0, leftRight=0), moved, 1010)  # settle on stop
 
 
 def test_monster_motion_updates_do_not_restart_an_unchanged_gait():
@@ -450,3 +463,30 @@ def test_monster_motion_updates_do_not_restart_an_unchanged_gait():
     source = client.state['sessions']['2']['onlinePve']['monsters'][str(m['actorId'])]
     assert source['actionSeq'] == 3
     assert source['battleState'] == 2
+
+
+def test_attack_cancels_the_walking_gait_before_the_action_and_stops_hold_position():
+    client, _ = running()
+    m = monster()
+    client.reply(None, 'pveChanged', update=update({**snapshot([m]), 'phase': 'active', 'wave': 1}))
+    rid = m['actorId']
+    pose = dict(position=[2.8, 0., .2], heading=180, forwardBack=-1, leftRight=0, running=False)
+    action = dict(roomId='room-test', matchId=MATCH, actorId=rid, eventSeq=1, actionSeq=2, actionId=None,
+        state=2, weaponId=11000002, durationMs=0, serverTimeMs=3500)
+    client.reply(None, 'actionChanged', action=action)
+    for seq, x in ((1, 2.8), (2, 2.6)):
+        client.reply(None, 'poseChanged', update=dict(roomId='room-test', matchId=MATCH, actorId=rid, eventSeq=seq,
+            inputSeq=seq, serverTimeMs=3400+seq*100, pose={**pose, 'position': [x, 0., .2]}))
+    client.context['nowMs'] = 220
+    instance(client, kind='timer', name='online-motion-render')
+    source = client.state['sessions']['2']['onlinePve']['monsters'][str(rid)]
+    assert source['nativeMovement'] == [-1, 0, False]
+    # Attacks are queued behind playback; once due, the first packet must stop the gait before the state sync.
+    client.reply(None, 'actionChanged', action={**action, 'eventSeq': 2, 'actionSeq': 3, 'state': 235, 'serverTimeMs': 3450})
+    client.context['nowMs'] = 700
+    result = instance(client, kind='timer', name='online-motion-render')
+    reasons = [p['reason'] for p in result['send']]
+    assert 'online-pve-monster-action' in reasons and 'online-pve-monster-stop' in reasons
+    assert reasons.index('online-pve-monster-stop') < reasons.index('online-pve-monster-action')
+    stop = move_flow.decode_move_bc_with_system_and_active(result['send'][reasons.index('online-pve-monster-stop')]['body'])
+    assert (stop.state, stop.forward_back, stop.current_velocity, stop.max_velocity) == (1, 0, 0, 0)

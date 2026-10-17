@@ -1,4 +1,5 @@
 """Native rendering and entry for server-owned cooperative monsters."""
+import os
 from functools import lru_cache
 import math
 import struct
@@ -10,6 +11,12 @@ FIRST_OBJECT_ID = 0x50000001
 MAX_MONSTERS = 64
 MAX_WAVES = 128
 FIRST_MONSTER_INSTANCE = 1024
+DEFAULT_MONSTER_SPEED = 2.0
+TRACE = os.environ.get('T7_PVE_TRACE') == '1'
+# While the native gait integrates between samples, position corrections are limited to this rate
+# (60 Hz direct moves restart the locomotion graph and cost a packet per monster per frame).
+DIRECT_CORRECTION_MS = 50
+HEADING_CORRECTION_DEGREES = 8
 BIRTH_STATES = {'emerge1': (200, 3167), 'emerge2': (201, 3167), 'emerge3': (202, 3167),
                 'vault1': (203, 1800), 'vault2': (204, 3433)}
 
@@ -350,6 +357,14 @@ def present_action(flow, connection, session, actor, value):
         return
     seq = value['actionSeq']
     source['battleState'] = value['state']
+    walking = source.get('nativeMovement')
+    if walking and (walking[0] or walking[1]) and value['state'] != 42:
+        # The gait now carries velocity, so it must be cancelled before the action starts; otherwise the
+        # native intent keeps walking the proxy away from the server position during the animation.
+        shown = source.get('presented') or [source['position'], source['heading']]
+        flow.result['send'].append(dict(connection=connection, command=2, reason='online-pve-monster-stop',
+            body=movement_body(source, dict(position=shown[0], heading=shown[1], forwardBack=0, leftRight=0,
+                running=False), flow.now-session['instanceStartedAt'])))
     # An action can change the native locomotion graph independently of poses.
     source.pop('nativeMovement', None)
     source.pop('nativeTransform', None)
@@ -357,20 +372,29 @@ def present_action(flow, connection, session, actor, value):
         finish_birth(flow, source, connection, session)
     body=battle_flow.encode_battle_state_sync_simple(instance_id=instance_id(value['actorId']),seq_no=seq,
         state=value['state'],state_change_ms=flow.now-session['instanceStartedAt'],state_time_ms=value['durationMs'])
+    trace(flow, source, 'action', toState=value['state'], seq=seq)
     flow.result['send'].append(dict(connection=connection,command=4,body=body,reason='online-pve-monster-action'))
 
 
 def movement_body(source, pose, tick):
-    """Select the native gait without starting a second position integrator."""
+    """Select the native gait and drive its locomotion graph.
+
+    Every mover that animates correctly (player, bots, peers) sends non-zero axes and velocity with
+    its gait: the walk graph is blended by velocity, so a zero-velocity gait slides the idle pose.
+    Translation stays server-owned: the correction packets in `emit` re-anchor the proxy to the
+    presented pose every DIRECT_CORRECTION_MS, which bounds any native integration drift.
+    """
     axes = (pose['forwardBack'], pose['leftRight'])
     moving = source['alive'] and axes != (0, 0)
     gait = (controls.GROUND_RUN_STATES if pose['running'] else controls.GROUND_WALK_STATES).get(axes, 1) if moving else 1
+    speed = source.get('kind', {}).get('speed', DEFAULT_MONSTER_SPEED)
+    velocity = max(0, min(25000, round(1000 * speed))) if moving else 0
     return move_flow.encode_move_bc_with_system_and_active(
         server_tick=tick, target_instance_id=instance_id(source['actorId']),
         direction_yaw=pose['heading'], position=tuple(pose['position']), state=gait,
-        # Rust owns translation; axes and velocity would move the native proxy
-        # away from the same position used by blade-contact sampling.
-        forward_back=0, left_right=0, current_velocity=0, max_velocity=0, system_group=move_flow.MOVE_MESSAGE_GROUP_SERVER_INTERNAL, active=1)
+        forward_back=axes[0] * 1000 if moving else 0, left_right=axes[1] * 1000 if moving else 0,
+        current_velocity=velocity, max_velocity=25000 if moving else 0,
+        system_group=move_flow.MOVE_MESSAGE_GROUP_SERVER_INTERNAL, active=1)
 
 
 def pose(flow, actor, pose, connection, session, server_time, sequence):
@@ -413,11 +437,13 @@ def emit(flow, connection, session, actor, pose, state, reason):
     # restarts native movement commands even when intent has not changed.
     movement = [pose['forwardBack'], pose['leftRight'], pose['running']]
     transform = [list(pose['position']), pose['heading']]
+    # What the player sees: hit sampling uses this, whether or not a correction packet was needed.
+    source['presented'] = transform
     idle = source.get('battleState', 2) == 2
     if idle and source.get('nativeMovement') != movement:
         body = movement_body(source, pose, flow.now-session['instanceStartedAt'])
         source['nativeMovement'] = movement
-    elif source.get('nativeTransform') != transform:
+    elif source.get('nativeTransform') != transform and correction_due(source, pose, transform, flow.now):
         body = move_flow.encode_move_direct_bc(
             server_tick=flow.now-session['instanceStartedAt'],
             target_instance_id=instance_id(source['actorId']),
@@ -425,7 +451,28 @@ def emit(flow, connection, session, actor, pose, state, reason):
     else:
         return
     source['nativeTransform'] = transform
+    source['nativeSentAt'] = flow.now
+    trace(flow, source, 'write', kind='gait' if body[:2] != b'\0\4' else 'direct')
     flow.result['send'].append(dict(connection=connection,command=2,body=body,reason='online-pve-monster-pose'))
+
+
+def trace(flow, source, what, **fields):
+    # Opt-in (T7_PVE_TRACE=1): one line per native write with the server pose beside the presented pose,
+    # so a recorded fight shows which writer moved or turned a monster and when.
+    if TRACE:
+        flow.log('DEBUG', 'pve-trace ' + ' '.join([f"t={flow.now}", f"actor={source['actorId']}", what,
+            f"state={source.get('battleState', 2)}", f"server={[round(v, 2) for v in source['position']]}/{source['heading']}",
+            f"shown={source.get('presented')}"] + [f"{k}={v}" for k, v in fields.items()]))
+
+
+def correction_due(source, pose, transform, now):
+    """Rate-limit position corrections while the native gait is walking; settle immediately otherwise."""
+    previous = source.get('nativeTransform')
+    if previous is None or (pose['forwardBack'] == 0 and pose['leftRight'] == 0):
+        return True
+    if abs((transform[1] - previous[1] + 180) % 360 - 180) > HEADING_CORRECTION_DEGREES:
+        return True
+    return now - source.get('nativeSentAt', -DIRECT_CORRECTION_MS) >= DIRECT_CORRECTION_MS
 
 
 STAGE_RESOURCE_PATH = 'data/table/s_res_pve_stage_cli.bin'
