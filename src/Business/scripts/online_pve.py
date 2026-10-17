@@ -13,9 +13,10 @@ MAX_WAVES = 128
 FIRST_MONSTER_INSTANCE = 1024
 DEFAULT_MONSTER_SPEED = 2.0
 TRACE = os.environ.get('T7_PVE_TRACE') == '1'
-# While the native gait integrates between samples, position corrections are limited to this rate
-# (60 Hz direct moves restart the locomotion graph and cost a packet per monster per frame).
-DIRECT_CORRECTION_MS = 50
+# Position is written on every rendered frame in which the presented transform changed. A larger value
+# rate-limits it; that is only smooth if the native gait integrates its velocity between writes, which
+# could not be confirmed (stepping at the correction rate otherwise), so it stays at one frame.
+DIRECT_CORRECTION_MS = 0
 HEADING_CORRECTION_DEGREES = 8
 HOLD_PIN_MS = 100
 BIRTH_STATES = {'emerge1': (200, 3167), 'emerge2': (201, 3167), 'emerge3': (202, 3167),

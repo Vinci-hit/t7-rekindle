@@ -419,14 +419,12 @@ def test_monster_gait_drives_the_native_locomotion_graph(running, axes):
         assert packet.current_velocity == 2000 and packet.max_velocity == 25000
 
 
-def test_monster_position_corrections_are_rate_limited_while_walking():
+def test_monster_position_is_written_on_every_changed_frame():
+    # Rate-limited corrections stepped the model whenever the native gait did not integrate itself.
     source = dict(nativeTransform=[[0., 0., 0.], 0], nativeSentAt=1000)
     walking = dict(forwardBack=-1, leftRight=0)
-    moved = [[.1, 0., 0.], 0]
-    assert not online_pve.correction_due(source, walking, moved, 1040)
-    assert online_pve.correction_due(source, walking, moved, 1050)
-    assert online_pve.correction_due(source, walking, [[.1, 0., 0.], 20], 1010)  # turn
-    assert online_pve.correction_due(source, dict(forwardBack=0, leftRight=0), moved, 1010)  # settle on stop
+    assert online_pve.correction_due(source, walking, [[.03, 0., 0.], 0], 1016)
+    assert online_pve.correction_due(source, dict(forwardBack=0, leftRight=0), [[.03, 0., 0.], 0], 1001)
 
 
 def test_monster_motion_updates_do_not_restart_an_unchanged_gait():

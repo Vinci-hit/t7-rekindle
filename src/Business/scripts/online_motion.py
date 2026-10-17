@@ -7,9 +7,9 @@ from .codec import move_flow
 
 INTERVAL_MS = 50
 RENDER_INTERVAL_MS = 16
-# Monster-only playback: the native gait animates between samples and position corrections are
-# limited to 20 Hz, so a 30 Hz render halves the dispatches without reducing what is sent.
-MONSTER_RENDER_INTERVAL_MS = 33
+# Monsters are written every frame like peers: whether or not the native gait integrates its
+# velocity, a per-frame absolute transform keeps the model on the presented path (see online_pve.emit).
+MONSTER_RENDER_INTERVAL_MS = RENDER_INTERVAL_MS
 INTERPOLATION_MS = 100
 MAX_SAMPLES = 32
 STALE_MS = 500
@@ -311,7 +311,11 @@ def render_actor(flow, rid, state, monster):
     else:
         span = after['at'] - before['at']
         fraction = max(0.0, min(1.0, (at - before['at']) / span)) if span else 1.0
-        pose = dict(before['pose'])
+        # Monster movement intent belongs to the sample being reached: once the presented segment no
+        # longer moves (or is reached), present the stop, or the native gait keeps walking past it.
+        # Peers keep the leading sample's flags (their jump/motion frames depend on it).
+        moving_segment = math.dist(before['pose']['position'], after['pose']['position']) > 1e-4
+        pose = dict(before['pose'] if not monster or (fraction < 1 and moving_segment) else after['pose'])
         pose['position'] = [a + (b - a) * fraction for a, b in zip(before['pose']['position'], after['pose']['position'])]
         if pose.get('motion') is not None and span:
             pose['motion'] = dict(pose['motion'], velocity=[max(-40., min(40., (b - a) * 1000 / span))
